@@ -1,0 +1,65 @@
+# AAIRE MVP Configuration - As per SRS v2.0
+system:
+  name: "AAIRE"
+  version: "1.0-MVP"
+  environment: "development"
+  
+# Compliance Rules - MVP-FR-017, MVP-FR-018
+compliance_rules:
+  - pattern: "tax.*advice|tax.*planning|minimize.*tax"
+    response: "I can explain accounting treatments but cannot provide tax advice. Please consult a tax professional."
+    log_level: "warning"
+    
+  - pattern: "legal.*advice|lawsuit|sue|legal.*interpretation"
+    response: "I can explain standards but cannot provide legal interpretations. Please consult legal counsel."
+    log_level: "warning"
+    
+  - pattern: "investment.*advice|buy.*sell|trading"
+    response: "I provide accounting guidance only, not investment advice."
+    log_level: "warning"
+
+# Chunking Strategies - Hierarchical per MVP requirements
+chunking_strategies:
+  default:
+    type: "hierarchical"
+    chunk_size: 512
+    overlap: 50
+    preserve: ["headers", "lists", "tables"]
+    
+  table_aware:
+    type: "specialized"
+    preserve_structure: true
+    max_size: 1000
+    
+  actuarial_tables:
+    type: "table_specialized"
+    preserve_formulas: true
+    chunk_size: 800
+
+# Retrieval Configuration - MVP-FR-014
+retrieval_config:
+  similarity_threshold: 0.75
+  max_results: 10
+  use_cache: true
+  cache_ttl: 3600
+  reranking_enabled: false  # Disabled for MVP
+
+# LLM Configuration
+llm_config:
+  provider: "openai"
+  model: "gpt-4-turbo"
+  fallback: "gpt-3.5-turbo"
+  temperature: 0.1
+  max_tokens: 2000
+  
+# Embedding Configuration
+embedding_config:
+  model: "text-embedding-3-small"
+  dimensions: 1536
+  batch_size: 100
+
+# Performance Settings
+performance:
+  query_timeout: 30
+  max_concurrent_queries: 100
+  response_time_target: 3.0  # seconds p95

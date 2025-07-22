@@ -1,0 +1,66 @@
+# Data Sources Configuration - MVP Weeks 5-6
+free_apis:
+  sec_edgar:
+    enabled: true
+    base_url: "https://data.sec.gov/api/xbrl"
+    rate_limit: "10/second"
+    user_agent: "AAIRE/1.0 (contact@yourcompany.com)"
+    use_cases:
+      - "Real accounting policy examples"
+      - "Financial statement disclosures"
+      - "MD&A sections"
+    implementation_week: 5
+    
+  fred_api:
+    enabled: true
+    base_url: "https://api.stlouisfed.org/fred"
+    auth: "api_key"
+    rate_limit: "120/minute"
+    use_cases:
+      - "Interest rates for discounting"
+      - "Economic indicators"
+      - "Inflation data"
+    implementation_week: 6
+    
+  irs_pub:
+    enabled: true
+    type: "static_download"
+    source: "https://www.irs.gov/publications"
+    use_cases:
+      - "Insurance tax concepts"
+      - "Basic definitions"
+    implementation_week: 6
+
+# Manual Upload Sources - MVP-FR-009, MVP-FR-010
+manual_sources:
+  company_policies:
+    format: ["PDF", "DOCX"]
+    max_size_mb: 50
+    metadata_required:
+      - effective_date
+      - department
+      - approval_status
+      - document_type
+    
+  actuarial_tables:
+    format: ["CSV", "XLSX"]
+    max_size_mb: 25
+    validation:
+      - column_headers
+      - data_types
+      - completeness
+      
+  regulatory_guidance:
+    format: ["PDF"]
+    max_size_mb: 100
+    metadata_required:
+      - regulatory_body
+      - effective_date
+      - standard_reference
+
+# Document Processing Pipeline
+processing:
+  async_processing: true
+  queue_name: "document_processing"
+  retry_attempts: 3
+  timeout_minutes: 30
