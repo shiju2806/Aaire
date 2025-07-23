@@ -7,6 +7,8 @@ services:
     build: .
     ports:
       - "8000:8000"
+    env_file:
+      - .env
     environment:
       - ENVIRONMENT=development
       - DATABASE_URL=postgresql://aaire:password@postgres:5432/aaire
