@@ -1,31 +1,29 @@
-# AAIRE MVP Dockerfile
-FROM python:3.11-slim
+# AAIRE MVP Lightweight Dockerfile
+# Use this if the main Dockerfile fails due to system dependencies
+FROM python:3.11-alpine
 
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies with better error handling
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-    build-essential \
-    curl \
+# Install minimal system dependencies for Alpine
+RUN apk add --no-cache \
     gcc \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/* \
-    && rm -rf /tmp/* \
-    && rm -rf /var/tmp/*
+    musl-dev \
+    curl \
+    && rm -rf /var/cache/apk/*
 
 # Copy requirements first for better caching
 COPY requirements.txt .
 
 # Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY . .
 
 # Create necessary directories
-RUN mkdir -p data/uploads data/chromadb
+RUN mkdir -p data/uploads
 
 # Set environment variables
 ENV PYTHONPATH=/app
