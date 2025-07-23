@@ -1,7 +1,6 @@
 # AAIRE MVP Docker Compose Configuration
 # For development and testing environments
 
-version: '3.8'
 
 services:
   aaire-api:
