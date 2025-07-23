@@ -25,7 +25,7 @@ from llama_index.embeddings import OpenAIEmbedding
 from llama_index.llms import OpenAI
 from llama_index.vector_stores import PineconeVectorStore
 
-import pinecone
+from pinecone import Pinecone
 import redis
 import structlog
 
@@ -84,30 +84,31 @@ class RAGPipeline:
                    embedding_model=self.config['embedding_config']['model'])
     
     def _init_pinecone(self):
-        """Initialize Pinecone vector database"""
+        """Initialize Pinecone vector database using v3.x+ API"""
         try:
-            # Initialize Pinecone (v2.x compatible)
-            pinecone.init(
-                api_key=os.getenv("PINECONE_API_KEY"),
-                environment=os.getenv("PINECONE_ENVIRONMENT", "us-east-1")
-            )
+            # Initialize Pinecone with new API format (no environment needed)
+            self.pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
             
             # Single index for Pinecone free tier
             self.index_name = "aaire-main"
             
-            # Create index if it doesn't exist
-            existing_indexes = pinecone.list_indexes()
+            # List existing indexes using new API
+            existing_indexes = [index.name for index in self.pc.list_indexes()]
             
             if self.index_name not in existing_indexes:
-                pinecone.create_index(
+                # Create index using new API format
+                self.pc.create_index(
                     name=self.index_name,
                     dimension=self.config['embedding_config']['dimensions'],
-                    metric="cosine"
+                    metric="cosine",
+                    spec={"serverless": {"cloud": "aws", "region": "us-east-1"}}
                 )
                 logger.info(f"Created Pinecone index: {self.index_name}")
             
-            # Connect to the single index
-            self.pinecone_index = pinecone.Index(self.index_name)
+            # Connect to the index using new API
+            self.pinecone_index = self.pc.Index(self.index_name)
+            
+            logger.info("Pinecone initialized successfully with new API")
             
         except Exception as e:
             logger.error("Failed to initialize Pinecone", error=str(e))
