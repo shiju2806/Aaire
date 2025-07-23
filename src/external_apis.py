@@ -439,7 +439,7 @@ class ExternalAPIManager:
                                 )
                                 documents.append(document)
             
-            # Add documents to RAG pipeline
+            # Add documents to RAG pipeline (single index with metadata)
             if documents and self.rag_pipeline:
                 await self.rag_pipeline.add_documents(documents, 'us_gaap')
                 
@@ -483,7 +483,7 @@ class ExternalAPIManager:
                 )
                 documents.append(document)
             
-            # Add documents to RAG pipeline
+            # Add documents to RAG pipeline (single index with metadata)
             if documents and self.rag_pipeline:
                 await self.rag_pipeline.add_documents(documents, 'actuarial')
             

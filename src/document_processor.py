@@ -176,7 +176,7 @@ class DocumentProcessor:
             
             self.processing_jobs[job_id]['progress'] = 70
             
-            # Add to RAG pipeline
+            # Add to RAG pipeline (single index)
             if self.rag_pipeline:
                 doc_type = self._map_source_type(metadata['source_type'])
                 chunks_created = await self.rag_pipeline.add_documents([document], doc_type)

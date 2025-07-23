@@ -76,8 +76,7 @@ class RAGPipeline:
             chunk_overlap=self.config['chunking_strategies']['default']['overlap']
         )
         
-        # Initialize indexes
-        self.indexes = {}
+        # Initialize single index
         self._init_indexes()
         
         logger.info("RAG Pipeline initialized", 
@@ -93,31 +92,22 @@ class RAGPipeline:
                 environment=os.getenv("PINECONE_ENVIRONMENT", "us-east-1")
             )
             
-            # Define index names for different document types
-            self.index_names = {
-                "us_gaap": "aaire-us-gaap",
-                "ifrs": "aaire-ifrs", 
-                "company": "aaire-company",
-                "actuarial": "aaire-actuarial"
-            }
+            # Single index for Pinecone free tier
+            self.index_name = "aaire-main"
             
-            # Create indexes if they don't exist
+            # Create index if it doesn't exist
             existing_indexes = pinecone.list_indexes()
             
-            for index_name in self.index_names.values():
-                if index_name not in existing_indexes:
-                    pinecone.create_index(
-                        name=index_name,
-                        dimension=self.config['embedding_config']['dimensions'],
-                        metric="cosine"
-                    )
-                    logger.info(f"Created Pinecone index: {index_name}")
+            if self.index_name not in existing_indexes:
+                pinecone.create_index(
+                    name=self.index_name,
+                    dimension=self.config['embedding_config']['dimensions'],
+                    metric="cosine"
+                )
+                logger.info(f"Created Pinecone index: {self.index_name}")
             
-            # Connect to indexes
-            self.pinecone_indexes = {
-                key: pinecone.Index(index_name) 
-                for key, index_name in self.index_names.items()
-            }
+            # Connect to the single index
+            self.pinecone_index = pinecone.Index(self.index_name)
             
         except Exception as e:
             logger.error("Failed to initialize Pinecone", error=str(e))
@@ -140,39 +130,49 @@ class RAGPipeline:
             self.cache = None
     
     def _init_indexes(self):
-        """Initialize LlamaIndex vector store indexes"""
-        for doc_type, pinecone_index in self.pinecone_indexes.items():
-            vector_store = PineconeVectorStore(pinecone_index=pinecone_index)
-            storage_context = StorageContext.from_defaults(vector_store=vector_store)
-            
-            # Try to load existing index or create new one
-            try:
-                self.indexes[doc_type] = VectorStoreIndex.from_vector_store(
-                    vector_store=vector_store,
-                    service_context=self.service_context
-                )
-                logger.info(f"Loaded existing index for {doc_type}")
-            except:
-                self.indexes[doc_type] = VectorStoreIndex(
-                    nodes=[],
-                    storage_context=storage_context,
-                    service_context=self.service_context
-                )
-                logger.info(f"Created new index for {doc_type}")
+        """Initialize single LlamaIndex vector store index"""
+        vector_store = PineconeVectorStore(pinecone_index=self.pinecone_index)
+        storage_context = StorageContext.from_defaults(vector_store=vector_store)
+        
+        # Try to load existing index or create new one
+        try:
+            self.index = VectorStoreIndex.from_vector_store(
+                vector_store=vector_store,
+                service_context=self.service_context
+            )
+            logger.info("Loaded existing Pinecone index")
+        except:
+            self.index = VectorStoreIndex(
+                nodes=[],
+                storage_context=storage_context,
+                service_context=self.service_context
+            )
+            logger.info("Created new Pinecone index")
     
     async def add_documents(self, documents: List[Document], doc_type: str = "company"):
         """
-        Add documents to the appropriate index with hierarchical chunking
+        Add documents to the single index with document type metadata
         """
         try:
-            if doc_type not in self.indexes:
-                raise ValueError(f"Unknown document type: {doc_type}")
+            # Add document type metadata to each document
+            for doc in documents:
+                if not doc.metadata:
+                    doc.metadata = {}
+                doc.metadata['doc_type'] = doc_type
+                doc.metadata['added_at'] = datetime.utcnow().isoformat()
             
             # Parse documents into nodes
             nodes = self.node_parser.get_nodes_from_documents(documents)
             
-            # Add to index
-            self.indexes[doc_type].insert_nodes(nodes)
+            # Ensure nodes inherit the document type metadata
+            for node in nodes:
+                if not node.metadata:
+                    node.metadata = {}
+                node.metadata['doc_type'] = doc_type
+                node.metadata['added_at'] = datetime.utcnow().isoformat()
+            
+            # Add to single index
+            self.index.insert_nodes(nodes)
             
             # Invalidate cache for this document type
             if self.cache:
@@ -180,7 +180,8 @@ class RAGPipeline:
                 for key in self.cache.scan_iter(match=pattern):
                     self.cache.delete(key)
             
-            logger.info(f"Added {len(documents)} documents to {doc_type} index",
+            logger.info(f"Added {len(documents)} documents to index",
+                       doc_type=doc_type,
                        total_nodes=len(nodes))
             
             return len(nodes)
@@ -209,11 +210,11 @@ class RAGPipeline:
                     logger.info("Returning cached response", query_hash=cache_key[:8])
                     return self._deserialize_response(cached_response, session_id)
             
-            # Determine which indexes to search
-            search_indexes = self._get_search_indexes(filters)
+            # Determine document type filter
+            doc_type_filter = self._get_doc_type_filter(filters)
             
             # Retrieve relevant documents
-            retrieved_docs = await self._retrieve_documents(query, search_indexes)
+            retrieved_docs = await self._retrieve_documents(query, doc_type_filter)
             
             # Generate response
             response = await self._generate_response(query, retrieved_docs, user_context)
@@ -262,58 +263,59 @@ class RAGPipeline:
             yield chunk
             await asyncio.sleep(0.1)  # Small delay for demo purposes
     
-    def _get_search_indexes(self, filters: Optional[Dict[str, Any]]) -> List[str]:
-        """Determine which indexes to search based on filters"""
+    def _get_doc_type_filter(self, filters: Optional[Dict[str, Any]]) -> Optional[List[str]]:
+        """Get document types to filter by based on filters"""
         if not filters or not filters.get('source_type'):
-            return list(self.indexes.keys())  # Search all indexes
+            return None  # No filter, search all document types
         
         source_types = filters['source_type']
         if isinstance(source_types, str):
             source_types = [source_types]
         
-        search_indexes = []
+        doc_types = []
         for source_type in source_types:
             if source_type == "US_GAAP":
-                search_indexes.append("us_gaap")
+                doc_types.append("us_gaap")
             elif source_type == "IFRS":
-                search_indexes.append("ifrs")
+                doc_types.append("ifrs")
             elif source_type == "COMPANY":
-                search_indexes.append("company")
+                doc_types.append("company")
             elif source_type == "ACTUARIAL":
-                search_indexes.append("actuarial")
+                doc_types.append("actuarial")
         
-        return search_indexes or list(self.indexes.keys())
+        return doc_types if doc_types else None
     
-    async def _retrieve_documents(self, query: str, search_indexes: List[str]) -> List[Dict]:
-        """Retrieve relevant documents from specified indexes"""
+    async def _retrieve_documents(self, query: str, doc_type_filter: Optional[List[str]]) -> List[Dict]:
+        """Retrieve relevant documents from single index with optional document type filtering"""
         all_results = []
         
-        for index_name in search_indexes:
-            if index_name not in self.indexes:
-                continue
-                
-            try:
-                # Create retriever
-                retriever = self.indexes[index_name].as_retriever(
-                    similarity_top_k=self.config['retrieval_config']['max_results'] // len(search_indexes)
-                )
-                
-                # Retrieve documents
-                nodes = retriever.retrieve(query)
-                
-                for node in nodes:
-                    if node.score >= self.config['retrieval_config']['similarity_threshold']:
-                        all_results.append({
-                            'content': node.text,
-                            'metadata': node.metadata or {},
-                            'score': node.score,
-                            'source_type': index_name,
-                            'node_id': node.id_
-                        })
-                        
-            except Exception as e:
-                logger.warning(f"Failed to retrieve from {index_name}", error=str(e))
-                continue
+        try:
+            # Create retriever from single index
+            retriever = self.index.as_retriever(
+                similarity_top_k=self.config['retrieval_config']['max_results']
+            )
+            
+            # Retrieve documents
+            nodes = retriever.retrieve(query)
+            
+            for node in nodes:
+                if node.score >= self.config['retrieval_config']['similarity_threshold']:
+                    # Apply document type filter if specified
+                    if doc_type_filter:
+                        node_doc_type = node.metadata.get('doc_type') if node.metadata else None
+                        if node_doc_type not in doc_type_filter:
+                            continue  # Skip nodes that don't match filter
+                    
+                    all_results.append({
+                        'content': node.text,
+                        'metadata': node.metadata or {},
+                        'score': node.score,
+                        'source_type': node.metadata.get('doc_type', 'unknown') if node.metadata else 'unknown',
+                        'node_id': node.id_
+                    })
+                    
+        except Exception as e:
+            logger.warning("Failed to retrieve from index", error=str(e))
         
         # Sort by relevance score
         all_results.sort(key=lambda x: x['score'], reverse=True)
@@ -435,29 +437,30 @@ Response:"""
     async def get_stats(self) -> Dict[str, Any]:
         """Get RAG pipeline statistics"""
         stats = {
-            "indexes": {},
+            "index": {},
             "cache_stats": {},
             "configuration": {
                 "model": self.config['llm_config']['model'],
                 "embedding_model": self.config['embedding_config']['model'],
-                "similarity_threshold": self.config['retrieval_config']['similarity_threshold']
+                "similarity_threshold": self.config['retrieval_config']['similarity_threshold'],
+                "index_name": self.index_name
             }
         }
         
-        # Get index statistics
-        for index_name, index in self.indexes.items():
-            try:
-                # Note: LlamaIndex doesn't directly expose document counts
-                # This would need to be tracked separately in production
-                stats["indexes"][index_name] = {
-                    "status": "active",
-                    "last_updated": datetime.utcnow().isoformat()
-                }
-            except Exception as e:
-                stats["indexes"][index_name] = {
-                    "status": "error",
-                    "error": str(e)
-                }
+        # Get single index statistics
+        try:
+            stats["index"] = {
+                "name": self.index_name,
+                "status": "active",
+                "last_updated": datetime.utcnow().isoformat(),
+                "note": "Single index with document type metadata filtering"
+            }
+        except Exception as e:
+            stats["index"] = {
+                "name": self.index_name,
+                "status": "error",
+                "error": str(e)
+            }
         
         # Get cache statistics
         if self.cache:
