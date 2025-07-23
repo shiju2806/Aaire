@@ -39,7 +39,7 @@ class AuditEvent:
 
 class AuditLogger:
     def __init__(self):
-        """Initialize audit logger"""
+        """Initialize audit logger without starting async tasks"""
         
         # In-memory storage for MVP (replace with persistent storage in production)
         self.audit_events = []
@@ -50,25 +50,37 @@ class AuditLogger:
         # Hot storage limit (90 days as specified)
         self.hot_storage_days = 90
         
-        # Background cleanup task
+        # Background cleanup task (will be started lazily)
         self._cleanup_task = None
-        self._start_cleanup_task()
+        self._cleanup_started = False
         
         logger.info("Audit logger initialized")
     
-    def _start_cleanup_task(self):
-        """Start background task for log cleanup"""
-        async def cleanup_old_logs():
-            while True:
-                try:
-                    await self._cleanup_expired_logs()
-                    # Run cleanup every 24 hours
-                    await asyncio.sleep(24 * 3600)
-                except Exception as e:
-                    logger.error("Audit log cleanup failed", error=str(e))
-                    await asyncio.sleep(3600)  # Retry in 1 hour
-        
-        self._cleanup_task = asyncio.create_task(cleanup_old_logs())
+    def _ensure_cleanup_task(self):
+        """Start cleanup task if not already started (lazy initialization)"""
+        if not self._cleanup_started and not self._cleanup_task:
+            try:
+                loop = asyncio.get_running_loop()
+                self._cleanup_task = loop.create_task(self._cleanup_loop())
+                self._cleanup_started = True
+                logger.info("Audit cleanup task started")
+            except RuntimeError:
+                # No event loop running yet, will try again later
+                pass
+    
+    async def _cleanup_loop(self):
+        """Background task for log cleanup"""
+        while True:
+            try:
+                await self._cleanup_expired_logs()
+                # Run cleanup every 24 hours
+                await asyncio.sleep(24 * 3600)
+            except asyncio.CancelledError:
+                logger.info("Audit cleanup task cancelled")
+                break
+            except Exception as e:
+                logger.error("Audit log cleanup failed", error=str(e))
+                await asyncio.sleep(3600)  # Retry in 1 hour
     
     async def log_event(
         self,
@@ -83,6 +95,9 @@ class AuditLogger:
         """
         Log an audit event - MVP-FR-024
         """
+        
+        # Ensure cleanup task is running
+        self._ensure_cleanup_task()
         
         # Generate unique event ID
         import uuid
@@ -360,7 +375,14 @@ class AuditLogger:
         
         return matching_events
     
+    def cleanup(self):
+        """Manual cleanup method"""
+        if self._cleanup_task and not self._cleanup_task.done():
+            self._cleanup_task.cancel()
+            self._cleanup_started = False
+    
     def __del__(self):
         """Cleanup on destruction"""
-        if self._cleanup_task:
-            self._cleanup_task.cancel()
+        # Don't try to cancel tasks in __del__ as it can cause issues
+        # Use the cleanup() method explicitly when needed
+        pass
