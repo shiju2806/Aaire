@@ -13,6 +13,9 @@ services:
       - DATABASE_URL=postgresql://aaire:password@postgres:5432/aaire
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-your_openai_key_here}
+      - PINECONE_API_KEY=${PINECONE_API_KEY:-your_pinecone_key_here}
+      - FRED_API_KEY=${FRED_API_KEY:-your_fred_key_here}
     volumes:
       - ./data:/app/data
       - ./config:/app/config
@@ -20,6 +23,7 @@ services:
       - postgres
       - redis
     restart: unless-stopped
+    command: ["python", "start.py"]
 
   postgres:
     image: postgres:15
