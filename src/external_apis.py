@@ -14,7 +14,7 @@ from dataclasses import dataclass
 import structlog
 import yaml
 
-from llama_index.core import Document
+from llama_index import Document
 
 logger = structlog.get_logger()
 

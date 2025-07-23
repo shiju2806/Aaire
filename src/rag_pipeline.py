@@ -10,23 +10,22 @@ from datetime import datetime
 import asyncio
 import uuid
 
-from llama_index.core import (
+from llama_index import (
     VectorStoreIndex,
     SimpleDirectoryReader,
     Document,
     ServiceContext,
     StorageContext
 )
-from llama_index.core.node_parser import HierarchicalNodeParser
-from llama_index.core.retrievers import VectorIndexRetriever
-from llama_index.core.query_engine import RetrieverQueryEngine
-from llama_index.core.response.pprint_utils import pprint_response
-from llama_index.embeddings.openai import OpenAIEmbedding
-from llama_index.llms.openai import OpenAI
-from llama_index.vector_stores.pinecone import PineconeVectorStore
+from llama_index.node_parser import SimpleNodeParser
+from llama_index.indices.base_retriever import BaseRetriever
+from llama_index.query_engine import RetrieverQueryEngine
+from llama_index.response.pprint_utils import pprint_response
+from llama_index.embeddings import OpenAIEmbedding
+from llama_index.llms import OpenAI
+from llama_index.vector_stores import PineconeVectorStore
 
 import pinecone
-from pinecone import Pinecone
 import redis
 import structlog
 
@@ -71,9 +70,9 @@ class RAGPipeline:
             embed_model=self.embedding_model
         )
         
-        # Initialize node parser with hierarchical chunking
-        self.node_parser = HierarchicalNodeParser.from_defaults(
-            chunk_sizes=self.config['chunking_strategies']['default']['chunk_size'],
+        # Initialize node parser with simple chunking (hierarchical not available in 0.9.x)
+        self.node_parser = SimpleNodeParser.from_defaults(
+            chunk_size=self.config['chunking_strategies']['default']['chunk_size'],
             chunk_overlap=self.config['chunking_strategies']['default']['overlap']
         )
         
@@ -88,8 +87,11 @@ class RAGPipeline:
     def _init_pinecone(self):
         """Initialize Pinecone vector database"""
         try:
-            # Initialize Pinecone client
-            pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
+            # Initialize Pinecone (v2.x compatible)
+            pinecone.init(
+                api_key=os.getenv("PINECONE_API_KEY"),
+                environment=os.getenv("PINECONE_ENVIRONMENT", "us-east-1")
+            )
             
             # Define index names for different document types
             self.index_names = {
@@ -100,26 +102,20 @@ class RAGPipeline:
             }
             
             # Create indexes if they don't exist
-            existing_indexes = [index.name for index in pc.list_indexes()]
+            existing_indexes = pinecone.list_indexes()
             
             for index_name in self.index_names.values():
                 if index_name not in existing_indexes:
-                    pc.create_index(
+                    pinecone.create_index(
                         name=index_name,
                         dimension=self.config['embedding_config']['dimensions'],
-                        metric="cosine",
-                        spec={
-                            "serverless": {
-                                "cloud": "aws",
-                                "region": "us-east-1"
-                            }
-                        }
+                        metric="cosine"
                     )
                     logger.info(f"Created Pinecone index: {index_name}")
             
             # Connect to indexes
             self.pinecone_indexes = {
-                key: pc.Index(index_name) 
+                key: pinecone.Index(index_name) 
                 for key, index_name in self.index_names.items()
             }
             
@@ -172,7 +168,7 @@ class RAGPipeline:
             if doc_type not in self.indexes:
                 raise ValueError(f"Unknown document type: {doc_type}")
             
-            # Parse documents into hierarchical nodes
+            # Parse documents into nodes
             nodes = self.node_parser.get_nodes_from_documents(documents)
             
             # Add to index
@@ -298,13 +294,12 @@ class RAGPipeline:
                 
             try:
                 # Create retriever
-                retriever = VectorIndexRetriever(
-                    index=self.indexes[index_name],
+                retriever = self.indexes[index_name].as_retriever(
                     similarity_top_k=self.config['retrieval_config']['max_results'] // len(search_indexes)
                 )
                 
                 # Retrieve documents
-                nodes = await retriever.aretrieve(query)
+                nodes = retriever.retrieve(query)
                 
                 for node in nodes:
                     if node.score >= self.config['retrieval_config']['similarity_threshold']:
@@ -359,7 +354,7 @@ Response:"""
 
         try:
             # Generate response using OpenAI
-            response = await self.llm.acomplete(prompt)
+            response = self.llm.complete(prompt)
             return response.text.strip()
             
         except Exception as e:

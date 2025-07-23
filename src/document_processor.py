@@ -19,7 +19,7 @@ import PyPDF2
 from docx import Document as DocxDocument
 import pandas as pd
 
-from llama_index.core import Document
+from llama_index import Document
 from .rag_pipeline import RAGPipeline
 
 logger = structlog.get_logger()
