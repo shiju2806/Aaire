@@ -58,12 +58,6 @@ class RAGPipeline:
             dimensions=self.config['embedding_config']['dimensions']
         )
         
-        # Initialize Pinecone
-        self._init_pinecone()
-        
-        # Initialize Redis for caching
-        self._init_cache()
-        
         # Initialize service context
         self.service_context = ServiceContext.from_defaults(
             llm=self.llm,
@@ -76,8 +70,19 @@ class RAGPipeline:
             chunk_overlap=self.config['chunking_strategies']['default']['overlap']
         )
         
-        # Initialize single index
-        self._init_indexes()
+        # Try Pinecone first, fall back to local storage
+        self.pinecone_available = False
+        try:
+            self._init_pinecone()
+            self._init_indexes()
+            self.pinecone_available = True
+            logger.info("Using Pinecone vector store")
+        except Exception as e:
+            logger.warning("Pinecone not available, using local vector store", error=str(e))
+            self._init_local_index()
+        
+        # Initialize Redis for caching
+        self._init_cache()
         
         logger.info("RAG Pipeline initialized", 
                    model=self.config['llm_config']['model'],
@@ -153,6 +158,15 @@ class RAGPipeline:
                 service_context=self.service_context
             )
             logger.info("Created new Pinecone index")
+    
+    def _init_local_index(self):
+        """Initialize local vector store as fallback"""
+        # Create a simple in-memory vector store
+        self.index = VectorStoreIndex(
+            nodes=[],
+            service_context=self.service_context
+        )
+        logger.info("Initialized local vector store")
     
     async def add_documents(self, documents: List[Document], doc_type: str = "company"):
         """
