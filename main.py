@@ -2,17 +2,23 @@
 AAIRE (Accounting & Actuarial Insurance Resource Expert) - MVP
 Main FastAPI application following SRS v2.0 specifications
 """
+
 from dotenv import load_dotenv
 load_dotenv()
-from fastapi import FastAPI, HTTPException, Depends, File, UploadFile, WebSocket
+
+from fastapi import FastAPI, HTTPException, Depends, File, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import HTMLResponse, FileResponse
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
 import uvicorn
 import asyncio
 import logging
 import structlog
+import json
+import os
 from datetime import datetime
 
 # Import modules with fallbacks for MVP startup
@@ -77,6 +83,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Mount static files
+if os.path.exists("static"):
+    app.mount("/static", StaticFiles(directory="static"), name="static")
+
+# Create static directory if it doesn't exist
+os.makedirs("static/js", exist_ok=True)
+
 # Security
 security = HTTPBearer()
 
@@ -125,15 +138,22 @@ class DocumentUploadResponse(BaseModel):
     status: str
     message: str
 
-@app.get("/")
+@app.get("/", response_class=HTMLResponse)
 async def root():
-    """Root endpoint"""
-    return {
-        "service": "AAIRE",
-        "version": "1.0-MVP",
-        "status": "healthy",
-        "description": "Accounting & Actuarial Insurance Resource Expert"
-    }
+    """Serve the main frontend"""
+    try:
+        with open("templates/index.html", "r") as f:
+            return HTMLResponse(content=f.read(), status_code=200)
+    except FileNotFoundError:
+        return HTMLResponse(
+            content="<h1>AAIRE Frontend Not Found</h1><p>Please ensure templates/index.html exists.</p>",
+            status_code=404
+        )
+
+@app.get("/app", response_class=HTMLResponse)
+async def app_page():
+    """Alternative route for the frontend"""
+    return await root()
 
 @app.get("/health")
 async def health_check():
@@ -227,7 +247,7 @@ async def chat(request: ChatRequest):
             processing_time_ms=processing_time
         )
 
-@app.post("/api/v1/documents", response_model=DocumentUploadResponse)
+@app.post("/api/v1/upload", response_model=DocumentUploadResponse)
 async def upload_document(
     file: UploadFile = File(...),
     metadata: str = None  # JSON string
@@ -237,9 +257,19 @@ async def upload_document(
     """
     try:
         if not document_processor:
-            raise HTTPException(
-                status_code=503, 
-                detail="Document processing service not available. Please ensure all dependencies are configured."
+            # Fallback for when document processor isn't available
+            # Save file to uploads directory
+            os.makedirs("data/uploads", exist_ok=True)
+            file_path = f"data/uploads/{file.filename}"
+            
+            with open(file_path, "wb") as buffer:
+                content = await file.read()
+                buffer.write(content)
+            
+            return DocumentUploadResponse(
+                job_id=f"fallback_{datetime.utcnow().timestamp()}",
+                status="accepted",
+                message=f"Document {file.filename} uploaded successfully (fallback mode)"
             )
         
         # For MVP, use demo user
@@ -269,10 +299,10 @@ async def upload_document(
         logger.error("Error uploading document", error=str(e))
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
-@app.websocket("/api/v1/chat/stream")
+@app.websocket("/api/v1/chat/ws")
 async def websocket_chat(websocket: WebSocket):
     """
-    WebSocket endpoint for streaming responses
+    WebSocket endpoint for real-time chat
     """
     await websocket.accept()
     
@@ -280,21 +310,49 @@ async def websocket_chat(websocket: WebSocket):
         while True:
             data = await websocket.receive_json()
             
-            # Process query and stream response
-            async for chunk in rag_pipeline.stream_response(data["query"]):
-                await websocket.send_json({
-                    "type": "chunk",
-                    "content": chunk
-                })
+            if data.get("type") == "query":
+                query = data.get("message", "")
+                session_id = data.get("session_id", "")
+                
+                try:
+                    if rag_pipeline:
+                        # Process with RAG pipeline
+                        rag_response = await rag_pipeline.process_query(
+                            query=query,
+                            filters=None,
+                            user_context={}
+                        )
+                        
+                        await websocket.send_json({
+                            "type": "response",
+                            "message": rag_response.answer,
+                            "sources": [cite.get("source", "") for cite in rag_response.citations],
+                            "confidence": rag_response.confidence
+                        })
+                    else:
+                        # Fallback response
+                        await websocket.send_json({
+                            "type": "response",
+                            "message": f"Thank you for your question: '{query}'. AAIRE is currently in setup mode. Please configure your OpenAI and Pinecone API keys to enable full functionality.",
+                            "sources": [],
+                            "confidence": 0.5
+                        })
+                        
+                except Exception as e:
+                    logger.error("Error processing WebSocket query", error=str(e))
+                    await websocket.send_json({
+                        "type": "error",
+                        "message": "I apologize, but I'm experiencing technical difficulties. Please try again later."
+                    })
             
-            await websocket.send_json({
-                "type": "complete",
-                "citations": []  # Include citations when complete
-            })
-            
+    except WebSocketDisconnect:
+        logger.info("WebSocket client disconnected")
     except Exception as e:
         logger.error("WebSocket error", error=str(e))
-        await websocket.close()
+        try:
+            await websocket.close()
+        except:
+            pass
 
 @app.get("/api/v1/documents/{job_id}/status")
 async def get_document_status(job_id: str):
