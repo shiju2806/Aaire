@@ -271,6 +271,8 @@ class AAIREApp {
             
             statusDiv.textContent = `Uploading ${file.name} (${i + 1}/${files.length})...`;
             
+            console.log('Uploading file:', file.name, 'with metadata:', metadata);
+            
             try {
                 const response = await fetch('/api/v1/upload', {
                     method: 'POST',
@@ -293,7 +295,16 @@ class AAIREApp {
                 } else {
                     const errorText = await response.text();
                     console.error('Upload failed:', response.status, errorText);
-                    throw new Error(`Upload failed: ${response.status} ${response.statusText}`);
+                    let errorMsg = `Upload failed: ${response.status} ${response.statusText}`;
+                    try {
+                        const errorJson = JSON.parse(errorText);
+                        if (errorJson.detail) {
+                            errorMsg = errorJson.detail;
+                        }
+                    } catch (e) {
+                        // Use default error message if response isn't JSON
+                    }
+                    throw new Error(errorMsg);
                 }
             } catch (error) {
                 console.error('Upload error:', error);

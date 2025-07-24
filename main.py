@@ -6,7 +6,7 @@ Main FastAPI application following SRS v2.0 specifications
 from dotenv import load_dotenv
 load_dotenv()
 
-from fastapi import FastAPI, HTTPException, Depends, File, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Depends, File, UploadFile, WebSocket, WebSocketDisconnect, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.staticfiles import StaticFiles
@@ -250,11 +250,12 @@ async def chat(request: ChatRequest):
 @app.post("/api/v1/upload", response_model=DocumentUploadResponse)
 async def upload_document(
     file: UploadFile = File(...),
-    metadata: str = None  # JSON string
+    metadata: str = Form(default='{"title":"unknown","source_type":"COMPANY","effective_date":"2025-01-24"}')
 ):
     """
     Document upload endpoint - MVP-FR-009 through MVP-FR-012
     """
+    logger.info("Upload request received", filename=file.filename, content_type=file.content_type, metadata=metadata)
     try:
         if not document_processor:
             # Fallback for when document processor isn't available
@@ -296,8 +297,8 @@ async def upload_document(
         )
         
     except Exception as e:
-        logger.error("Error uploading document", error=str(e))
-        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+        logger.error("Error uploading document", error=str(e), filename=file.filename, metadata=metadata)
+        raise HTTPException(status_code=422, detail=f"Upload failed: {str(e)}")
 
 @app.websocket("/api/v1/chat/ws")
 async def websocket_chat(websocket: WebSocket):
