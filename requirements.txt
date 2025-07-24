@@ -1,6 +1,7 @@
 # AAIRE MVP Requirements - Following SRS v2.0
 fastapi==0.104.1
-uvicorn==0.24.0
+uvicorn[standard]==0.24.0
+websockets==12.0
 pydantic==2.5.0
 
 # RAG Pipeline - LlamaIndex based (per MVP requirements)
