@@ -45,10 +45,19 @@ class AAIREApp {
         // File upload
         const fileInput = document.getElementById('file-input');
         const uploadArea = document.getElementById('upload-area');
+        const chooseFilesBtn = document.getElementById('choose-files-btn');
         
         fileInput.addEventListener('change', (e) => {
             console.log('File input change detected:', e.target.files.length, 'files');
             this.handleFileUpload(e.target.files);
+        });
+        
+        // Choose files button
+        chooseFilesBtn.addEventListener('click', () => {
+            console.log('Choose files button clicked');
+            console.log('File input element:', fileInput);
+            console.log('File input exists:', !!fileInput);
+            fileInput.click();
         });
 
         // Drag and drop
@@ -67,9 +76,14 @@ class AAIREApp {
             this.handleFileUpload(e.dataTransfer.files);
         });
 
-        uploadArea.addEventListener('click', () => {
+        uploadArea.addEventListener('click', (e) => {
+            // Don't trigger if clicking on the button inside the upload area
+            if (e.target.closest('#choose-files-btn')) {
+                return;
+            }
             console.log('Upload area clicked - triggering file input');
-            document.getElementById('file-input').click();
+            console.log('File input element:', fileInput);
+            fileInput.click();
         });
     }
 
@@ -510,6 +524,18 @@ function testUpload() {
     
     // Simulate upload
     app.handleFileUpload([testFile]);
+}
+
+// Test function to check file input
+function testFileInput() {
+    const fileInput = document.getElementById('file-input');
+    console.log('File input test:');
+    console.log('Element exists:', !!fileInput);
+    console.log('Element:', fileInput);
+    console.log('Clicking file input...');
+    if (fileInput) {
+        fileInput.click();
+    }
 }
 
 // Initialize app when DOM is loaded
