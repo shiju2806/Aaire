@@ -25,7 +25,15 @@ from llama_index.embeddings import OpenAIEmbedding
 from llama_index.llms import OpenAI
 from llama_index.vector_stores import PineconeVectorStore
 
+# Import vector store options
 import pinecone
+try:
+    from qdrant_client import QdrantClient
+    from llama_index.vector_stores import QdrantVectorStore
+    QDRANT_AVAILABLE = True
+except ImportError:
+    QDRANT_AVAILABLE = False
+
 import redis
 import structlog
 
@@ -69,16 +77,22 @@ class RAGPipeline:
             chunk_overlap=self.config['chunking_strategies']['default']['overlap']
         )
         
-        # Try Pinecone first, fall back to local storage
-        self.pinecone_available = False
-        try:
-            self._init_pinecone()
-            self._init_indexes()
-            self.pinecone_available = True
+        # Try vector stores in priority order: Qdrant > Pinecone > Local
+        self.vector_store_type = None
+        
+        # Try Qdrant first (better free tier)
+        if self._try_qdrant():
+            self.vector_store_type = "qdrant"
+            logger.info("Using Qdrant vector store")
+        # Fall back to Pinecone
+        elif self._try_pinecone():
+            self.vector_store_type = "pinecone" 
             logger.info("Using Pinecone vector store")
-        except Exception as e:
-            logger.warning("Pinecone not available, using local vector store", error=str(e))
+        # Fall back to local storage
+        else:
             self._init_local_index()
+            self.vector_store_type = "local"
+            logger.info("Using local vector store")
         
         # Initialize Redis for caching
         self._init_cache()
@@ -86,6 +100,85 @@ class RAGPipeline:
         logger.info("RAG Pipeline initialized", 
                    model=self.config['llm_config']['model'],
                    embedding_model=self.config['embedding_config']['model'])
+    
+    def _try_qdrant(self) -> bool:
+        """Try to initialize Qdrant vector store"""
+        if not QDRANT_AVAILABLE:
+            logger.warning("Qdrant client not available")
+            return False
+            
+        try:
+            qdrant_url = os.getenv("QDRANT_URL")
+            qdrant_api_key = os.getenv("QDRANT_API_KEY")
+            
+            if not qdrant_url:
+                logger.info("QDRANT_URL not set, skipping Qdrant")
+                return False
+                
+            # Initialize Qdrant client
+            self.qdrant_client = QdrantClient(
+                url=qdrant_url,
+                api_key=qdrant_api_key
+            )
+            
+            # Test connection
+            collections = self.qdrant_client.get_collections()
+            logger.info("Connected to Qdrant successfully")
+            
+            # Initialize Qdrant vector store
+            self.collection_name = "aaire-documents"
+            self.vector_store = QdrantVectorStore(
+                client=self.qdrant_client,
+                collection_name=self.collection_name
+            )
+            
+            self._init_qdrant_indexes()
+            return True
+            
+        except Exception as e:
+            logger.warning("Failed to initialize Qdrant", error=str(e))
+            return False
+    
+    def _try_pinecone(self) -> bool:
+        """Try to initialize Pinecone vector store"""
+        try:
+            self._init_pinecone()
+            self._init_indexes()
+            return True
+        except Exception as e:
+            logger.warning("Failed to initialize Pinecone", error=str(e))
+            return False
+    
+    def _init_qdrant_indexes(self):
+        """Initialize Qdrant collection and indexes"""
+        try:
+            # Check if collection exists
+            collections = self.qdrant_client.get_collections().collections
+            collection_names = [c.name for c in collections]
+            
+            if self.collection_name not in collection_names:
+                # Create collection if it doesn't exist
+                from qdrant_client.models import Distance, VectorParams
+                
+                self.qdrant_client.create_collection(
+                    collection_name=self.collection_name,
+                    vectors_config=VectorParams(
+                        size=1536,  # OpenAI embedding dimension
+                        distance=Distance.COSINE
+                    )
+                )
+                logger.info(f"Created Qdrant collection: {self.collection_name}")
+            
+            # Initialize storage context with Qdrant
+            self.storage_context = StorageContext.from_defaults(
+                vector_store=self.vector_store
+            )
+            
+            logger.info("Qdrant indexes initialized")
+            
+        except Exception as e:
+            logger.error("Failed to initialize Qdrant indexes", error=str(e))
+            raise
     
     def _init_pinecone(self):
         """Initialize Pinecone vector database using v2.x API for llama-index 0.9.x compatibility"""

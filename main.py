@@ -96,24 +96,75 @@ os.makedirs("static/js", exist_ok=True)
 security = HTTPBearer()
 
 # Initialize core components with fallbacks
+rag_pipeline = None
+compliance_engine = None
+document_processor = None
+external_api_manager = None
+auth_manager = None
+audit_logger = None
+
+logger.info("Starting component initialization...")
+
+# Initialize RAG Pipeline first
 try:
-    rag_pipeline = RAGPipeline() if RAGPipeline else None
-    compliance_engine = ComplianceEngine() if ComplianceEngine else None
-    document_processor = DocumentProcessor(rag_pipeline) if DocumentProcessor else None
-    external_api_manager = ExternalAPIManager(rag_pipeline) if ExternalAPIManager else None
-    auth_manager = AuthManager() if AuthManager else None
-    audit_logger = AuditLogger() if AuditLogger else None
-    
-    logger.info("All components initialized successfully")
+    if RAGPipeline:
+        logger.info("Initializing RAG Pipeline...")
+        rag_pipeline = RAGPipeline()
+        logger.info("✅ RAG Pipeline initialized successfully")
+    else:
+        logger.warning("❌ RAGPipeline class not available")
 except Exception as e:
-    logger.error("Component initialization failed", error=str(e))
-    # Create minimal fallback components
-    rag_pipeline = None
-    compliance_engine = None
-    document_processor = None
-    external_api_manager = None
-    auth_manager = None
-    audit_logger = None
+    logger.error("❌ RAG Pipeline initialization failed", error=str(e), exc_info=True)
+
+# Initialize other components
+try:
+    if ComplianceEngine:
+        compliance_engine = ComplianceEngine()
+        logger.info("✅ Compliance Engine initialized")
+    else:
+        logger.warning("❌ ComplianceEngine class not available")
+except Exception as e:
+    logger.error("❌ Compliance Engine initialization failed", error=str(e))
+
+try:
+    if DocumentProcessor:
+        document_processor = DocumentProcessor(rag_pipeline)
+        logger.info("✅ Document Processor initialized")
+    else:
+        logger.warning("❌ DocumentProcessor class not available")
+except Exception as e:
+    logger.error("❌ Document Processor initialization failed", error=str(e))
+
+try:
+    if ExternalAPIManager:
+        external_api_manager = ExternalAPIManager(rag_pipeline)
+        logger.info("✅ External API Manager initialized")
+    else:
+        logger.warning("❌ ExternalAPIManager class not available")
+except Exception as e:
+    logger.error("❌ External API Manager initialization failed", error=str(e))
+
+try:
+    if AuthManager:
+        auth_manager = AuthManager()
+        logger.info("✅ Auth Manager initialized")
+    else:
+        logger.warning("❌ AuthManager class not available")
+except Exception as e:
+    logger.error("❌ Auth Manager initialization failed", error=str(e))
+
+try:
+    if AuditLogger:
+        audit_logger = AuditLogger()
+        logger.info("✅ Audit Logger initialized")
+    else:
+        logger.warning("❌ AuditLogger class not available")
+except Exception as e:
+    logger.error("❌ Audit Logger initialization failed", error=str(e))
+
+logger.info("Component initialization complete", 
+           rag_pipeline_available=rag_pipeline is not None,
+           document_processor_available=document_processor is not None)
 
 # Request/Response Models per MVP API spec
 class ChatRequest(BaseModel):
