@@ -211,8 +211,12 @@ class AAIREApp {
         messageDiv.innerHTML = messageContent;
         messagesContainer.appendChild(messageDiv);
         
-        // Auto-scroll to bottom
-        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        // Force scroll to bottom with smooth behavior
+        setTimeout(() => {
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+            // Also trigger a scroll event to ensure it works
+            messagesContainer.dispatchEvent(new Event('scroll'));
+        }, 100);
         
         // Store message
         this.messages.push({
@@ -453,8 +457,20 @@ function exportChat() {
     URL.revokeObjectURL(url);
 }
 
+// Test function to add multiple messages for scroll testing
+function testScrolling() {
+    if (!window.app) return;
+    
+    for (let i = 1; i <= 20; i++) {
+        app.addMessage('user', `Test message ${i} - This is a longer message to test scrolling functionality in the chat interface.`);
+        app.addMessage('assistant', `Response ${i} - This is AAIRE's response to test message ${i}. The chat should automatically scroll to show the latest messages at the bottom.`);
+    }
+}
+
 // Initialize app when DOM is loaded
 let app;
 document.addEventListener('DOMContentLoaded', () => {
     app = new AAIREApp();
+    // Make app globally accessible for debugging
+    window.app = app;
 });
