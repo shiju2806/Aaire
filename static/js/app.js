@@ -259,10 +259,10 @@ class AAIREApp {
             const formData = new FormData();
             formData.append('file', file);
             
-            // Add required metadata
+            // Add required metadata (must match backend validation)
             const metadata = {
                 title: file.name.replace(/\.[^/.]+$/, ""), // Remove extension
-                source_type: "company", // Default to company documents
+                source_type: "COMPANY", // Must be uppercase - valid options: US_GAAP, IFRS, COMPANY, ACTUARIAL
                 effective_date: new Date().toISOString().split('T')[0], // Today's date
                 document_type: "uploaded_document",
                 uploaded_by: "web_interface"
@@ -279,17 +279,21 @@ class AAIREApp {
                 
                 if (response.ok) {
                     const result = await response.json();
+                    console.log('Upload success:', result);
                     progressFill.style.width = `${((i + 1) / files.length) * 100}%`;
                     
                     if (i === files.length - 1) {
                         statusDiv.textContent = 'Upload completed successfully!';
+                        statusDiv.style.color = '#2ecc71';
                         setTimeout(() => {
                             progressContainer.style.display = 'none';
                             progressFill.style.width = '0%';
-                        }, 2000);
+                        }, 3000);
                     }
                 } else {
-                    throw new Error(`Upload failed: ${response.statusText}`);
+                    const errorText = await response.text();
+                    console.error('Upload failed:', response.status, errorText);
+                    throw new Error(`Upload failed: ${response.status} ${response.statusText}`);
                 }
             } catch (error) {
                 console.error('Upload error:', error);
