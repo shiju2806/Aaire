@@ -259,6 +259,16 @@ class AAIREApp {
             const formData = new FormData();
             formData.append('file', file);
             
+            // Add required metadata
+            const metadata = {
+                title: file.name.replace(/\.[^/.]+$/, ""), // Remove extension
+                source_type: "company", // Default to company documents
+                effective_date: new Date().toISOString().split('T')[0], // Today's date
+                document_type: "uploaded_document",
+                uploaded_by: "web_interface"
+            };
+            formData.append('metadata', JSON.stringify(metadata));
+            
             statusDiv.textContent = `Uploading ${file.name} (${i + 1}/${files.length})...`;
             
             try {
