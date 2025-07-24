@@ -146,13 +146,18 @@
             display: flex;
             flex-direction: column;
             background: #f8f9fa;
+            height: 100%; /* Ensure full height */
+            min-height: 0; /* Allow shrinking */
         }
 
         .chat-messages {
             flex: 1;
             overflow-y: auto;
+            overflow-x: hidden;
             padding: 20px;
             background: #f8f9fa;
+            min-height: 0; /* Important for flex scrolling */
+            max-height: 100%; /* Prevent overflow of parent */
         }
 
         .message {
