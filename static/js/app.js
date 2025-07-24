@@ -47,6 +47,7 @@ class AAIREApp {
         const uploadArea = document.getElementById('upload-area');
         
         fileInput.addEventListener('change', (e) => {
+            console.log('File input change detected:', e.target.files.length, 'files');
             this.handleFileUpload(e.target.files);
         });
 
@@ -67,6 +68,7 @@ class AAIREApp {
         });
 
         uploadArea.addEventListener('click', () => {
+            console.log('Upload area clicked - triggering file input');
             document.getElementById('file-input').click();
         });
     }
@@ -252,7 +254,11 @@ class AAIREApp {
         const progressFill = document.getElementById('progress-fill');
         const statusDiv = document.getElementById('upload-status');
         
+        // Reset status color and text
+        statusDiv.style.color = '#333';
         progressContainer.style.display = 'block';
+        
+        console.log('Starting file upload for', files.length, 'files');
         
         for (let i = 0; i < files.length; i++) {
             const file = files[i];
@@ -490,6 +496,20 @@ function testScrolling() {
         app.addMessage('user', `Test message ${i} - This is a longer message to test scrolling functionality in the chat interface.`);
         app.addMessage('assistant', `Response ${i} - This is AAIRE's response to test message ${i}. The chat should automatically scroll to show the latest messages at the bottom.`);
     }
+}
+
+// Test function to simulate file upload
+function testUpload() {
+    if (!window.app) return;
+    
+    console.log('Testing upload functionality...');
+    
+    // Create a test CSV file (supported format)
+    const testContent = "Account Type,Premium,Reserves\nLife Insurance,1000000,800000\nProperty Insurance,500000,400000";
+    const testFile = new File([testContent], "test_upload.csv", { type: "text/csv" });
+    
+    // Simulate upload
+    app.handleFileUpload([testFile]);
 }
 
 // Initialize app when DOM is loaded
