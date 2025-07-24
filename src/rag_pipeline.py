@@ -25,7 +25,7 @@ from llama_index.embeddings import OpenAIEmbedding
 from llama_index.llms import OpenAI
 from llama_index.vector_stores import PineconeVectorStore
 
-from pinecone import Pinecone
+import pinecone
 import redis
 import structlog
 
