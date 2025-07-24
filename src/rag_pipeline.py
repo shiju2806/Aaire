@@ -500,7 +500,7 @@ Response:"""
             citation = {
                 "id": i + 1,
                 "text": doc['content'][:200] + "..." if len(doc['content']) > 200 else doc['content'],
-                "source": doc['metadata'].get('source', 'Unknown'),
+                "source": doc['metadata'].get('filename', doc['metadata'].get('source', 'Unknown')),
                 "source_type": doc['source_type'],
                 "confidence": round(doc['score'], 3)
             }
