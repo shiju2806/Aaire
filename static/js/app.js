@@ -368,13 +368,18 @@ class AAIREApp {
                                file.status === 'processing' ? 'processing' : 'error';
             
             return `
-                <div class="file-item">
+                <div class="file-item" data-job-id="${file.job_id}">
                     <div class="file-info">
                         <div class="file-name">${file.name}</div>
                         <div class="file-meta">${fileSize} • Uploaded ${uploadTime}</div>
                         <div class="file-meta">Job ID: ${file.job_id}</div>
                     </div>
-                    <div class="file-status ${statusClass}">${file.status}</div>
+                    <div class="file-actions">
+                        <div class="file-status ${statusClass}">${file.status}</div>
+                        <button class="delete-btn" onclick="window.app.deleteFile('${file.job_id}', '${file.name}')">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </div>
                 </div>
             `;
         }).join('');
@@ -405,6 +410,35 @@ class AAIREApp {
             }
         } catch (e) {
             console.warn('Could not load uploaded files:', e);
+        }
+    }
+
+    async deleteFile(jobId, fileName) {
+        if (!confirm(`Are you sure you want to delete "${fileName}"?`)) {
+            return;
+        }
+
+        try {
+            // Remove from local list immediately for better UX
+            this.uploadedFiles = this.uploadedFiles.filter(f => f.job_id !== jobId);
+            this.updateUploadedFilesList();
+            this.saveUploadedFiles();
+
+            // Call backend API to delete from vector store
+            const response = await fetch(`/api/v1/documents/${jobId}`, {
+                method: 'DELETE'
+            });
+
+            if (response.ok) {
+                console.log(`File ${fileName} deleted successfully`);
+            } else {
+                // If backend fails, add it back to the list
+                console.error('Failed to delete file from backend');
+                this.loadUploadedFiles(); // Reload from localStorage
+            }
+        } catch (error) {
+            console.error('Error deleting file:', error);
+            this.loadUploadedFiles(); // Reload from localStorage
         }
     }
 

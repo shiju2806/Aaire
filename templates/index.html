@@ -365,6 +365,12 @@
             flex: 1;
         }
 
+        .file-actions {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
         .file-name {
             font-weight: bold;
             color: #2c3e50;
@@ -403,6 +409,21 @@
             color: #bdc3c7;
             padding: 40px 20px;
             font-style: italic;
+        }
+
+        .delete-btn {
+            background: #e74c3c;
+            color: white;
+            border: none;
+            padding: 6px 10px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: background 0.3s;
+        }
+
+        .delete-btn:hover {
+            background: #c0392b;
         }
 
         /* Dashboard Section */

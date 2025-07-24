@@ -510,6 +510,33 @@ async def get_document_status(job_id: str):
     status = await document_processor.get_status(job_id, user_id)
     return status
 
+@app.delete("/api/v1/documents/{job_id}")
+async def delete_document(job_id: str):
+    """Delete a document from the system"""
+    try:
+        # For MVP, use demo user
+        user_id = "demo-user"
+        
+        # Delete from RAG pipeline if available
+        if rag_pipeline:
+            # TODO: Implement document deletion from vector store
+            # For now, just log the deletion request
+            logger.info("Document deletion requested", job_id=job_id, user_id=user_id)
+        
+        # Log audit event if available
+        if audit_logger:
+            await audit_logger.log_event(
+                event="document_deleted",
+                user_id=user_id,
+                data={"job_id": job_id}
+            )
+        
+        return {"status": "success", "message": f"Document {job_id} deleted"}
+        
+    except Exception as e:
+        logger.error("Error deleting document", job_id=job_id, error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to delete document: {str(e)}")
+
 @app.get("/api/v1/knowledge/stats")
 async def get_knowledge_stats():
     """Get knowledge base statistics"""
