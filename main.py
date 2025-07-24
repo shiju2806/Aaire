@@ -19,7 +19,9 @@ import logging
 import structlog
 import json
 import os
+import re
 from datetime import datetime
+from pathlib import Path
 
 # Import modules with fallbacks for MVP startup
 try:
@@ -138,6 +140,74 @@ class DocumentUploadResponse(BaseModel):
     status: str
     message: str
 
+async def search_uploaded_documents(query: str) -> str:
+    """Simple text search in uploaded documents"""
+    try:
+        uploads_dir = Path("data/uploads")
+        if not uploads_dir.exists():
+            return ""
+        
+        query_terms = query.lower().split()
+        matches = []
+        
+        for file_path in uploads_dir.glob("*"):
+            if file_path.is_file():
+                try:
+                    # For now, only handle text-based searches in basic text extraction
+                    if file_path.suffix.lower() == '.pdf':
+                        content = extract_pdf_text_simple(file_path)
+                    elif file_path.suffix.lower() in ['.txt', '.csv']:
+                        with open(file_path, 'r', encoding='utf-8') as f:
+                            content = f.read()
+                    else:
+                        continue
+                    
+                    # Simple keyword search
+                    content_lower = content.lower()
+                    relevant_sections = []
+                    
+                    for term in query_terms:
+                        if term in content_lower:
+                            # Find sentences containing the term
+                            sentences = re.split(r'[.!?]+', content)
+                            for sentence in sentences:
+                                if term in sentence.lower() and len(sentence.strip()) > 10:
+                                    relevant_sections.append(sentence.strip()[:200] + "...")
+                    
+                    if relevant_sections:
+                        matches.append(f"From {file_path.name}:\n" + "\n".join(relevant_sections[:3]))
+                        
+                except Exception as e:
+                    logger.warning(f"Error searching file {file_path}: {e}")
+                    continue
+        
+        return "\n\n".join(matches[:2]) if matches else ""
+        
+    except Exception as e:
+        logger.error(f"Error in document search: {e}")
+        return ""
+
+def extract_pdf_text_simple(file_path: Path) -> str:
+    """Simple PDF text extraction without dependencies"""
+    try:
+        # Try to import PyPDF2 if available
+        import PyPDF2
+        with open(file_path, 'rb') as file:
+            pdf_reader = PyPDF2.PdfReader(file)
+            text_content = []
+            for page in pdf_reader.pages:
+                try:
+                    text_content.append(page.extract_text())
+                except:
+                    continue
+            return "\n".join(text_content)
+    except ImportError:
+        logger.warning("PyPDF2 not available for PDF text extraction")
+        return ""
+    except Exception as e:
+        logger.warning(f"Error extracting PDF text: {e}")
+        return ""
+
 @app.get("/", response_class=HTMLResponse)
 async def root():
     """Serve the main frontend"""
@@ -222,13 +292,25 @@ async def chat(request: ChatRequest):
                 processing_time_ms=int((datetime.utcnow() - start_time).total_seconds() * 1000)
             )
         else:
-            # Fallback response when components aren't available
+            # Fallback response - try to search uploaded documents
             processing_time = int((datetime.utcnow() - start_time).total_seconds() * 1000)
             
+            # Simple text search in uploaded documents
+            document_matches = await search_uploaded_documents(request.query)
+            
+            if document_matches:
+                response_text = f"Based on your uploaded documents, here's what I found:\n\n{document_matches}\n\nNote: This is a basic text search. For full AI-powered analysis, please configure OpenAI API key."
+                citations = ["Uploaded company documents"]
+                confidence = 0.7
+            else:
+                response_text = f"I searched your uploaded documents but couldn't find specific information about '{request.query}'. For full AI-powered analysis of your documents, please configure OpenAI and Pinecone API keys."
+                citations = []
+                confidence = 0.3
+            
             return ChatResponse(
-                response=f"AAIRE MVP is initializing. Your query: '{request.query}' has been received. Please ensure all environment variables (OpenAI, Pinecone keys) are configured and restart the service.",
-                citations=[],
-                confidence=0.5,
+                response=response_text,
+                citations=citations,
+                confidence=confidence,
                 session_id=request.session_id or "fallback",
                 compliance_triggered=False,
                 processing_time_ms=processing_time
@@ -331,12 +413,23 @@ async def websocket_chat(websocket: WebSocket):
                             "confidence": rag_response.confidence
                         })
                     else:
-                        # Fallback response
+                        # Fallback response with document search
+                        document_matches = await search_uploaded_documents(query)
+                        
+                        if document_matches:
+                            message = f"Based on your uploaded documents:\n\n{document_matches}\n\nNote: This is basic text search. Configure OpenAI API key for full AI analysis."
+                            sources = ["Uploaded company documents"]
+                            confidence = 0.7
+                        else:
+                            message = f"I searched your uploaded documents but couldn't find information about '{query}'. Configure OpenAI and Pinecone API keys for full AI functionality."
+                            sources = []
+                            confidence = 0.3
+                        
                         await websocket.send_json({
                             "type": "response",
-                            "message": f"Thank you for your question: '{query}'. AAIRE is currently in setup mode. Please configure your OpenAI and Pinecone API keys to enable full functionality.",
-                            "sources": [],
-                            "confidence": 0.5
+                            "message": message,
+                            "sources": sources,
+                            "confidence": confidence
                         })
                         
                 except Exception as e:
