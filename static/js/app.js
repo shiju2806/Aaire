@@ -355,7 +355,28 @@ class AAIREApp {
     }
 
     saveChatHistory() {
-        localStorage.setItem('aaire_chat_history', JSON.stringify(this.messages));
+        try {
+            localStorage.setItem('aaire_chat_history', JSON.stringify(this.messages));
+        } catch (e) {
+            if (e.name === 'QuotaExceededError') {
+                // Clear old data if storage is full
+                console.warn('LocalStorage full, clearing old chat history');
+                localStorage.removeItem('aaire_chat_history');
+                localStorage.removeItem('aaire_session_id');
+                
+                // Keep only last 10 messages
+                if (this.messages.length > 10) {
+                    this.messages = this.messages.slice(-10);
+                }
+                
+                // Try saving again with reduced data
+                try {
+                    localStorage.setItem('aaire_chat_history', JSON.stringify(this.messages));
+                } catch (e2) {
+                    console.warn('Could not save chat history:', e2);
+                }
+            }
+        }
     }
 
     loadChatHistory() {
@@ -401,8 +422,13 @@ function clearChat() {
             </div>
         `;
         
-        app.messages = [];
-        app.saveChatHistory();
+        if (window.app) {
+            app.messages = [];
+            app.saveChatHistory();
+        }
+        
+        // Also clear localStorage directly
+        localStorage.removeItem('aaire_chat_history');
     }
 }
 
