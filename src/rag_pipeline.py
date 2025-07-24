@@ -79,10 +79,12 @@ class RAGPipeline:
         
         # Try vector stores in priority order: Qdrant > Pinecone > Local
         self.vector_store_type = None
+        self.index_name = None  # Will be set based on vector store type
         
         # Try Qdrant first (better free tier)
         if self._try_qdrant():
             self.vector_store_type = "qdrant"
+            self.index_name = self.collection_name  # Use Qdrant collection name
             logger.info("Using Qdrant vector store")
         # Fall back to Pinecone
         elif self._try_pinecone():
@@ -92,6 +94,7 @@ class RAGPipeline:
         else:
             self._init_local_index()
             self.vector_store_type = "local"
+            self.index_name = "local"
             logger.info("Using local vector store")
         
         # Initialize Redis for caching
@@ -173,6 +176,21 @@ class RAGPipeline:
             self.storage_context = StorageContext.from_defaults(
                 vector_store=self.vector_store
             )
+            
+            # Create or load index with Qdrant
+            try:
+                self.index = VectorStoreIndex.from_vector_store(
+                    vector_store=self.vector_store,
+                    service_context=self.service_context
+                )
+                logger.info("Loaded existing Qdrant index")
+            except:
+                self.index = VectorStoreIndex(
+                    nodes=[],
+                    storage_context=self.storage_context,
+                    service_context=self.service_context
+                )
+                logger.info("Created new Qdrant index")
             
             logger.info("Qdrant indexes initialized")
             
