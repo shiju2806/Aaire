@@ -329,6 +329,82 @@
             transition: width 0.3s;
         }
 
+        /* Uploaded Files */
+        .uploaded-files {
+            margin-top: 30px;
+            padding: 20px;
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        .uploaded-files h3 {
+            color: #2c3e50;
+            margin-bottom: 15px;
+            font-size: 18px;
+        }
+
+        .files-list {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .file-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 0;
+            border-bottom: 1px solid #ecf0f1;
+        }
+
+        .file-item:last-child {
+            border-bottom: none;
+        }
+
+        .file-info {
+            flex: 1;
+        }
+
+        .file-name {
+            font-weight: bold;
+            color: #2c3e50;
+            margin-bottom: 2px;
+        }
+
+        .file-meta {
+            font-size: 12px;
+            color: #7f8c8d;
+        }
+
+        .file-status {
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+
+        .file-status.success {
+            background: #d5f4e6;
+            color: #27ae60;
+        }
+
+        .file-status.processing {
+            background: #fef9e7;
+            color: #f39c12;
+        }
+
+        .file-status.error {
+            background: #fadbd8;
+            color: #e74c3c;
+        }
+
+        .no-files {
+            text-align: center;
+            color: #bdc3c7;
+            padding: 40px 20px;
+            font-style: italic;
+        }
+
         /* Dashboard Section */
         .dashboard-section {
             display: none;
@@ -544,6 +620,14 @@
                         <div class="progress-fill" id="progress-fill"></div>
                     </div>
                     <div id="upload-status">Uploading...</div>
+                </div>
+                
+                <!-- Uploaded Files List -->
+                <div class="uploaded-files" id="uploaded-files">
+                    <h3>Uploaded Documents</h3>
+                    <div class="files-list" id="files-list">
+                        <div class="no-files">No files uploaded yet</div>
+                    </div>
                 </div>
             </div>
 

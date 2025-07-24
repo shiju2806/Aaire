@@ -10,6 +10,7 @@ class AAIREApp {
         this.sessionStart = Date.now();
         this.queryCount = 0;
         this.messages = [];
+        this.uploadedFiles = [];
         
         this.init();
     }
@@ -20,6 +21,7 @@ class AAIREApp {
         this.checkAPIHealth();
         this.updateSessionTimer();
         this.loadChatHistory();
+        this.loadUploadedFiles();
     }
 
     setupEventListeners() {
@@ -304,6 +306,17 @@ class AAIREApp {
                     console.log('Upload success:', result);
                     progressFill.style.width = `${((i + 1) / files.length) * 100}%`;
                     
+                    // Add to uploaded files list
+                    this.addUploadedFile({
+                        name: file.name,
+                        size: file.size,
+                        type: file.type,
+                        job_id: result.job_id,
+                        status: result.status,
+                        message: result.message,
+                        uploaded_at: new Date().toISOString()
+                    });
+                    
                     if (i === files.length - 1) {
                         statusDiv.textContent = 'Upload completed successfully!';
                         statusDiv.style.color = '#2ecc71';
@@ -331,6 +344,67 @@ class AAIREApp {
                 statusDiv.textContent = `Upload failed: ${error.message}`;
                 statusDiv.style.color = '#e74c3c';
             }
+        }
+    }
+
+    addUploadedFile(fileInfo) {
+        this.uploadedFiles.unshift(fileInfo); // Add to beginning of array
+        this.updateUploadedFilesList();
+        this.saveUploadedFiles();
+    }
+
+    updateUploadedFilesList() {
+        const filesList = document.getElementById('files-list');
+        
+        if (this.uploadedFiles.length === 0) {
+            filesList.innerHTML = '<div class="no-files">No files uploaded yet</div>';
+            return;
+        }
+
+        filesList.innerHTML = this.uploadedFiles.map(file => {
+            const fileSize = this.formatFileSize(file.size);
+            const uploadTime = new Date(file.uploaded_at).toLocaleString();
+            const statusClass = file.status === 'accepted' ? 'success' : 
+                               file.status === 'processing' ? 'processing' : 'error';
+            
+            return `
+                <div class="file-item">
+                    <div class="file-info">
+                        <div class="file-name">${file.name}</div>
+                        <div class="file-meta">${fileSize} • Uploaded ${uploadTime}</div>
+                        <div class="file-meta">Job ID: ${file.job_id}</div>
+                    </div>
+                    <div class="file-status ${statusClass}">${file.status}</div>
+                </div>
+            `;
+        }).join('');
+    }
+
+    formatFileSize(bytes) {
+        if (bytes === 0) return '0 Bytes';
+        const k = 1024;
+        const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    }
+
+    saveUploadedFiles() {
+        try {
+            localStorage.setItem('aaire_uploaded_files', JSON.stringify(this.uploadedFiles));
+        } catch (e) {
+            console.warn('Could not save uploaded files:', e);
+        }
+    }
+
+    loadUploadedFiles() {
+        try {
+            const saved = localStorage.getItem('aaire_uploaded_files');
+            if (saved) {
+                this.uploadedFiles = JSON.parse(saved);
+                this.updateUploadedFilesList();
+            }
+        } catch (e) {
+            console.warn('Could not load uploaded files:', e);
         }
     }
 
@@ -535,6 +609,16 @@ function testFileInput() {
     console.log('Clicking file input...');
     if (fileInput) {
         fileInput.click();
+    }
+}
+
+// Function to clear uploaded files list
+function clearUploadedFiles() {
+    if (window.app) {
+        app.uploadedFiles = [];
+        app.updateUploadedFilesList();
+        app.saveUploadedFiles();
+        console.log('Uploaded files list cleared');
     }
 }
 
