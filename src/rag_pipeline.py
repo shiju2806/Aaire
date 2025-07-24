@@ -54,8 +54,7 @@ class RAGPipeline:
         )
         
         self.embedding_model = OpenAIEmbedding(
-            model=self.config['embedding_config']['model'],
-            dimensions=self.config['embedding_config']['dimensions']
+            model=self.config['embedding_config']['model']
         )
         
         # Initialize service context
@@ -109,7 +108,7 @@ class RAGPipeline:
                 # Create index using v2.x API format
                 pinecone.create_index(
                     name=self.index_name,
-                    dimension=self.config['embedding_config']['dimensions'],
+                    dimension=1536,  # Standard OpenAI embedding dimension
                     metric="cosine"
                 )
                 logger.info(f"Created Pinecone index: {self.index_name}")
