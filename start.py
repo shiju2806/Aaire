@@ -9,6 +9,17 @@ import os
 import subprocess
 import importlib.util
 
+# Load environment variables from .env file before checking
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+    print("✅ Loaded .env file")
+except ImportError:
+    print("⚠️  python-dotenv not installed - .env file not loaded")
+    print("   Environment variables must be set in shell")
+except Exception as e:
+    print(f"⚠️  Error loading .env file: {e}")
+
 def check_module(module_name):
     """Check if a module can be imported"""
     try:
@@ -39,8 +50,24 @@ def check_environment():
     required_env = ['OPENAI_API_KEY']
     optional_env = ['PINECONE_API_KEY', 'FRED_API_KEY']
     
-    missing_required = [var for var in required_env if not os.getenv(var)]
-    missing_optional = [var for var in optional_env if not os.getenv(var)]
+    missing_required = []
+    missing_optional = []
+    
+    # Check required variables
+    for var in required_env:
+        value = os.getenv(var)
+        if not value or value == f"your_{var.lower()}_here":
+            missing_required.append(var)
+    
+    # Check optional variables
+    for var in optional_env:
+        value = os.getenv(var)
+        if not value or value == f"your_{var.lower()}_here":
+            missing_optional.append(var)
+    
+    # Check if .env file exists
+    if not os.path.exists('.env') and (missing_required or missing_optional):
+        print("💡 No .env file found. Create one with: cp .env.example .env")
     
     return missing_required, missing_optional
 
@@ -77,6 +104,7 @@ def main():
         print("   - Sample responses for testing")
         print("   - No AI/RAG functionality")
         print()
+        print("🌐 Access web interface at: http://localhost:8000")
         print("📊 Access API docs at: http://localhost:8000/api/docs")
         print("🔄 Configure missing items above and restart for full functionality")
         print()
@@ -97,6 +125,7 @@ def main():
         print("   - Document processing")
         print("   - External API integration")
         print()
+        print("🌐 Access web interface at: http://localhost:8000")
         print("📊 Access API docs at: http://localhost:8000/api/docs")
         print()
         
