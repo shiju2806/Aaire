@@ -497,23 +497,13 @@ Response:"""
         citations = []
         
         for i, doc in enumerate(retrieved_docs[:5]):
-            # Build source description
+            # Get filename for source
             filename = doc['metadata'].get('filename', 'Unknown')
-            page = doc['metadata'].get('page', '')
-            section = doc['metadata'].get('section', '')
-            
-            source_desc = filename
-            if page:
-                source_desc += f" (Page {page})"
-            elif section:
-                source_desc += f" ({section})"
-            else:
-                source_desc += f" (Section {i+1})"
             
             citation = {
                 "id": i + 1,
                 "text": doc['content'][:200] + "..." if len(doc['content']) > 200 else doc['content'],
-                "source": source_desc,
+                "source": filename,
                 "source_type": doc['source_type'],
                 "confidence": round(doc['score'], 3)
             }

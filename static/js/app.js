@@ -216,8 +216,10 @@ class AAIREApp {
         
         // Add sources if available
         if (sources && sources.length > 0) {
-            messageContent += '<br><br><small><strong>Sources:</strong><br>';
-            sources.forEach(source => {
+            // Deduplicate sources
+            const uniqueSources = [...new Set(sources)];
+            messageContent += '<br><br><small><strong>Source:</strong><br>';
+            uniqueSources.forEach(source => {
                 messageContent += `• ${source}<br>`;
             });
             messageContent += '</small>';
