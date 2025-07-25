@@ -697,6 +697,53 @@ async def debug_clear_cache():
     
     return await rag_pipeline.clear_all_cache()
 
+@app.post("/api/v1/debug/reset-vector-db")
+async def debug_reset_vector_db():
+    """Debug endpoint to completely reset the vector database (DESTRUCTIVE)"""
+    if not rag_pipeline:
+        raise HTTPException(status_code=503, detail="RAG pipeline not available")
+    
+    if rag_pipeline.vector_store_type != "qdrant":
+        raise HTTPException(status_code=400, detail="Vector database reset only supported for Qdrant")
+    
+    try:
+        # Delete the entire collection
+        rag_pipeline.qdrant_client.delete_collection(rag_pipeline.collection_name)
+        
+        # Recreate empty collection
+        from qdrant_client.models import Distance, VectorParams, PayloadSchemaType
+        rag_pipeline.qdrant_client.create_collection(
+            collection_name=rag_pipeline.collection_name,
+            vectors_config=VectorParams(
+                size=1536,  # OpenAI embedding dimension
+                distance=Distance.COSINE
+            )
+        )
+        
+        # Recreate job_id index
+        try:
+            rag_pipeline.qdrant_client.create_payload_index(
+                collection_name=rag_pipeline.collection_name,
+                field_name="job_id",
+                field_schema=PayloadSchemaType.KEYWORD
+            )
+        except:
+            pass  # Index creation can fail if it already exists
+        
+        # Clear all cache
+        await rag_pipeline.clear_all_cache()
+        
+        return {
+            "status": "success",
+            "message": "Vector database completely reset - all documents deleted",
+            "collection": rag_pipeline.collection_name,
+            "vector_store": rag_pipeline.vector_store_type
+        }
+        
+    except Exception as e:
+        logger.error("Failed to reset vector database", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Reset failed: {str(e)}")
+
 @app.get("/api/v1/external/refresh")
 async def refresh_external_data():
     """Trigger refresh of external data sources"""

@@ -578,11 +578,10 @@ Response:"""
         # Common general knowledge question patterns (only if no document indicators)
         general_patterns = [
             r'^\s*what is\s+[a-z\s]+\??$',  # Simple "what is X?" questions
-            r'^\s*define\s+',
-            r'^\s*explain\s+[a-z\s]+\s+(concept|principle|term)s?\??$',
-            r'^\s*how\s+does\s+.*\s+work\??$',
-            r'^\s*what\s+does\s+.*\s+mean\??$',
-            r'^\s*what\s+are\s+.*\s+(concept|principle)s?\??$'
+            r'^\s*define\s+[a-z\s]+\??$',   # Simple "define X" questions
+            r'^\s*what\s+does\s+[a-z\s]+\s+mean\??$',  # Simple "what does X mean" questions
+            r'^\s*what\s+are\s+the\s+types\s+of\s+[a-z\s?]+\??$',  # "what are the types of X" questions
+            r'^\s*how\s+does\s+[a-z\s]+\s+work\??$'  # Simple "how does X work" questions
         ]
         
         for pattern in general_patterns:

@@ -33,6 +33,7 @@ def _is_general_knowledge_query(query: str) -> bool:
         r'^\s*explain\s+[a-z\s]+\s+(concept|principle|term)s?\??$',
         r'^\s*how\s+does\s+.*\s+work\??$',
         r'^\s*what\s+does\s+.*\s+mean\??$',
+        r'^\s*what\s+are\s+the\s+types\s+of\s+[a-z\s?]+\??$',  # "what are the types of X" questions
         r'^\s*what\s+are\s+.*\s+(concept|principle)s?\??$'
     ]
     
@@ -54,12 +55,14 @@ def test_queries():
         ("how does accounting work?", True),
         ("what does accrual mean", True),
         ("what are basic accounting concepts", True),
+        ("what are the types of lease accounting?", True),
         
         # Specific document queries (should return False)
         ("what is our company's accounts payable policy", False),
         ("show me the accounts payable procedures", False),
         ("find accounts payable in the uploaded document", False),
         ("can you explain the csm rules for re-insurance? how is it different from underlying csm?", False),
+        ("explain the csm approach used in our company", False),
         ("what are the specific accounting standards mentioned in the document", False),
         ("analyze the financial statements", False),
     ]
