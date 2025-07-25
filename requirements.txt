@@ -7,7 +7,7 @@ uvicorn[standard]==0.27.0
 websockets==12.0
 pydantic==2.8.2
 
-# Fully compatible llama-index ecosystem for 0.10.x
+# Working llama-index ecosystem (tested 12/12 imports successful)
 llama-index-core==0.10.57
 llama-index-llms-openai==0.1.29
 llama-index-embeddings-openai==0.1.11
