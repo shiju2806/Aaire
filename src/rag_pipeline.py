@@ -114,32 +114,39 @@ class RAGPipeline:
             qdrant_url = os.getenv("QDRANT_URL")
             qdrant_api_key = os.getenv("QDRANT_API_KEY")
             
+            logger.info(f"Attempting Qdrant initialization with URL: {qdrant_url}")
+            
             if not qdrant_url:
                 logger.info("QDRANT_URL not set, skipping Qdrant")
                 return False
                 
             # Initialize Qdrant client
+            logger.info("Creating Qdrant client...")
             self.qdrant_client = QdrantClient(
                 url=qdrant_url,
                 api_key=qdrant_api_key
             )
             
             # Test connection
+            logger.info("Testing Qdrant connection...")
             collections = self.qdrant_client.get_collections()
-            logger.info("Connected to Qdrant successfully")
+            logger.info("✅ Connected to Qdrant successfully")
             
             # Initialize Qdrant vector store
             self.collection_name = "aaire-documents"
+            logger.info(f"Initializing QdrantVectorStore with collection: {self.collection_name}")
             self.vector_store = QdrantVectorStore(
                 client=self.qdrant_client,
                 collection_name=self.collection_name
             )
             
+            logger.info("Initializing Qdrant indexes...")
             self._init_qdrant_indexes()
+            logger.info("✅ Qdrant initialization complete")
             return True
             
         except Exception as e:
-            logger.info("Qdrant initialization failed, trying Pinecone", error=str(e)[:100])
+            logger.error("❌ Qdrant initialization failed", error=str(e), exc_info=True)
             return False
     
     def _try_pinecone(self) -> bool:
