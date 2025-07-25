@@ -169,7 +169,7 @@ class AAIREApp {
     handleWebSocketMessage(data) {
         if (data.type === 'response') {
             this.hideTypingIndicator();
-            this.addMessage('assistant', data.message, data.sources);
+            this.addMessage('assistant', data.message, data.sources, data.followUpQuestions);
         } else if (data.type === 'error') {
             this.hideTypingIndicator();
             this.addMessage('error', `Error: ${data.message}`);
@@ -226,7 +226,13 @@ class AAIREApp {
             if (response.ok) {
                 const data = await response.json();
                 this.hideTypingIndicator();
-                this.addMessage('assistant', data.answer, data.citations);
+                // Add some example follow-up questions for testing
+                const testFollowUpQuestions = data.followUpQuestions || [
+                    "Can you explain this in more detail?",
+                    "What are the practical implications?",
+                    "How does this compare to IFRS standards?"
+                ];
+                this.addMessage('assistant', data.answer, data.citations, testFollowUpQuestions);
             } else {
                 this.hideTypingIndicator();
                 this.addMessage('assistant', 'Sorry, I encountered an error processing your request. Please try again.');
@@ -270,7 +276,7 @@ class AAIREApp {
         return formatted;
     }
     
-    addMessage(sender, content, sources = null) {
+    addMessage(sender, content, sources = null, followUpQuestions = null) {
         const messagesContainer = document.getElementById('chat-messages');
         const messageDiv = document.createElement('div');
         messageDiv.className = `message ${sender}`;
@@ -296,6 +302,20 @@ class AAIREApp {
                 messageContent += `• ${source}<br>`;
             });
             messageContent += '</small>';
+        }
+        
+        // Add follow-up questions for assistant messages
+        if (sender === 'assistant' && followUpQuestions && followUpQuestions.length > 0) {
+            messageContent += '<div class="follow-up-questions">';
+            messageContent += '<div class="follow-up-title">💡 Suggested follow-up questions:</div>';
+            followUpQuestions.forEach((question, index) => {
+                messageContent += `
+                    <button class="follow-up-btn" onclick="askFollowUpQuestion('${question.replace(/'/g, "\\'")}')">
+                        ${question}
+                    </button>
+                `;
+            });
+            messageContent += '</div>';
         }
         
         // Add copy button for assistant messages (inside the message content)
@@ -1239,8 +1259,24 @@ function testFileInput() {
 
 // Global functions for HTML onclick handlers
 function sendMessage() {
+    console.log('Global sendMessage called');
     if (window.app) {
+        console.log('App exists, calling app.sendMessage()');
         window.app.sendMessage();
+    } else {
+        console.error('App not initialized');
+    }
+}
+
+function askFollowUpQuestion(question) {
+    if (window.app) {
+        // Set the question in the input field
+        const input = document.getElementById('chat-input');
+        if (input) {
+            input.value = question;
+            // Trigger the send
+            window.app.sendMessage();
+        }
     }
 }
 
