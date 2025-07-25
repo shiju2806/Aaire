@@ -359,11 +359,13 @@ async def chat(request: ChatRequest):
         
         # Process query through RAG pipeline if available
         if rag_pipeline:
+            logger.info(f"Using RAG pipeline for query: {request.query}")
             rag_response = await rag_pipeline.process_query(
                 query=request.query,
                 filters=request.filters,
                 user_context={}
             )
+            logger.info(f"RAG response citations count: {len(rag_response.citations)}")
             
             processing_time = int((datetime.utcnow() - start_time).total_seconds() * 1000)
             session_id = request.session_id or rag_response.session_id
