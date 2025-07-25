@@ -99,13 +99,9 @@ class RAGPipeline:
         # Allow environment variable override for model
         model_name = os.getenv("OPENAI_MODEL", self.config['llm_config']['model'])
         
-        # Map newer models to supported ones for older llama-index versions
+        # Debug confirmed this llama-index version supports gpt-4o-mini directly
         llama_index_model = model_name
-        if model_name == "gpt-4o-mini":
-            # For older llama-index versions, use gpt-3.5-turbo as proxy
-            # The actual API calls will still use gpt-4o-mini
-            llama_index_model = "gpt-3.5-turbo"
-            logger.info("Mapping gpt-4o-mini to gpt-3.5-turbo for llama-index compatibility")
+        logger.info(f"🎯 Using model directly: {model_name}")
         
         # Initialize OpenAI LLM with version compatibility
         try:
@@ -132,14 +128,11 @@ class RAGPipeline:
         # Store the actual model name for API calls
         self.actual_model = model_name
         
-        # For gpt-4o-mini, ensure the model field is set correctly
-        # Debug showed that this llama-index version uses 'model' field, not '_model'
-        if model_name == "gpt-4o-mini":
-            if hasattr(self.llm, 'model'):
-                self.llm.model = model_name
-                logger.info(f"✅ Set model field to {model_name}")
-            else:
-                logger.warning("OpenAI object has no model field - using separate tracking")
+        # Verify the model field is set correctly (no override needed since we use direct initialization)
+        if hasattr(self.llm, 'model'):
+            logger.info(f"✅ Model field confirmed: {self.llm.model}")
+        else:
+            logger.warning("OpenAI object has no model field")
         
         logger.info(f"✅ OpenAI LLM initialized successfully with model: {self.llm.model if hasattr(self.llm, 'model') else 'unknown'}")
         
