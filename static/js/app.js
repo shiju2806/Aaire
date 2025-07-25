@@ -182,7 +182,7 @@ class AAIREApp {
         const input = document.getElementById('chat-input');
         const message = input.value.trim();
         
-        if (!message || !this.connected) return;
+        if (!message) return;
         
         // Add user message to chat
         this.addMessage('user', message);
@@ -194,15 +194,48 @@ class AAIREApp {
         // Show typing indicator
         this.showTypingIndicator();
         
-        // Send via WebSocket
-        this.ws.send(JSON.stringify({
-            type: 'query',
-            message: message,
-            session_id: this.getSessionId()
-        }));
+        // Send via WebSocket if connected, otherwise use HTTP fallback
+        if (this.connected && this.ws && this.ws.readyState === WebSocket.OPEN) {
+            this.ws.send(JSON.stringify({
+                type: 'query',
+                message: message,
+                session_id: this.getSessionId()
+            }));
+        } else {
+            // HTTP fallback when WebSocket is not available
+            this.sendMessageHTTP(message);
+        }
         
         this.queryCount++;
         this.updateQueryCount();
+    }
+
+    async sendMessageHTTP(message) {
+        try {
+            const response = await fetch('/api/query', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    message: message,
+                    session_id: this.getSessionId()
+                })
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                this.hideTypingIndicator();
+                this.addMessage('assistant', data.answer, data.citations);
+            } else {
+                this.hideTypingIndicator();
+                this.addMessage('assistant', 'Sorry, I encountered an error processing your request. Please try again.');
+            }
+        } catch (error) {
+            console.error('HTTP fallback error:', error);
+            this.hideTypingIndicator();
+            this.addMessage('assistant', 'Sorry, I encountered a connection error. Please check your internet connection and try again.');
+        }
     }
 
     formatMessageContent(content) {
