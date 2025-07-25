@@ -108,40 +108,51 @@ class RAGPipeline:
             logger.info("Mapping gpt-4o-mini to gpt-3.5-turbo for llama-index compatibility")
         
         # Initialize OpenAI LLM with version compatibility
+        logger.info(f"Attempting to initialize OpenAI with model: {llama_index_model}")
         try:
             self.llm = OpenAI(
                 model=llama_index_model,
                 temperature=self.config['llm_config']['temperature'],
                 max_tokens=self.config['llm_config']['max_tokens']
             )
+            logger.info("✅ OpenAI initialized successfully with model parameter")
         except Exception as e:
-            logger.error(f"Failed to initialize OpenAI with model parameter: {e}")
+            logger.error(f"❌ Failed to initialize OpenAI with model parameter: {e}")
             # Try older initialization pattern
             try:
                 self.llm = OpenAI(
                     temperature=self.config['llm_config']['temperature'],
                     max_tokens=self.config['llm_config']['max_tokens']
                 )
+                logger.info("✅ OpenAI initialized without model parameter")
                 # Set model after initialization if possible
                 if hasattr(self.llm, 'model'):
                     self.llm.model = llama_index_model
+                    logger.info(f"✅ Set model attribute to {llama_index_model}")
             except Exception as e2:
-                logger.error(f"Failed to initialize OpenAI with fallback: {e2}")
+                logger.error(f"❌ Failed to initialize OpenAI with fallback: {e2}")
                 raise e2
         
         # Store the actual model name for API calls
         self.actual_model = model_name
+        logger.info(f"Stored actual model name: {model_name}")
+        
         if model_name == "gpt-4o-mini":
+            logger.info("Attempting to set gpt-4o-mini model override...")
             # Try different ways to set the model for API calls
             try:
                 self.llm._model = model_name
-                logger.info("Set _model field for gpt-4o-mini")
-            except (AttributeError, TypeError):
+                logger.info("✅ Set _model field for gpt-4o-mini")
+            except (AttributeError, TypeError) as e:
+                logger.info(f"⚠️ Cannot set _model field: {e}")
                 try:
                     if hasattr(self.llm, 'model'):
                         self.llm.model = model_name
-                        logger.info("Set model field for gpt-4o-mini")
-                except:
+                        logger.info("✅ Set model field for gpt-4o-mini")
+                    else:
+                        logger.info("⚠️ No model attribute available")
+                except Exception as e2:
+                    logger.info(f"⚠️ Cannot set model field: {e2}")
                     # Older llama-index version - store separately
                     logger.info("Using separate model tracking for older llama-index compatibility")
         
