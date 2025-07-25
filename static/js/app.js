@@ -264,7 +264,25 @@ class AAIREApp {
         messageContent += `<div class="message-meta">${new Date().toLocaleTimeString()}</div>`;
         messageContent += '</div>';
         
+        // Add copy button for assistant messages
+        if (sender === 'assistant') {
+            const copyBtnId = `copy-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+            messageContent += `
+                <button class="copy-btn" id="${copyBtnId}" title="Copy response">
+                    <i class="fas fa-copy"></i>
+                </button>
+            `;
+        }
+        
         messageDiv.innerHTML = messageContent;
+        
+        // Add copy functionality if it's an assistant message
+        if (sender === 'assistant') {
+            const copyBtn = messageDiv.querySelector('.copy-btn');
+            copyBtn.addEventListener('click', () => {
+                this.copyToClipboard(content, copyBtn);
+            });
+        }
         messagesContainer.appendChild(messageDiv);
         
         // Force scroll to bottom with smooth behavior
@@ -283,6 +301,33 @@ class AAIREApp {
         });
         
         this.saveChatHistory();
+    }
+
+    copyToClipboard(text, button) {
+        // Copy text to clipboard
+        navigator.clipboard.writeText(text).then(() => {
+            // Change icon to checkmark
+            const icon = button.querySelector('i');
+            icon.className = 'fas fa-check';
+            button.style.color = '#2ecc71';
+            
+            // Reset after 2 seconds
+            setTimeout(() => {
+                icon.className = 'fas fa-copy';
+                button.style.color = '';
+            }, 2000);
+        }).catch(err => {
+            console.error('Failed to copy text:', err);
+            // Show error state
+            const icon = button.querySelector('i');
+            icon.className = 'fas fa-times';
+            button.style.color = '#e74c3c';
+            
+            setTimeout(() => {
+                icon.className = 'fas fa-copy';
+                button.style.color = '';
+            }, 2000);
+        });
     }
 
     showTypingIndicator() {
