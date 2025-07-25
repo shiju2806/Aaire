@@ -10,11 +10,10 @@ llama-index==0.12.7
 llama-index-core==0.12.7
 
 # Essential llama-index components that must be installed separately in 0.12.x
-llama-index-readers-file==0.1.15
-llama-index-llms-openai==0.3.0
-llama-index-embeddings-openai==0.2.5
-llama-index-vector-stores-qdrant==0.6.1
-llama-index-indices-managed-llama-cloud==0.3.0
+llama-index-readers-file>=0.4.0
+llama-index-llms-openai>=0.3.0
+llama-index-embeddings-openai>=0.2.5
+llama-index-vector-stores-qdrant>=0.6.1
 
 # Vector Database
 qdrant-client==1.7.3
