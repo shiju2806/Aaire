@@ -42,11 +42,12 @@ import structlog
 logger = structlog.get_logger()
 
 class RAGResponse:
-    def __init__(self, answer: str, citations: List[Dict], confidence: float, session_id: str):
+    def __init__(self, answer: str, citations: List[Dict], confidence: float, session_id: str, follow_up_questions: List[str] = None):
         self.answer = answer
         self.citations = citations
         self.confidence = confidence
         self.session_id = session_id
+        self.follow_up_questions = follow_up_questions or []
 
 class RAGPipeline:
     def __init__(self, config_path: str = "config/mvp_config.yaml"):
@@ -359,11 +360,15 @@ class RAGPipeline:
                     citations = []
                     confidence = 0.3  # Low confidence for general knowledge responses
             
+            # Generate contextual follow-up questions
+            follow_up_questions = await self._generate_follow_up_questions(query, response, retrieved_docs)
+            
             rag_response = RAGResponse(
                 answer=response,
                 citations=citations,
                 confidence=confidence,
-                session_id=session_id
+                session_id=session_id,
+                follow_up_questions=follow_up_questions
             )
             
             # Cache the response
@@ -519,6 +524,70 @@ Response:"""
             logger.error("Failed to generate response", error=str(e))
             return "I apologize, but I'm unable to generate a response at this time. Please try again."
     
+    async def _generate_follow_up_questions(self, query: str, response: str, retrieved_docs: List[Dict]) -> List[str]:
+        """Generate contextual follow-up questions based on the query and response"""
+        
+        # Determine context for better follow-up questions
+        topic_context = ""
+        if retrieved_docs:
+            # Use document context for specific follow-ups
+            topics = []
+            for doc in retrieved_docs[:3]:  # Use top 3 documents for context
+                if 'source' in doc.get('metadata', {}):
+                    topics.append(doc['metadata']['source'])
+            if topics:
+                topic_context = f"Related to documents: {', '.join(topics[:2])}"
+        
+        prompt = f"""As AAIRE, an insurance accounting and actuarial expert, generate 2-3 specific follow-up questions that would help the user understand this topic better.
+
+Original Question: {query}
+
+My Response: {response}
+
+{topic_context}
+
+Instructions:
+- Generate exactly 2-3 concise, specific follow-up questions
+- Focus on practical applications, comparisons, or deeper explanations
+- Make questions relevant to insurance accounting, actuarial science, or compliance
+- Keep questions under 15 words each
+- Format as a simple list, one question per line
+- No numbering, bullets, or extra formatting
+- Questions should encourage deeper understanding
+
+Examples of good follow-up questions:
+"How does this apply to life insurance reserves?"
+"What are the IFRS differences?"
+"How do auditors typically test this?"
+
+Follow-up Questions:"""
+
+        try:
+            response_obj = self.llm.complete(prompt)
+            questions_text = response_obj.text.strip()
+            
+            # Parse the response into individual questions
+            questions = []
+            for line in questions_text.split('\n'):
+                line = line.strip()
+                if line and len(line) > 10:  # Filter out empty or very short lines
+                    # Clean up any unwanted formatting
+                    clean_question = line.strip('- •').strip()
+                    if clean_question.endswith('?'):
+                        questions.append(clean_question)
+            
+            # Return max 3 questions
+            return questions[:3]
+            
+        except Exception as e:
+            logger.error("Failed to generate follow-up questions", error=str(e))
+            # Return fallback questions if generation fails
+            return [
+                "Can you explain this in more detail?",
+                "What are the practical implications?",
+                "How does this apply in practice?"
+            ]
+    
     def _is_general_knowledge_query(self, query: str) -> bool:
         """Check if query is asking for general knowledge vs specific document content"""
         query_lower = query.lower()
@@ -629,7 +698,8 @@ Response:"""
         return json.dumps({
             'answer': response.answer,
             'citations': response.citations,
-            'confidence': response.confidence
+            'confidence': response.confidence,
+            'follow_up_questions': response.follow_up_questions
         })
     
     def _deserialize_response(self, cached_data: str, session_id: str) -> RAGResponse:
@@ -640,7 +710,8 @@ Response:"""
             answer=data['answer'],
             citations=data['citations'],
             confidence=data['confidence'],
-            session_id=session_id
+            session_id=session_id,
+            follow_up_questions=data.get('follow_up_questions', [])
         )
     
     async def delete_document(self, job_id: str) -> Dict[str, Any]:

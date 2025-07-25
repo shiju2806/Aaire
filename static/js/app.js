@@ -179,11 +179,26 @@ class AAIREApp {
     }
 
     sendMessage() {
+        console.log('📨 App.sendMessage() called');
+        
         const input = document.getElementById('chat-input');
+        console.log('📝 Input element:', input ? 'FOUND' : 'NOT FOUND');
+        
+        if (!input) {
+            console.error('❌ Chat input element not found');
+            alert('Error: Chat input not found');
+            return;
+        }
+        
         const message = input.value.trim();
+        console.log('💬 Message content:', message || 'EMPTY');
         
-        if (!message) return;
+        if (!message) {
+            console.log('⚠️ Empty message, returning');
+            return;
+        }
         
+        console.log('✅ Adding user message to chat');
         // Add user message to chat
         this.addMessage('user', message);
         
@@ -192,33 +207,39 @@ class AAIREApp {
         input.style.height = 'auto';
         
         // Show typing indicator
+        console.log('⏳ Showing typing indicator');
         this.showTypingIndicator();
         
         // Send via WebSocket if connected, otherwise use HTTP fallback
+        console.log('🌐 Connection status - connected:', this.connected, 'ws state:', this.ws ? this.ws.readyState : 'NULL');
+        
         if (this.connected && this.ws && this.ws.readyState === WebSocket.OPEN) {
+            console.log('📡 Sending via WebSocket');
             this.ws.send(JSON.stringify({
                 type: 'query',
                 message: message,
                 session_id: this.getSessionId()
             }));
         } else {
+            console.log('🔄 Using HTTP fallback');
             // HTTP fallback when WebSocket is not available
             this.sendMessageHTTP(message);
         }
         
         this.queryCount++;
         this.updateQueryCount();
+        console.log('✅ App.sendMessage() completed');
     }
 
     async sendMessageHTTP(message) {
         try {
-            const response = await fetch('/api/query', {
+            const response = await fetch('/api/v1/chat', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
-                    message: message,
+                    query: message,
                     session_id: this.getSessionId()
                 })
             });
@@ -226,13 +247,7 @@ class AAIREApp {
             if (response.ok) {
                 const data = await response.json();
                 this.hideTypingIndicator();
-                // Add some example follow-up questions for testing
-                const testFollowUpQuestions = data.followUpQuestions || [
-                    "Can you explain this in more detail?",
-                    "What are the practical implications?",
-                    "How does this compare to IFRS standards?"
-                ];
-                this.addMessage('assistant', data.answer, data.citations, testFollowUpQuestions);
+                this.addMessage('assistant', data.response, data.citations, data.follow_up_questions);
             } else {
                 this.hideTypingIndicator();
                 this.addMessage('assistant', 'Sorry, I encountered an error processing your request. Please try again.');
@@ -1259,12 +1274,33 @@ function testFileInput() {
 
 // Global functions for HTML onclick handlers
 function sendMessage() {
-    console.log('Global sendMessage called');
+    console.log('🔥 Global sendMessage called');
+    console.log('🔍 Checking window.app:', window.app ? 'EXISTS' : 'UNDEFINED');
+    
     if (window.app) {
-        console.log('App exists, calling app.sendMessage()');
-        window.app.sendMessage();
+        console.log('✅ App exists, calling app.sendMessage()');
+        try {
+            window.app.sendMessage();
+            console.log('✅ app.sendMessage() completed');
+        } catch (error) {
+            console.error('❌ Error in app.sendMessage():', error);
+            alert('Send button error: ' + error.message);
+        }
     } else {
-        console.error('App not initialized');
+        console.error('❌ App not initialized - DOM may not be ready');
+        alert('App not ready yet - please wait a moment and try again');
+        
+        // Try to initialize if not done yet
+        if (typeof AAIREApp !== 'undefined') {
+            console.log('🔄 Attempting to initialize app...');
+            try {
+                window.app = new AAIREApp();
+                console.log('✅ App initialized, retrying sendMessage');
+                window.app.sendMessage();
+            } catch (error) {
+                console.error('❌ Failed to initialize app:', error);
+            }
+        }
     }
 }
 

@@ -210,6 +210,7 @@ class ChatResponse(BaseModel):
     session_id: str
     compliance_triggered: bool = False
     processing_time_ms: int
+    follow_up_questions: List[str] = []
 
 class DocumentUploadRequest(BaseModel):
     title: str
@@ -388,7 +389,8 @@ async def chat(request: ChatRequest):
                 confidence=rag_response.confidence,
                 session_id=session_id,
                 compliance_triggered=False,
-                processing_time_ms=processing_time
+                processing_time_ms=processing_time,
+                follow_up_questions=rag_response.follow_up_questions
             )
         else:
             # Fallback response - try to search uploaded documents
@@ -564,7 +566,8 @@ async def websocket_chat(websocket: WebSocket):
                             "type": "response",
                             "message": rag_response.answer,
                             "sources": [cite.get("source", "") for cite in rag_response.citations],
-                            "confidence": rag_response.confidence
+                            "confidence": rag_response.confidence,
+                            "followUpQuestions": rag_response.follow_up_questions
                         })
                     else:
                         # Fallback response with document search
