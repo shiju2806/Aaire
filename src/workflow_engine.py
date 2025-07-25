@@ -60,9 +60,7 @@ class WorkflowEngine:
         
         self.templates = {}
         self.active_sessions = {}
-        
-        # Load workflow templates
-        asyncio.create_task(self._load_templates())
+        self._templates_loaded = False
         
         logger.info("Workflow engine initialized", templates_dir=str(self.templates_dir))
     
@@ -276,8 +274,15 @@ class WorkflowEngine:
                     json.dump(template, f, indent=2)
                 logger.info("Created default template", template_id=template['id'])
     
+    async def _ensure_templates_loaded(self):
+        """Ensure templates are loaded before use"""
+        if not self._templates_loaded:
+            await self._load_templates()
+            self._templates_loaded = True
+
     async def list_workflows(self) -> List[Dict[str, Any]]:
         """Get list of available workflow templates"""
+        await self._ensure_templates_loaded()
         return [
             {
                 "id": template.id,
@@ -293,6 +298,7 @@ class WorkflowEngine:
     async def start_workflow(self, template_id: str, session_id: str, user_id: str = "demo-user") -> Dict[str, Any]:
         """Start a new workflow session"""
         try:
+            await self._ensure_templates_loaded()
             if template_id not in self.templates:
                 return {"error": f"Workflow template '{template_id}' not found"}
             

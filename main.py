@@ -190,7 +190,8 @@ try:
     else:
         logger.warning("❌ WorkflowEngine class not available")
 except Exception as e:
-    logger.error("❌ Workflow Engine initialization failed", error=str(e))
+    logger.warning("❌ Workflow Engine initialization failed", error=str(e)[:100])
+    workflow_engine = None
 
 logger.info("Component initialization complete", 
            rag_pipeline_available=rag_pipeline is not None,

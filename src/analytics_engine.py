@@ -258,6 +258,8 @@ class AnalyticsEngine:
     async def _append_to_file(self, file_path: Path, data: Dict[str, Any]):
         """Append data to JSONL file"""
         try:
+            # Ensure directory exists
+            file_path.parent.mkdir(parents=True, exist_ok=True)
             with open(file_path, 'a', encoding='utf-8') as f:
                 f.write(json.dumps(data) + '\n')
         except Exception as e:

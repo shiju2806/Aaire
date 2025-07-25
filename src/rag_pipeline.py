@@ -139,7 +139,7 @@ class RAGPipeline:
             return True
             
         except Exception as e:
-            logger.warning("Failed to initialize Qdrant", error=str(e))
+            logger.info("Qdrant initialization failed, trying Pinecone", error=str(e)[:100])
             return False
     
     def _try_pinecone(self) -> bool:
@@ -149,7 +149,7 @@ class RAGPipeline:
             self._init_indexes()
             return True
         except Exception as e:
-            logger.warning("Failed to initialize Pinecone", error=str(e))
+            logger.info("Pinecone initialization failed, using local storage", error=str(e)[:100])
             return False
     
     def _init_qdrant_indexes(self):
@@ -246,7 +246,7 @@ class RAGPipeline:
             self.cache.ping()
             logger.info("Redis cache initialized")
         except Exception as e:
-            logger.warning("Redis cache not available", error=str(e))
+            logger.info("Redis cache not available, continuing without cache", error=str(e)[:50])
             self.cache = None
     
     def _init_indexes(self):
