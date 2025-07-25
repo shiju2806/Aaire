@@ -261,18 +261,17 @@ class AAIREApp {
             messageContent += '</small>';
         }
         
-        messageContent += `<div class="message-meta">${new Date().toLocaleTimeString()}</div>`;
-        messageContent += '</div>';
-        
-        // Add copy button for assistant messages
+        // Add copy button for assistant messages (inside the message content)
         if (sender === 'assistant') {
-            const copyBtnId = `copy-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
             messageContent += `
-                <button class="copy-btn" id="${copyBtnId}" title="Copy response">
+                <button class="copy-btn" title="Copy response">
                     <i class="fas fa-copy"></i>
                 </button>
             `;
         }
+        
+        messageContent += `<div class="message-meta">${new Date().toLocaleTimeString()}</div>`;
+        messageContent += '</div>';
         
         messageDiv.innerHTML = messageContent;
         
@@ -304,30 +303,71 @@ class AAIREApp {
     }
 
     copyToClipboard(text, button) {
-        // Copy text to clipboard
-        navigator.clipboard.writeText(text).then(() => {
-            // Change icon to checkmark
-            const icon = button.querySelector('i');
-            icon.className = 'fas fa-check';
-            button.style.color = '#2ecc71';
+        const icon = button.querySelector('i');
+        
+        // Try modern clipboard API first
+        if (navigator.clipboard && window.isSecureContext) {
+            navigator.clipboard.writeText(text).then(() => {
+                this.showCopySuccess(icon, button);
+            }).catch(err => {
+                console.error('Clipboard API failed:', err);
+                this.fallbackCopyText(text, icon, button);
+            });
+        } else {
+            // Fallback for older browsers or non-HTTPS
+            this.fallbackCopyText(text, icon, button);
+        }
+    }
+    
+    fallbackCopyText(text, icon, button) {
+        try {
+            // Create a temporary textarea element
+            const textArea = document.createElement('textarea');
+            textArea.value = text;
+            textArea.style.position = 'fixed';
+            textArea.style.left = '-999999px';
+            textArea.style.top = '-999999px';
+            document.body.appendChild(textArea);
+            textArea.focus();
+            textArea.select();
             
-            // Reset after 2 seconds
-            setTimeout(() => {
-                icon.className = 'fas fa-copy';
-                button.style.color = '';
-            }, 2000);
-        }).catch(err => {
-            console.error('Failed to copy text:', err);
-            // Show error state
-            const icon = button.querySelector('i');
-            icon.className = 'fas fa-times';
-            button.style.color = '#e74c3c';
+            // Try to copy using execCommand
+            const successful = document.execCommand('copy');
+            document.body.removeChild(textArea);
             
-            setTimeout(() => {
-                icon.className = 'fas fa-copy';
-                button.style.color = '';
-            }, 2000);
-        });
+            if (successful) {
+                this.showCopySuccess(icon, button);
+            } else {
+                this.showCopyError(icon, button);
+            }
+        } catch (err) {
+            console.error('Fallback copy failed:', err);
+            this.showCopyError(icon, button);
+        }
+    }
+    
+    showCopySuccess(icon, button) {
+        icon.className = 'fas fa-check';
+        button.style.color = '#2ecc71';
+        button.title = 'Copied!';
+        
+        setTimeout(() => {
+            icon.className = 'fas fa-copy';
+            button.style.color = '';
+            button.title = 'Copy response';
+        }, 2000);
+    }
+    
+    showCopyError(icon, button) {
+        icon.className = 'fas fa-times';
+        button.style.color = '#e74c3c';
+        button.title = 'Copy failed';
+        
+        setTimeout(() => {
+            icon.className = 'fas fa-copy';
+            button.style.color = '';
+            button.title = 'Copy response';
+        }, 2000);
     }
 
     showTypingIndicator() {

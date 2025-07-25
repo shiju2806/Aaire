@@ -169,19 +169,24 @@
         
         .copy-btn {
             position: absolute;
-            top: 10px;
-            right: 10px;
-            background: none;
-            border: none;
+            bottom: 8px;
+            right: 8px;
+            background: rgba(255, 255, 255, 0.9);
+            border: 1px solid #e0e0e0;
             color: #7f8c8d;
             cursor: pointer;
-            padding: 5px;
-            font-size: 14px;
-            transition: color 0.3s;
+            padding: 6px 8px;
+            font-size: 12px;
+            border-radius: 4px;
+            transition: all 0.3s;
+            backdrop-filter: blur(5px);
         }
         
         .copy-btn:hover {
             color: #2c3e50;
+            background: rgba(255, 255, 255, 1);
+            border-color: #3498db;
+            transform: translateY(-1px);
         }
 
         .message.user {
@@ -752,6 +757,6 @@
         <i class="fas fa-circle"></i> Disconnected
     </div>
 
-    <script src="/static/js/app.js?v=4&t=20250125"></script>
+    <script src="/static/js/app.js?v=5&t=20250125"></script>
 </body>
 </html>
