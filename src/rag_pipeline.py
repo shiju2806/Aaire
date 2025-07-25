@@ -546,7 +546,7 @@ Response:"""
         citations = []
         
         # Only include citations for documents with sufficient relevance score
-        CITATION_THRESHOLD = 0.85  # High threshold to prevent false citations
+        CITATION_THRESHOLD = 0.75  # Balanced threshold - cite documents that are actually used in response
         
         for i, doc in enumerate(retrieved_docs[:5]):
             # Log all document scores for debugging
