@@ -374,65 +374,173 @@ Analysis Status: Ready for multi-modal processing"""
             raise
     
     def _generate_basic_summary(self, text_content: str, metadata: Dict[str, Any]) -> Dict[str, Any]:
-        """Generate basic summary when AI is not available"""
+        """Generate enhanced basic summary when AI is not available"""
         try:
+            import re
+            
             # Extract basic statistics
             word_count = len(text_content.split())
             char_count = len(text_content)
+            page_count = text_content.count('[Page ') + 1 if '[Page ' in text_content else 1
             
-            # Look for common accounting terms
-            accounting_terms = ['revenue', 'liability', 'asset', 'gaap', 'ifrs', 'asc', 'fasb', 
-                              'reserve', 'premium', 'claim', 'policy', 'actuarial', 'compliance']
-            found_terms = [term for term in accounting_terms if term in text_content.lower()]
+            # Enhanced accounting and insurance terms detection
+            accounting_terms = {
+                'Standards': ['gaap', 'ifrs', 'asc', 'fasb', 'iasb', 'pcaob', 'sox', 'coso'],
+                'Financial Items': ['revenue', 'liability', 'asset', 'equity', 'income', 'expense', 'cash flow', 'balance sheet'],
+                'Insurance Terms': ['reserve', 'premium', 'claim', 'policy', 'policyholder', 'underwriting', 'reinsurance'],
+                'Actuarial': ['actuarial', 'valuation', 'assumption', 'mortality', 'morbidity', 'lapse', 'discount rate'],
+                'Compliance': ['compliance', 'audit', 'control', 'regulation', 'requirement', 'disclosure']
+            }
             
-            # Extract potential dates
-            import re
-            date_pattern = r'\b\d{1,2}/\d{1,2}/\d{4}\b|\b\d{4}-\d{2}-\d{2}\b'
-            dates_found = re.findall(date_pattern, text_content)[:5]
+            found_by_category = {}
+            for category, terms in accounting_terms.items():
+                found = [term for term in terms if term in text_content.lower()]
+                if found:
+                    found_by_category[category] = found
             
-            # Generate basic summary
-            summary_text = f"""**Document Analysis Summary**
+            # Extract dates with better patterns
+            date_patterns = [
+                r'\b\d{1,2}/\d{1,2}/\d{4}\b',  # MM/DD/YYYY
+                r'\b\d{4}-\d{2}-\d{2}\b',      # YYYY-MM-DD
+                r'\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4}\b',
+                r'\b\d{1,2}\s+(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}\b'
+            ]
+            
+            dates_found = []
+            for pattern in date_patterns:
+                dates_found.extend(re.findall(pattern, text_content, re.IGNORECASE))
+            dates_found = list(set(dates_found))[:8]  # Remove duplicates, limit to 8
+            
+            # Extract financial numbers
+            financial_patterns = [
+                r'\$[\d,]+(?:\.\d{2})?(?:\s*(?:million|billion|thousand|M|B|K))?',
+                r'[\d,]+(?:\.\d{2})?\s*(?:million|billion|thousand|M|B|K)?\s*(?:dollars?|USD|\$)',
+                r'[\d,]+(?:\.\d{1,2})?%'
+            ]
+            
+            financial_figures = []
+            for pattern in financial_patterns:
+                financial_figures.extend(re.findall(pattern, text_content, re.IGNORECASE))
+            financial_figures = list(set(financial_figures))[:10]  # Limit to 10
+            
+            # Extract section headings (look for text in all caps or numbered sections)
+            section_patterns = [
+                r'^[A-Z\s]{10,50}$',  # All caps sections
+                r'^\d+\.\s+[A-Z][^.]+$',  # Numbered sections
+                r'^\d+\.\d+\s+[A-Z][^.]+$'  # Sub-sections
+            ]
+            
+            sections = []
+            for line in text_content.split('\n')[:50]:  # Check first 50 lines
+                line = line.strip()
+                if len(line) > 5 and len(line) < 80:
+                    for pattern in section_patterns:
+                        if re.match(pattern, line):
+                            sections.append(line)
+                            break
+            sections = sections[:8]  # Limit to 8 sections
+            
+            # Generate comprehensive summary
+            summary_text = f"""**Document Analysis Report**
 
-**Document Overview:**
-- File: {metadata.get('title', 'Unknown Document')}
-- Type: {metadata.get('source_type', 'Unknown')}
-- Size: {word_count:,} words, {char_count:,} characters
-- Processing Date: {datetime.utcnow().strftime('%Y-%m-%d %H:%M')}
+**📄 Document Profile:**
+- **File Name**: {metadata.get('title', 'Unknown Document')}
+- **Document Type**: {metadata.get('source_type', 'Unknown')}
+- **File Size**: {word_count:,} words across {page_count} pages
+- **Analysis Date**: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}
+- **Document Category**: {"Financial/Accounting Document" if found_by_category else "Business Document"}
 
-**Content Analysis:**
-This document appears to be a {metadata.get('source_type', 'business')} document containing accounting or insurance-related content.
+**🔍 Content Analysis:**"""
 
-**Key Topics Identified:**
-{', '.join(found_terms) if found_terms else 'General business content'}
+            if found_by_category:
+                summary_text += "\n**Key Areas Identified:**\n"
+                for category, terms in found_by_category.items():
+                    summary_text += f"- **{category}**: {', '.join(terms[:5])}\n"
+            else:
+                summary_text += "\n- General business document with accounting or insurance context\n"
 
-**Important Dates Found:**
-{', '.join(dates_found) if dates_found else 'No specific dates identified'}
+            if sections:
+                summary_text += f"\n**📋 Document Structure:**\n"
+                for i, section in enumerate(sections, 1):
+                    summary_text += f"{i}. {section}\n"
 
-**Next Steps:**
-- Review document content for compliance requirements
-- Identify any action items or deadlines
-- Consider consultation with accounting/actuarial experts if needed
+            if dates_found:
+                summary_text += f"\n**📅 Important Dates Referenced:**\n"
+                for date in dates_found:
+                    summary_text += f"- {date}\n"
 
-*Note: This is a basic analysis. For detailed AI-powered insights, configure OpenAI API keys.*"""
+            if financial_figures:
+                summary_text += f"\n**💰 Financial Figures Mentioned:**\n"
+                for figure in financial_figures[:6]:
+                    summary_text += f"- {figure}\n"
+
+            summary_text += f"""
+
+**⚠️ Compliance & Risk Considerations:**
+- Review for adherence to applicable accounting standards
+- Verify compliance with regulatory requirements
+- Check for material misstatements or inconsistencies
+- Assess impact on financial reporting and disclosures
+
+**🎯 Recommended Actions:**
+1. **Immediate Review**: Examine document for compliance with current accounting standards
+2. **Stakeholder Communication**: Share relevant sections with accounting team and auditors  
+3. **Documentation**: File in appropriate compliance folder with effective date tracking
+4. **Follow-up**: Schedule review for any mentioned deadlines or effective dates
+5. **Integration**: Consider impact on current financial statements and processes
+
+**💡 Professional Insights:**
+- Document contains {"substantial" if word_count > 5000 else "moderate" if word_count > 1000 else "basic"} level of detail
+- {"Multiple accounting areas" if len(found_by_category) > 2 else "Specific focus area"} identified
+- {"Complex document" if page_count > 20 else "Standard document"} requiring {"detailed" if word_count > 10000 else "standard"} professional review
+
+*Note: This is an enhanced rule-based analysis. For AI-powered detailed insights and recommendations, configure OpenAI API keys for advanced document intelligence.*"""
+
+            # Enhanced key insights
+            insights = []
+            
+            if found_by_category:
+                for category, terms in found_by_category.items():
+                    insights.append({
+                        "type": "content_category",
+                        "value": terms,
+                        "description": f"{category} concepts identified in document"
+                    })
+            
+            insights.extend([
+                {
+                    "type": "document_metrics",
+                    "value": f"{word_count:,} words, {page_count} pages",
+                    "description": "Document size and complexity indicator"
+                },
+                {
+                    "type": "compliance_scope",
+                    "value": list(found_by_category.keys()) if found_by_category else ["General Business"],
+                    "description": "Areas requiring compliance review"
+                }
+            ])
+            
+            if dates_found:
+                insights.append({
+                    "type": "critical_dates",
+                    "value": dates_found[:5],
+                    "description": "Important dates mentioned in document"
+                })
+            
+            if financial_figures:
+                insights.append({
+                    "type": "financial_data",
+                    "value": financial_figures[:5],
+                    "description": "Financial figures and amounts referenced"
+                })
 
             return {
                 "summary": summary_text,
-                "key_insights": [
-                    {
-                        "type": "basic_analysis",
-                        "value": found_terms,
-                        "description": "Accounting terms identified in document"
-                    },
-                    {
-                        "type": "document_stats",
-                        "value": f"{word_count} words",
-                        "description": "Document size"
-                    }
-                ] if found_terms else [],
+                "key_insights": insights,
                 "document_metadata": metadata,
                 "generated_at": datetime.utcnow().isoformat(),
-                "confidence": 0.6,
-                "analysis_type": "basic"
+                "confidence": 0.75,  # Higher confidence for enhanced analysis
+                "analysis_type": "enhanced_basic"
             }
             
         except Exception as e:

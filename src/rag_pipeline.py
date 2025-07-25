@@ -613,25 +613,70 @@ Response:"""
         """Generate intelligent executive summary of uploaded documents"""
         try:
             # Create specialized prompt for document summarization
-            summary_prompt = f"""You are AAIRE, an expert AI assistant for insurance accounting and actuarial analysis.
+            summary_prompt = f"""You are AAIRE, a senior AI consultant specializing in insurance accounting, actuarial analysis, and financial compliance. You have deep expertise in US GAAP, IFRS, actuarial standards, and insurance regulations.
 
-Please analyze this document and provide a comprehensive executive summary:
+**Document Analysis Request:**
 
-Document Title: {doc_metadata.get('title', 'Unknown')}
-Document Type: {doc_metadata.get('source_type', 'Unknown')}
-Effective Date: {doc_metadata.get('effective_date', 'Unknown')}
+**Document Profile:**
+- Title: {doc_metadata.get('title', 'Unknown')}
+- Type: {doc_metadata.get('source_type', 'Unknown')}
+- Effective Date: {doc_metadata.get('effective_date', 'Unknown')}
+- Analysis Purpose: Executive Summary for Accounting/Actuarial Review
 
-Document Content:
-{document_content[:4000]}  # Limit for token management
+**Document Content to Analyze:**
+{document_content[:6000]}
 
-Provide a structured executive summary with:
-1. **Document Overview**: Brief description and purpose
-2. **Key Accounting Impacts**: Main accounting implications and treatments
-3. **Compliance Requirements**: Regulatory or standard requirements
-4. **Action Items**: Recommended next steps or considerations
-5. **Risk Assessment**: Potential compliance or financial risks
+**Required Analysis Framework:**
 
-Format your response in clear, professional language suitable for executives and accounting professionals."""
+**📋 EXECUTIVE SUMMARY**
+Provide a 2-3 sentence high-level overview of the document's purpose and significance.
+
+**🔍 KEY ACCOUNTING & ACTUARIAL IMPACTS**
+- Identify specific accounting standards referenced (ASC, IFRS, etc.)
+- Highlight changes to accounting treatments or methodologies
+- Assess impact on financial statement presentation
+- Note any actuarial assumption changes or valuation impacts
+
+**⚖️ REGULATORY & COMPLIANCE IMPLICATIONS**
+- Identify regulatory requirements and deadlines
+- Assess compliance obligations and reporting changes
+- Highlight any new disclosure requirements
+- Note potential audit or examination impacts
+
+**💰 FINANCIAL IMPACT ANALYSIS**
+- Quantify financial impacts where possible
+- Identify affected financial statement line items
+- Assess materiality and significance
+- Highlight cash flow or capital implications
+
+**⚠️ RISK ASSESSMENT & CONTROLS**
+- Identify compliance risks and mitigation strategies
+- Assess implementation challenges and timeline risks
+- Highlight areas requiring additional controls or procedures
+- Note potential reputational or regulatory penalties
+
+**🎯 STRATEGIC RECOMMENDATIONS**
+Provide 5-7 specific, actionable recommendations including:
+- Immediate actions required (with timelines)
+- Stakeholder communication needs
+- System/process changes required
+- Training or resource needs
+- Monitoring and ongoing compliance requirements
+
+**📊 KEY METRICS & BENCHMARKS**
+Extract and highlight:
+- Important dates and deadlines
+- Financial figures and thresholds
+- Percentage impacts or changes
+- Comparative data or benchmarks
+
+**🔗 INTERCONNECTED IMPACTS**
+- How this affects other accounting areas
+- Integration with existing policies/procedures
+- Coordination needs across departments
+- Potential conflicts with other standards
+
+Use professional, precise language with specific details. Include relevant accounting citations and technical terms. Focus on actionable insights that enable informed business decisions."""
 
             # Generate summary using the LLM
             response = self.llm.complete(summary_prompt)
