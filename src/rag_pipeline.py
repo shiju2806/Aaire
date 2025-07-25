@@ -107,20 +107,43 @@ class RAGPipeline:
             llama_index_model = "gpt-3.5-turbo"
             logger.info("Mapping gpt-4o-mini to gpt-3.5-turbo for llama-index compatibility")
         
-        self.llm = OpenAI(
-            model=llama_index_model,
-            temperature=self.config['llm_config']['temperature'],
-            max_tokens=self.config['llm_config']['max_tokens']
-        )
+        # Initialize OpenAI LLM with version compatibility
+        try:
+            self.llm = OpenAI(
+                model=llama_index_model,
+                temperature=self.config['llm_config']['temperature'],
+                max_tokens=self.config['llm_config']['max_tokens']
+            )
+        except Exception as e:
+            logger.error(f"Failed to initialize OpenAI with model parameter: {e}")
+            # Try older initialization pattern
+            try:
+                self.llm = OpenAI(
+                    temperature=self.config['llm_config']['temperature'],
+                    max_tokens=self.config['llm_config']['max_tokens']
+                )
+                # Set model after initialization if possible
+                if hasattr(self.llm, 'model'):
+                    self.llm.model = llama_index_model
+            except Exception as e2:
+                logger.error(f"Failed to initialize OpenAI with fallback: {e2}")
+                raise e2
         
         # Store the actual model name for API calls
         self.actual_model = model_name
         if model_name == "gpt-4o-mini":
+            # Try different ways to set the model for API calls
             try:
                 self.llm._model = model_name
+                logger.info("Set _model field for gpt-4o-mini")
             except (AttributeError, TypeError):
-                # Older llama-index version - store separately
-                logger.info("Using separate model tracking for older llama-index compatibility")
+                try:
+                    if hasattr(self.llm, 'model'):
+                        self.llm.model = model_name
+                        logger.info("Set model field for gpt-4o-mini")
+                except:
+                    # Older llama-index version - store separately
+                    logger.info("Using separate model tracking for older llama-index compatibility")
         
         logger.info(f"Using OpenAI model: {model_name}")
         
