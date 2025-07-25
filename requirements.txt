@@ -6,6 +6,7 @@ pydantic==2.5.0
 
 # RAG Pipeline - LlamaIndex based (per MVP requirements)  
 llama-index==0.10.43  # Updated for gpt-4o-mini support
+llama-index-vector-stores-qdrant==0.1.8  # Qdrant vector store support
 # Vector Database Options
 # Updated Pinecone client compatible with llama-index 0.10.x
 pinecone-client==3.2.2
@@ -35,6 +36,7 @@ psycopg2-binary==2.9.9
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
 python-multipart==0.0.6
+PyJWT==2.8.0  # Required for JWT token handling
 
 # Configuration & Environment
 python-dotenv==1.0.0
