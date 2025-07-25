@@ -201,6 +201,38 @@ class AAIREApp {
         this.updateQueryCount();
     }
 
+    formatMessageContent(content) {
+        // Format the content for better readability
+        let formatted = content;
+        
+        // Convert numbered lists (e.g., "1. ", "2. ", etc.)
+        formatted = formatted.replace(/^(\d+)\.\s+(.+)$/gm, '<strong>$1.</strong> $2');
+        
+        // Convert bullet points at start of line
+        formatted = formatted.replace(/^[-•]\s+(.+)$/gm, '• $1');
+        
+        // Convert inline numbered lists in paragraphs
+        formatted = formatted.replace(/(\d+)\.\s+([A-Z][^:]+):/g, '<br><br><strong>$1. $2:</strong>');
+        
+        // Add line breaks before section headers (text followed by colon at end of line)
+        formatted = formatted.replace(/([A-Z][^:]+):$/gm, '<br><strong>$1:</strong>');
+        
+        // Convert double line breaks to paragraphs
+        formatted = formatted.replace(/\n\n/g, '</p><p>');
+        
+        // Convert single line breaks to <br>
+        formatted = formatted.replace(/\n/g, '<br>');
+        
+        // Wrap in paragraph tags
+        formatted = '<p>' + formatted + '</p>';
+        
+        // Clean up empty paragraphs
+        formatted = formatted.replace(/<p><\/p>/g, '');
+        formatted = formatted.replace(/<p><br>/g, '<p>');
+        
+        return formatted;
+    }
+    
     addMessage(sender, content, sources = null) {
         const messagesContainer = document.getElementById('chat-messages');
         const messageDiv = document.createElement('div');
@@ -210,7 +242,11 @@ class AAIREApp {
         
         if (sender === 'error') {
             messageContent += `<div style="color: #e74c3c;">${content}</div>`;
+        } else if (sender === 'assistant') {
+            // Format assistant messages for better readability
+            messageContent += this.formatMessageContent(content);
         } else {
+            // User messages remain plain
             messageContent += content;
         }
         
