@@ -552,11 +552,13 @@ async def websocket_chat(websocket: WebSocket):
                 try:
                     if rag_pipeline:
                         # Process with RAG pipeline
+                        logger.info(f"WebSocket using RAG pipeline for query: {query}")
                         rag_response = await rag_pipeline.process_query(
                             query=query,
                             filters=None,
                             user_context={}
                         )
+                        logger.info(f"WebSocket RAG response citations: {rag_response.citations}")
                         
                         await websocket.send_json({
                             "type": "response",
