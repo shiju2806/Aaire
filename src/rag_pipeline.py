@@ -373,10 +373,18 @@ class RAGPipeline:
             # Generate response
             response = await self._generate_response(query, retrieved_docs, user_context)
             
-            # Extract citations only if we have relevant documents
-            if retrieved_docs:
+            # Check if this is a general knowledge query
+            is_general_query = self._is_general_knowledge_query(query)
+            
+            # Extract citations only if we have relevant documents AND it's not a general knowledge query
+            if retrieved_docs and not is_general_query:
                 citations = self._extract_citations(retrieved_docs)
                 confidence = self._calculate_confidence(retrieved_docs, response)
+            elif is_general_query:
+                # General knowledge query - no citations even if documents found
+                citations = []
+                confidence = 0.3  # Low confidence for general knowledge responses
+                logger.info(f"General knowledge query detected: '{query}' - suppressing citations")
             else:
                 # No relevant documents found - no citations and low confidence
                 citations = []
@@ -540,6 +548,45 @@ Response:"""
         except Exception as e:
             logger.error("Failed to generate response", error=str(e))
             return "I apologize, but I'm unable to generate a response at this time. Please try again."
+    
+    def _is_general_knowledge_query(self, query: str) -> bool:
+        """Check if query is asking for general knowledge vs specific document content"""
+        query_lower = query.lower()
+        
+        # First check for document-specific indicators (these override general patterns)
+        document_indicators = [
+            r'\bour company\b',
+            r'\bthe uploaded\b',
+            r'\bthe document\b',
+            r'\bin the document\b',
+            r'\bshow me\b',
+            r'\bfind\b.*\bin\b',
+            r'\banalyze\b',
+            r'\bspecific\b.*\bmentioned\b',
+            r'\bpolicy\b',
+            r'\bprocedure\b'
+        ]
+        
+        import re
+        for pattern in document_indicators:
+            if re.search(pattern, query_lower):
+                return False  # Document-specific query
+        
+        # Common general knowledge question patterns (only if no document indicators)
+        general_patterns = [
+            r'^\s*what is\s+[a-z\s]+\??$',  # Simple "what is X?" questions
+            r'^\s*define\s+',
+            r'^\s*explain\s+[a-z\s]+\s+(concept|principle|term)s?\??$',
+            r'^\s*how\s+does\s+.*\s+work\??$',
+            r'^\s*what\s+does\s+.*\s+mean\??$',
+            r'^\s*what\s+are\s+.*\s+(concept|principle)s?\??$'
+        ]
+        
+        for pattern in general_patterns:
+            if re.search(pattern, query_lower):
+                return True
+                
+        return False
     
     def _extract_citations(self, retrieved_docs: List[Dict]) -> List[Dict[str, Any]]:
         """Extract citation information from retrieved documents"""
@@ -739,6 +786,66 @@ Response:"""
             
         except Exception as e:
             logger.error(f"Failed to cleanup orphaned chunks", error=str(e))
+            return {
+                "status": "error",
+                "error": str(e)
+            }
+    
+    async def get_all_documents(self) -> Dict[str, Any]:
+        """Get all documents currently in the vector store for debugging"""
+        try:
+            documents = []
+            
+            if self.vector_store_type == "qdrant":
+                # Get all points in the collection
+                search_result = self.qdrant_client.scroll(
+                    collection_name=self.collection_name,
+                    limit=1000  # Adjust if you have more documents
+                )
+                
+                for point in search_result[0]:
+                    if point.payload:
+                        documents.append({
+                            "point_id": point.id,
+                            "filename": point.payload.get("filename", "Unknown"),
+                            "job_id": point.payload.get("job_id", "No job_id"),
+                            "doc_type": point.payload.get("doc_type", "Unknown"),
+                            "added_at": point.payload.get("added_at", "Unknown"),
+                            "text_preview": point.payload.get("text", "")[:100] + "..." if point.payload.get("text") else ""
+                        })
+                        
+            return {
+                "status": "success",
+                "total_documents": len(documents),
+                "documents": documents,
+                "vector_store": self.vector_store_type
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to get all documents", error=str(e))
+            return {
+                "status": "error",
+                "error": str(e)
+            }
+    
+    async def clear_all_cache(self) -> Dict[str, Any]:
+        """Clear all cached responses"""
+        try:
+            cleared_count = 0
+            if self.cache:
+                # Clear all cache entries
+                pattern = "*"
+                keys = list(self.cache.scan_iter(match=pattern))
+                if keys:
+                    cleared_count = self.cache.delete(*keys)
+                logger.info(f"Cleared {cleared_count} cache entries")
+            
+            return {
+                "status": "success",
+                "cleared_entries": cleared_count
+            }
+        except Exception as e:
+            logger.error("Failed to clear cache", error=str(e))
             return {
                 "status": "error",
                 "error": str(e)

@@ -673,6 +673,30 @@ async def get_knowledge_stats():
             }
         }
 
+@app.get("/api/v1/debug/documents")
+async def debug_all_documents():
+    """Debug endpoint to see all documents in vector store"""
+    if not rag_pipeline:
+        raise HTTPException(status_code=503, detail="RAG pipeline not available")
+    
+    return await rag_pipeline.get_all_documents()
+
+@app.post("/api/v1/debug/cleanup")
+async def debug_cleanup_orphaned():
+    """Debug endpoint to clean up orphaned chunks"""
+    if not rag_pipeline:
+        raise HTTPException(status_code=503, detail="RAG pipeline not available")
+    
+    return await rag_pipeline.cleanup_orphaned_chunks()
+
+@app.post("/api/v1/debug/clear-cache")
+async def debug_clear_cache():
+    """Debug endpoint to clear all cached responses"""
+    if not rag_pipeline:
+        raise HTTPException(status_code=503, detail="RAG pipeline not available")
+    
+    return await rag_pipeline.clear_all_cache()
+
 @app.get("/api/v1/external/refresh")
 async def refresh_external_data():
     """Trigger refresh of external data sources"""
