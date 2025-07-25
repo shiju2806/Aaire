@@ -983,14 +983,27 @@ class AAIREApp {
         
         if (!userId) return;
         
+        const previousUser = this.currentUser?.name;
+        
         // Update current user
         this.currentUser = this.getUserInfo(userId);
         
         // Save to localStorage
         localStorage.setItem('aaire_current_user', userId);
         
+        // Clear chat history and create new session for this user
+        this.clearChatForUserSwitch();
+        
+        // Generate new session ID for this user
+        this.sessionId = `${userId}_${Date.now()}`;
+        
         // Update welcome message
         this.updateWelcomeMessage();
+        
+        // Show user switch notification
+        if (previousUser && previousUser !== this.currentUser.name) {
+            this.showUserSwitchNotification(previousUser, this.currentUser.name);
+        }
         
         console.log('Switched to user:', this.currentUser);
     }
@@ -1064,6 +1077,59 @@ class AAIREApp {
             role: this.currentUser.role,
             expertise: this.currentUser.expertise
         };
+    }
+
+    clearChatForUserSwitch() {
+        // Clear messages array but keep the welcome message
+        this.messages = [];
+        
+        // Clear chat UI
+        const messagesContainer = document.getElementById('chat-messages');
+        if (messagesContainer) {
+            // Keep only the welcome message, remove all others
+            const allMessages = messagesContainer.querySelectorAll('.message');
+            allMessages.forEach((message, index) => {
+                if (index > 0) { // Keep first message (welcome), remove rest
+                    message.remove();
+                }
+            });
+        }
+        
+        console.log('🧹 Chat cleared for user switch');
+    }
+
+    showUserSwitchNotification(previousUser, newUser) {
+        const messagesContainer = document.getElementById('chat-messages');
+        if (!messagesContainer) return;
+        
+        // Create a system notification message
+        const notificationDiv = document.createElement('div');
+        notificationDiv.className = 'message system-message';
+        notificationDiv.innerHTML = `
+            <div class="message-content system-notification">
+                <i class="fas fa-user-friends"></i>
+                <strong>User switched:</strong> ${previousUser} → ${newUser}
+                <br><small>Chat history cleared. New session started.</small>
+            </div>
+        `;
+        
+        // Insert after welcome message
+        const welcomeMessage = messagesContainer.querySelector('.message');
+        if (welcomeMessage && welcomeMessage.nextSibling) {
+            messagesContainer.insertBefore(notificationDiv, welcomeMessage.nextSibling);
+        } else {
+            messagesContainer.appendChild(notificationDiv);
+        }
+        
+        // Auto-remove after 5 seconds
+        setTimeout(() => {
+            if (notificationDiv.parentNode) {
+                notificationDiv.remove();
+            }
+        }, 5000);
+        
+        // Scroll to show notification
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
     }
 
     getConversationHistory() {
