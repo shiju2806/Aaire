@@ -1,39 +1,39 @@
-# AAIRE Fixed Requirements - Complete llama-index installation
-# Core FastAPI
-fastapi>=0.104.1
-uvicorn[standard]>=0.24.0
-websockets>=12.0
-pydantic>=2.8.0
+# AAIRE Exact Compatible Versions - Fast Installation
+# These exact versions are tested to work together without conflicts
 
-# Complete llama-index 0.12.x installation with all required components
+# Core FastAPI - Compatible with pydantic 2.8+
+fastapi==0.110.0
+uvicorn[standard]==0.27.0
+websockets==12.0
+pydantic==2.8.2
+
+# Complete llama-index 0.12.x - Exact compatible versions
 llama-index==0.12.7
 llama-index-core==0.12.7
+llama-index-readers-file==0.4.0
+llama-index-llms-openai==0.3.0
+llama-index-embeddings-openai==0.2.5
+llama-index-vector-stores-qdrant==0.6.1
 
-# Essential llama-index components that must be installed separately in 0.12.x
-llama-index-readers-file>=0.4.0
-llama-index-llms-openai>=0.3.0
-llama-index-embeddings-openai>=0.2.5
-llama-index-vector-stores-qdrant>=0.6.1
+# Vector Database - Exact working combination
+qdrant-client==1.7.3
+fastembed==0.1.3
 
-# Vector Database
-qdrant-client>=1.7.3
-fastembed>=0.1.3
-
-# LLM Integration  
-openai>=1.12.0
+# LLM Integration
+openai==1.12.0
 
 # Document Processing
-PyPDF2>=3.0.1
-python-docx>=1.1.0
+PyPDF2==3.0.1
+python-docx==1.1.0
 
 # Basic utilities
-redis>=5.0.1
-python-dotenv>=1.0.0
-pyyaml>=6.0.1
-structlog>=23.2.0
+redis==5.0.1
+python-dotenv==1.0.0
+pyyaml==6.0.1
+structlog==23.2.0
 
 # Authentication
-PyJWT>=2.8.0
+PyJWT==2.8.0
 
 # HTTP requests
-httpx>=0.25.2
+httpx==0.25.2
