@@ -91,85 +91,89 @@ class RAGPipeline:
     def __init__(self, config_path: str = "config/mvp_config.yaml"):
         """Initialize RAG pipeline with LlamaIndex and Pinecone"""
         
-        logger.info("🚀 Starting RAG Pipeline initialization...")
-        
         # Load configuration
-        logger.info(f"📖 Loading config from: {config_path}")
         with open(config_path, 'r') as f:
             self.config = yaml.safe_load(f)
-        logger.info("✅ Configuration loaded successfully")
         
         # Initialize OpenAI components
         # Allow environment variable override for model
         model_name = os.getenv("OPENAI_MODEL", self.config['llm_config']['model'])
-        logger.info(f"🎯 Target model: {model_name}")
         
-        # TEMPORARY: Skip OpenAI LLM initialization to test core functionality
-        logger.info("⚠️ Temporarily skipping OpenAI LLM initialization to debug")
-        logger.info("🚀 AAIRE will run in basic mode without RAG pipeline")
-        self.llm = None
+        # Map newer models to supported ones for older llama-index versions
+        llama_index_model = model_name
+        if model_name == "gpt-4o-mini":
+            # For older llama-index versions, use gpt-3.5-turbo as proxy
+            # The actual API calls will still use gpt-4o-mini
+            llama_index_model = "gpt-3.5-turbo"
+            logger.info("Mapping gpt-4o-mini to gpt-3.5-turbo for llama-index compatibility")
+        
+        # Initialize OpenAI LLM with version compatibility
+        try:
+            self.llm = OpenAI(
+                model=llama_index_model,
+                temperature=self.config['llm_config']['temperature'],
+                max_tokens=self.config['llm_config']['max_tokens']
+            )
+        except Exception as e:
+            logger.error(f"Failed to initialize OpenAI with model parameter: {e}")
+            # Try older initialization pattern
+            try:
+                self.llm = OpenAI(
+                    temperature=self.config['llm_config']['temperature'],
+                    max_tokens=self.config['llm_config']['max_tokens']
+                )
+                # Set model after initialization if possible
+                if hasattr(self.llm, 'model'):
+                    self.llm.model = llama_index_model
+            except Exception as e2:
+                logger.error(f"Failed to initialize OpenAI with fallback: {e2}")
+                raise e2
         
         # Store the actual model name for API calls
         self.actual_model = model_name
-        logger.info(f"Stored actual model name: {model_name}")
-        
         if model_name == "gpt-4o-mini":
-            logger.info("Attempting to set gpt-4o-mini model override...")
             # Try different ways to set the model for API calls
             try:
                 self.llm._model = model_name
-                logger.info("✅ Set _model field for gpt-4o-mini")
-            except (AttributeError, TypeError) as e:
-                logger.info(f"⚠️ Cannot set _model field: {e}")
+                logger.info("Set _model field for gpt-4o-mini")
+            except (AttributeError, TypeError):
                 try:
                     if hasattr(self.llm, 'model'):
                         self.llm.model = model_name
-                        logger.info("✅ Set model field for gpt-4o-mini")
-                    else:
-                        logger.info("⚠️ No model attribute available")
-                except Exception as e2:
-                    logger.info(f"⚠️ Cannot set model field: {e2}")
+                        logger.info("Set model field for gpt-4o-mini")
+                except:
                     # Older llama-index version - store separately
                     logger.info("Using separate model tracking for older llama-index compatibility")
         
         logger.info(f"Using OpenAI model: {model_name}")
         
-        # TEMPORARY: Skip embedding model too
-        logger.info("⚠️ Temporarily skipping embedding model initialization")
-        self.embedding_model = None
+        self.embedding_model = OpenAIEmbedding(
+            model=self.config['embedding_config']['model']
+        )
         
-        # TEMPORARY: Skip service context initialization
-        logger.info("⚠️ Temporarily skipping service context initialization")
-        self.service_context = None
+        # Initialize service context
+        self.service_context = ServiceContext.from_defaults(
+            llm=self.llm,
+            embed_model=self.embedding_model
+        )
         
-        # TEMPORARY: Skip node parser too
-        logger.info("⚠️ Temporarily skipping node parser initialization")
-        self.node_parser = None
+        # Initialize node parser with simple chunking (hierarchical not available in 0.9.x)
+        self.node_parser = SimpleNodeParser.from_defaults(
+            chunk_size=self.config['chunking_strategies']['default']['chunk_size'],
+            chunk_overlap=self.config['chunking_strategies']['default']['overlap']
+        )
         
-        # TEMPORARY: Skip vector store initialization
-        logger.info("⚠️ Temporarily skipping vector store initialization")
-        self.vector_store_type = "skip"
-        self.index_name = None
-        self.vector_store = None
-        self.storage_context = None
-        self.index = None
-        
-        logger.info("✅ RAG Pipeline initialization completed in MINIMAL MODE")
-        logger.info("🚀 AAIRE will use basic OpenAI chat without document retrieval")
-        return
-        
-        # ORIGINAL CODE BELOW (temporarily disabled)
         # Try vector stores in priority order: Qdrant > Pinecone > Local
-        # self.vector_store_type = None
-        # self.index_name = None  # Will be set based on vector store type
+        self.vector_store_type = None
+        self.index_name = None  # Will be set based on vector store type
         
         # Try Qdrant first (better free tier)
-        if False and self._try_qdrant():
+        if self._try_qdrant():
             self.vector_store_type = "qdrant"
             self.index_name = self.collection_name  # Use Qdrant collection name
             logger.info("Using Qdrant vector store")
         # Fall back to Pinecone
-        elif False and self._try_pinecone():
+        elif self._try_pinecone():
             self.vector_store_type = "pinecone" 
             logger.info("Using Pinecone vector store")
         # Fall back to local storage
