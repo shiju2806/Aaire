@@ -14,7 +14,7 @@ pinecone-text==0.4.2
 qdrant-client==1.7.0
 
 # LLM Integration
-openai==1.3.7
+openai==1.12.0  # Updated for gpt-4o-mini support
 
 # Document Processing
 PyPDF2==3.0.1
