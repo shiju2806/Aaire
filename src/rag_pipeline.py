@@ -58,11 +58,23 @@ class RAGPipeline:
         # Allow environment variable override for model
         model_name = os.getenv("OPENAI_MODEL", self.config['llm_config']['model'])
         
+        # Map newer models to supported ones for older llama-index versions
+        llama_index_model = model_name
+        if model_name == "gpt-4o-mini":
+            # For older llama-index versions, use gpt-3.5-turbo as proxy
+            # The actual API calls will still use gpt-4o-mini
+            llama_index_model = "gpt-3.5-turbo"
+            logger.info("Mapping gpt-4o-mini to gpt-3.5-turbo for llama-index compatibility")
+        
         self.llm = OpenAI(
-            model=model_name,
+            model=llama_index_model,
             temperature=self.config['llm_config']['temperature'],
             max_tokens=self.config['llm_config']['max_tokens']
         )
+        
+        # Override the actual model name for API calls
+        if model_name == "gpt-4o-mini":
+            self.llm._model = model_name
         
         logger.info(f"Using OpenAI model: {model_name}")
         
