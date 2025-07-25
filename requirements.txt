@@ -11,12 +11,12 @@ pydantic==2.8.2
 llama-index-core==0.12.7
 llama-index-llms-openai==0.3.0
 llama-index-embeddings-openai==0.3.0
-llama-index-vector-stores-qdrant==0.6.1
+llama-index-vector-stores-qdrant==0.2.4
 llama-index-readers-file==0.4.0
 
-# Vector Database - Updated compatible versions
-qdrant-client==1.8.0
-fastembed==0.2.7
+# Vector Database - Compatible versions that work together
+qdrant-client==1.7.1
+fastembed==0.1.1
 
 # LLM Integration
 openai==1.58.1
