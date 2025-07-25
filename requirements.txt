@@ -14,9 +14,9 @@ llama-index-embeddings-openai==0.3.0
 llama-index-vector-stores-qdrant==0.6.1
 llama-index-readers-file==0.4.0
 
-# Vector Database
-qdrant-client==1.7.3
-fastembed==0.1.3
+# Vector Database - Updated compatible versions
+qdrant-client==1.8.0
+fastembed==0.2.7
 
 # LLM Integration
 openai==1.58.1
