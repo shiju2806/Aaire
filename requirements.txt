@@ -7,10 +7,7 @@ pydantic==2.5.0
 # RAG Pipeline - LlamaIndex based (per MVP requirements)  
 llama-index>=0.12.7  # Updated for gpt-4o-mini support and vector stores compatibility
 llama-index-vector-stores-qdrant==0.6.1  # Qdrant vector store support
-# Vector Database Options
-# Updated Pinecone client compatible with llama-index 0.12.x+
-pinecone-client==3.2.2
-# Qdrant as alternative
+# Vector Database - Qdrant only
 qdrant-client>=1.7.1
 
 # LLM Integration

@@ -24,14 +24,7 @@ from llama_index.core.query_engine import RetrieverQueryEngine
 from llama_index.embeddings.openai import OpenAIEmbedding
 from llama_index.llms.openai import OpenAI
 
-# Vector stores
-try:
-    from llama_index.vector_stores.pinecone import PineconeVectorStore
-except ImportError:
-    PineconeVectorStore = None
-
-# Vector store options
-import pinecone
+# Vector stores - Qdrant only (Pinecone removed for simplicity)
 
 # Qdrant
 try:
@@ -57,7 +50,7 @@ class RAGResponse:
 
 class RAGPipeline:
     def __init__(self, config_path: str = "config/mvp_config.yaml"):
-        """Initialize RAG pipeline with LlamaIndex and Pinecone"""
+        """Initialize RAG pipeline with LlamaIndex and Qdrant"""
         
         # Load configuration
         with open(config_path, 'r') as f:
@@ -123,20 +116,16 @@ class RAGPipeline:
             chunk_overlap=self.config['chunking_strategies']['default']['overlap']
         )
         
-        # Try vector stores in priority order: Qdrant > Pinecone > Local
+        # Initialize vector store: Qdrant primary, local fallback
         self.vector_store_type = None
-        self.index_name = None  # Will be set based on vector store type
+        self.index_name = None
         
-        # Try Qdrant first (better free tier)
+        # Try Qdrant
         if self._try_qdrant():
             self.vector_store_type = "qdrant"
-            self.index_name = self.collection_name  # Use Qdrant collection name
+            self.index_name = self.collection_name
             logger.info("Using Qdrant vector store")
-        # Fall back to Pinecone
-        elif self._try_pinecone():
-            self.vector_store_type = "pinecone" 
-            logger.info("Using Pinecone vector store")
-        # Fall back to local storage
+        # Fall back to local storage if Qdrant unavailable
         else:
             self._init_local_index()
             self.vector_store_type = "local"
@@ -193,16 +182,6 @@ class RAGPipeline:
             
         except Exception as e:
             logger.error("❌ Qdrant initialization failed", error=str(e), exc_info=True)
-            return False
-    
-    def _try_pinecone(self) -> bool:
-        """Try to initialize Pinecone vector store"""
-        try:
-            self._init_pinecone()
-            self._init_indexes()
-            return True
-        except Exception as e:
-            logger.info("Pinecone initialization failed, using local storage", error=str(e)[:100])
             return False
     
     def _init_qdrant_indexes(self):
@@ -262,41 +241,6 @@ class RAGPipeline:
             logger.error("Failed to initialize Qdrant indexes", error=str(e))
             raise
     
-    def _init_pinecone(self):
-        """Initialize Pinecone vector database using v2.x API for llama-index 0.9.x compatibility"""
-        try:
-            import pinecone
-            
-            # Initialize Pinecone with v2.x API format (requires environment)
-            pinecone.init(
-                api_key=os.getenv("PINECONE_API_KEY"),
-                environment=os.getenv("PINECONE_ENVIRONMENT", "gcp-starter")
-            )
-            
-            # Single index for Pinecone free tier
-            self.index_name = "aaire-main"
-            
-            # List existing indexes using v2.x API
-            existing_indexes = pinecone.list_indexes()
-            
-            if self.index_name not in existing_indexes:
-                # Create index using v2.x API format
-                pinecone.create_index(
-                    name=self.index_name,
-                    dimension=1536,  # Standard OpenAI embedding dimension
-                    metric="cosine"
-                )
-                logger.info(f"Created Pinecone index: {self.index_name}")
-            
-            # Connect to the index using v2.x API
-            self.pinecone_index = pinecone.Index(self.index_name)
-            
-            logger.info("Pinecone initialized successfully with v2.x API")
-            
-        except Exception as e:
-            logger.error("Failed to initialize Pinecone", error=str(e))
-            raise
-    
     def _init_cache(self):
         """Initialize Redis cache"""
         try:
@@ -312,24 +256,6 @@ class RAGPipeline:
         except Exception as e:
             logger.info("Redis cache not available, continuing without cache", error=str(e)[:50])
             self.cache = None
-    
-    def _init_indexes(self):
-        """Initialize single LlamaIndex vector store index"""
-        vector_store = PineconeVectorStore(pinecone_index=self.pinecone_index)
-        storage_context = StorageContext.from_defaults(vector_store=vector_store)
-        
-        # Try to load existing index or create new one
-        try:
-            self.index = VectorStoreIndex.from_vector_store(
-                vector_store=vector_store
-            )
-            logger.info("Loaded existing Pinecone index")
-        except:
-            self.index = VectorStoreIndex(
-                nodes=[],
-                storage_context=storage_context
-            )
-            logger.info("Created new Pinecone index")
     
     def _init_local_index(self):
         """Initialize local vector store as fallback"""
@@ -754,10 +680,6 @@ Response:"""
                 else:
                     logger.warning(f"No chunks found in Qdrant for job_id: {job_id}")
                     
-            elif self.vector_store_type == "pinecone":
-                # Delete from Pinecone using metadata filter
-                # Note: Pinecone requires listing vectors with metadata filter first
-                logger.warning("Pinecone deletion not implemented in this version")
                 
             else:
                 # Local index doesn't support deletion by metadata easily
