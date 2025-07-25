@@ -670,13 +670,68 @@ class AAIREApp {
             messagesContainer.innerHTML = '';
             messagesContainer.appendChild(welcomeMsg);
             
-            // Restore messages
+            // Restore messages without adding to this.messages again
             this.messages.forEach(msg => {
                 if (msg.sender !== 'assistant' || Date.now() - msg.timestamp < 24 * 60 * 60 * 1000) {
-                    this.addMessage(msg.sender, msg.content, msg.sources);
+                    this.displayMessage(msg.sender, msg.content, msg.sources);
                 }
             });
         }
+    }
+
+    displayMessage(sender, content, sources = null) {
+        // Similar to addMessage but doesn't store in this.messages or save to localStorage
+        const messagesContainer = document.getElementById('chat-messages');
+        const messageDiv = document.createElement('div');
+        messageDiv.className = `message ${sender}`;
+        
+        let messageContent = `<div class="message-content">`;
+        
+        if (sender === 'error') {
+            messageContent += `<div style="color: #e74c3c;">${content}</div>`;
+        } else if (sender === 'assistant') {
+            messageContent += this.formatMessageContent(content);
+        } else {
+            messageContent += content;
+        }
+        
+        // Add sources if available
+        if (sources && sources.length > 0) {
+            const uniqueSources = [...new Set(sources)];
+            messageContent += '<br><br><small><strong>Source:</strong><br>';
+            uniqueSources.forEach(source => {
+                messageContent += `• ${source}<br>`;
+            });
+            messageContent += '</small>';
+        }
+        
+        // Add copy button for assistant messages (inside the message content)
+        if (sender === 'assistant') {
+            messageContent += `
+                <button class="copy-btn" title="Copy response">
+                    <i class="fas fa-copy"></i>
+                </button>
+            `;
+        }
+        
+        messageContent += `<div class="message-meta">${new Date().toLocaleTimeString()}</div>`;
+        messageContent += '</div>';
+        
+        messageDiv.innerHTML = messageContent;
+        
+        // Add copy functionality if it's an assistant message
+        if (sender === 'assistant') {
+            const copyBtn = messageDiv.querySelector('.copy-btn');
+            copyBtn.addEventListener('click', () => {
+                this.copyToClipboard(content, copyBtn);
+            });
+        }
+        messagesContainer.appendChild(messageDiv);
+        
+        // Scroll to bottom
+        setTimeout(() => {
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }, 100);
     }
 
     getSessionId() {
