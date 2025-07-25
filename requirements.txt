@@ -11,7 +11,7 @@ llama-index-vector-stores-qdrant==0.6.1  # Qdrant vector store support
 # Updated Pinecone client compatible with llama-index 0.10.x
 pinecone-client==3.2.2
 # Qdrant as alternative
-qdrant-client==1.7.0
+qdrant-client>=1.7.1
 
 # LLM Integration
 openai==1.12.0  # Updated for gpt-4o-mini support
