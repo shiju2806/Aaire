@@ -763,19 +763,18 @@ class AAIREApp {
     }
 
     updateConnectionStatus(connected) {
-        const statusDiv = document.getElementById('connection-status');
         const wsStatus = document.getElementById('ws-status');
         
         if (connected) {
-            statusDiv.className = 'connection-status connected';
-            statusDiv.innerHTML = '<i class="fas fa-circle"></i> Connected';
-            wsStatus.textContent = 'Connected';
-            wsStatus.className = 'status-online';
+            if (wsStatus) {
+                wsStatus.textContent = 'Connected';
+                wsStatus.className = 'status-online';
+            }
         } else {
-            statusDiv.className = 'connection-status disconnected';
-            statusDiv.innerHTML = '<i class="fas fa-circle"></i> Disconnected';
-            wsStatus.textContent = 'Disconnected';
-            wsStatus.className = 'status-offline';
+            if (wsStatus) {
+                wsStatus.textContent = 'Disconnected';
+                wsStatus.className = 'status-offline';
+            }
         }
     }
 
@@ -1235,6 +1234,13 @@ function testFileInput() {
     console.log('Clicking file input...');
     if (fileInput) {
         fileInput.click();
+    }
+}
+
+// Global functions for HTML onclick handlers
+function sendMessage() {
+    if (window.app) {
+        window.app.sendMessage();
     }
 }
 
