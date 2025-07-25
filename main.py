@@ -563,6 +563,38 @@ async def refresh_external_data():
     job_id = await external_api_manager.refresh_all()
     return {"job_id": job_id, "status": "started"}
 
+@app.get("/api/v1/documents/{job_id}/summary")
+async def get_document_summary(job_id: str):
+    """Get AI-generated executive summary for uploaded document"""
+    if not document_processor:
+        raise HTTPException(status_code=503, detail="Document processing service not available")
+    
+    try:
+        # For MVP, use demo user
+        user_id = "demo-user"
+        
+        # Get document status which includes summary
+        status = await document_processor.get_status(job_id, user_id)
+        
+        if 'summary' not in status:
+            raise HTTPException(status_code=404, detail="Document summary not available")
+        
+        return {
+            "job_id": job_id,
+            "document_info": {
+                "filename": status.get('filename'),
+                "status": status.get('status'),
+                "created_at": status.get('created_at')
+            },
+            "summary": status['summary']
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Error retrieving document summary", job_id=job_id, error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve summary: {str(e)}")
+
 if __name__ == "__main__":
     uvicorn.run(
         app, 

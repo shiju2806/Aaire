@@ -472,6 +472,147 @@
             background: #c0392b;
         }
 
+        .summary-btn {
+            background: #3498db;
+            color: white;
+            border: none;
+            padding: 6px 10px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            margin-right: 5px;
+            transition: background 0.3s;
+        }
+
+        .summary-btn:hover {
+            background: #2980b9;
+        }
+
+        /* Summary Modal Styles */
+        .summary-modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+
+        .summary-modal {
+            background: white;
+            border-radius: 10px;
+            width: 90%;
+            max-width: 800px;
+            max-height: 90%;
+            overflow-y: auto;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+        }
+
+        .summary-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px;
+            border-bottom: 1px solid #ecf0f1;
+            background: #f8f9fa;
+            border-radius: 10px 10px 0 0;
+        }
+
+        .summary-header h2 {
+            margin: 0;
+            color: #2c3e50;
+        }
+
+        .close-btn {
+            background: none;
+            border: none;
+            font-size: 18px;
+            cursor: pointer;
+            color: #7f8c8d;
+            padding: 5px;
+        }
+
+        .close-btn:hover {
+            color: #e74c3c;
+        }
+
+        .summary-content {
+            padding: 20px;
+        }
+
+        .document-info {
+            margin-bottom: 20px;
+            padding: 15px;
+            background: #ecf0f1;
+            border-radius: 5px;
+        }
+
+        .document-info h3 {
+            margin: 0 0 10px 0;
+            color: #2c3e50;
+        }
+
+        .ai-summary {
+            margin-bottom: 20px;
+        }
+
+        .ai-summary h4 {
+            color: #3498db;
+            margin-bottom: 15px;
+        }
+
+        .summary-text {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            border-left: 4px solid #3498db;
+            line-height: 1.6;
+        }
+
+        .key-insights h4 {
+            color: #f39c12;
+            margin-bottom: 15px;
+        }
+
+        .insights-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+        }
+
+        .insight-card {
+            background: #fff;
+            border: 1px solid #ecf0f1;
+            border-radius: 5px;
+            padding: 15px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+
+        .insight-card h5 {
+            margin: 0 0 10px 0;
+            color: #2c3e50;
+            font-size: 14px;
+        }
+
+        .insight-card p {
+            margin: 0;
+            color: #7f8c8d;
+            font-size: 13px;
+        }
+
+        .summary-actions {
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 1px solid #ecf0f1;
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+        }
+
         /* Dashboard Section */
         .dashboard-section {
             display: none;
@@ -673,13 +814,15 @@
                     </div>
                     <div class="upload-text">
                         <strong>Drop files here or click to browse</strong><br>
-                        Supports: PDF, DOCX, CSV, XLSX (max 100MB)
+                        📄 Documents: PDF, DOCX, CSV, XLSX (max 100MB)<br>
+                        📊 Images: PNG, JPG, GIF, WebP (max 10MB)<br>
+                        <em>✨ AI can analyze charts, graphs, and financial statements!</em>
                     </div>
                     <button class="btn" id="choose-files-btn">
                         Choose Files
                     </button>
                     <input type="file" id="file-input" class="file-input" multiple 
-                           accept=".pdf,.docx,.csv,.xlsx">
+                           accept=".pdf,.docx,.csv,.xlsx,.png,.jpg,.jpeg,.gif,.webp">
                 </div>
                 
                 <div class="upload-progress" id="upload-progress">
@@ -757,6 +900,6 @@
         <i class="fas fa-circle"></i> Disconnected
     </div>
 
-    <script src="/static/js/app.js?v=6&t=20250125"></script>
+    <script src="/static/js/app.js?v=7&t=20250125"></script>
 </body>
 </html>

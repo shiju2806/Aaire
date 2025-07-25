@@ -499,6 +499,11 @@ class AAIREApp {
                     </div>
                     <div class="file-actions">
                         <div class="file-status ${statusClass}">${file.status}</div>
+                        ${file.status === 'completed' ? `
+                            <button class="summary-btn" onclick="window.app.viewSummary('${file.job_id}', '${file.name}')" title="View AI Summary">
+                                <i class="fas fa-file-alt"></i>
+                            </button>
+                        ` : ''}
                         <button class="delete-btn" onclick="window.app.deleteFile('${file.job_id}', '${file.name}')">
                             <i class="fas fa-trash"></i>
                         </button>
@@ -534,6 +539,75 @@ class AAIREApp {
         } catch (e) {
             console.warn('Could not load uploaded files:', e);
         }
+    }
+
+    async viewSummary(jobId, fileName) {
+        try {
+            const response = await fetch(`/api/v1/documents/${jobId}/summary`);
+            
+            if (response.ok) {
+                const summaryData = await response.json();
+                this.displaySummaryModal(summaryData);
+            } else {
+                alert('Summary not available for this document yet. Please try again later.');
+            }
+        } catch (error) {
+            console.error('Error fetching summary:', error);
+            alert('Unable to load document summary. Please try again.');
+        }
+    }
+
+    displaySummaryModal(summaryData) {
+        // Create modal overlay
+        const overlay = document.createElement('div');
+        overlay.className = 'summary-modal-overlay';
+        overlay.innerHTML = `
+            <div class="summary-modal">
+                <div class="summary-header">
+                    <h2><i class="fas fa-file-alt"></i> Document Summary</h2>
+                    <button class="close-btn" onclick="this.parentElement.parentElement.parentElement.remove()">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                <div class="summary-content">
+                    <div class="document-info">
+                        <h3>${summaryData.document_info.filename}</h3>
+                        <p><strong>Status:</strong> ${summaryData.document_info.status}</p>
+                        <p><strong>Processed:</strong> ${new Date(summaryData.document_info.created_at).toLocaleString()}</p>
+                    </div>
+                    
+                    <div class="ai-summary">
+                        <h4><i class="fas fa-brain"></i> AI-Generated Executive Summary</h4>
+                        <div class="summary-text">${this.formatMessageContent(summaryData.summary.summary)}</div>
+                    </div>
+                    
+                    ${summaryData.summary.key_insights && summaryData.summary.key_insights.length > 0 ? `
+                        <div class="key-insights">
+                            <h4><i class="fas fa-lightbulb"></i> Key Insights</h4>
+                            <div class="insights-grid">
+                                ${summaryData.summary.key_insights.map(insight => `
+                                    <div class="insight-card">
+                                        <h5>${insight.description}</h5>
+                                        <p>${Array.isArray(insight.value) ? insight.value.join(', ') : insight.value}</p>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    ` : ''}
+                    
+                    <div class="summary-actions">
+                        <button class="btn" onclick="navigator.clipboard.writeText('${summaryData.summary.summary.replace(/'/g, "\\'")}')">
+                            <i class="fas fa-copy"></i> Copy Summary
+                        </button>
+                        <button class="btn btn-secondary" onclick="this.parentElement.parentElement.parentElement.parentElement.remove()">
+                            Close
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        document.body.appendChild(overlay);
     }
 
     async deleteFile(jobId, fileName) {

@@ -608,3 +608,102 @@ Response:"""
                 stats["cache_stats"] = {"status": "unavailable"}
         
         return stats
+    
+    async def generate_document_summary(self, document_content: str, doc_metadata: Dict[str, Any]) -> Dict[str, Any]:
+        """Generate intelligent executive summary of uploaded documents"""
+        try:
+            # Create specialized prompt for document summarization
+            summary_prompt = f"""You are AAIRE, an expert AI assistant for insurance accounting and actuarial analysis.
+
+Please analyze this document and provide a comprehensive executive summary:
+
+Document Title: {doc_metadata.get('title', 'Unknown')}
+Document Type: {doc_metadata.get('source_type', 'Unknown')}
+Effective Date: {doc_metadata.get('effective_date', 'Unknown')}
+
+Document Content:
+{document_content[:4000]}  # Limit for token management
+
+Provide a structured executive summary with:
+1. **Document Overview**: Brief description and purpose
+2. **Key Accounting Impacts**: Main accounting implications and treatments
+3. **Compliance Requirements**: Regulatory or standard requirements
+4. **Action Items**: Recommended next steps or considerations
+5. **Risk Assessment**: Potential compliance or financial risks
+
+Format your response in clear, professional language suitable for executives and accounting professionals."""
+
+            # Generate summary using the LLM
+            response = self.llm.complete(summary_prompt)
+            summary_text = response.text.strip()
+            
+            # Extract key metrics and insights
+            key_insights = self._extract_key_insights(summary_text, document_content)
+            
+            return {
+                "summary": summary_text,
+                "key_insights": key_insights,
+                "document_metadata": doc_metadata,
+                "generated_at": datetime.utcnow().isoformat(),
+                "confidence": 0.85  # Base confidence for summarization
+            }
+            
+        except Exception as e:
+            logger.error("Failed to generate document summary", error=str(e))
+            return {
+                "summary": "Unable to generate summary at this time. The document has been processed and indexed for search.",
+                "key_insights": [],
+                "document_metadata": doc_metadata,
+                "generated_at": datetime.utcnow().isoformat(),
+                "confidence": 0.0
+            }
+    
+    def _extract_key_insights(self, summary_text: str, document_content: str) -> List[Dict[str, Any]]:
+        """Extract key insights and metrics from document analysis"""
+        insights = []
+        
+        # Extract potential accounting standards mentioned
+        standards_mentioned = []
+        accounting_keywords = ['ASC', 'FASB', 'IFRS', 'GAAP', 'CECL', 'LDTI', 'ASU', 'FAS']
+        for keyword in accounting_keywords:
+            if keyword in document_content.upper():
+                standards_mentioned.append(keyword)
+        
+        if standards_mentioned:
+            insights.append({
+                "type": "accounting_standards",
+                "value": standards_mentioned,
+                "description": "Accounting standards referenced in document"
+            })
+        
+        # Extract dates and deadlines
+        import re
+        date_patterns = [
+            r'\b\d{1,2}/\d{1,2}/\d{4}\b',  # MM/DD/YYYY
+            r'\b\d{4}-\d{2}-\d{2}\b',      # YYYY-MM-DD
+            r'\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4}\b'
+        ]
+        
+        dates_found = []
+        for pattern in date_patterns:
+            dates_found.extend(re.findall(pattern, document_content, re.IGNORECASE))
+        
+        if dates_found:
+            insights.append({
+                "type": "important_dates",
+                "value": dates_found[:5],  # Limit to first 5 dates
+                "description": "Important dates mentioned in document"
+            })
+        
+        # Extract financial terms
+        financial_terms = ['reserve', 'liability', 'asset', 'premium', 'claim', 'policyholder', 'actuarial', 'valuation']
+        terms_found = [term for term in financial_terms if term in document_content.lower()]
+        
+        if terms_found:
+            insights.append({
+                "type": "financial_concepts",
+                "value": terms_found,
+                "description": "Key financial concepts discussed"
+            })
+        
+        return insights
