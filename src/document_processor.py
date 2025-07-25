@@ -200,6 +200,15 @@ class DocumentProcessor:
                 except Exception as e:
                     logger.warning("Failed to generate document summary", 
                                  job_id=job_id, error=str(e))
+                    # Fallback basic summary
+                    self.processing_jobs[job_id]['summary'] = self._generate_basic_summary(
+                        text_content, metadata
+                    )
+            else:
+                # Generate basic summary when RAG pipeline not available
+                self.processing_jobs[job_id]['summary'] = self._generate_basic_summary(
+                    text_content, metadata
+                )
             
             self.processing_jobs[job_id]['progress'] = 100
             self.processing_jobs[job_id]['status'] = 'completed'
@@ -364,6 +373,79 @@ Analysis Status: Ready for multi-modal processing"""
             logger.error("Image extraction failed", error=str(e))
             raise
     
+    def _generate_basic_summary(self, text_content: str, metadata: Dict[str, Any]) -> Dict[str, Any]:
+        """Generate basic summary when AI is not available"""
+        try:
+            # Extract basic statistics
+            word_count = len(text_content.split())
+            char_count = len(text_content)
+            
+            # Look for common accounting terms
+            accounting_terms = ['revenue', 'liability', 'asset', 'gaap', 'ifrs', 'asc', 'fasb', 
+                              'reserve', 'premium', 'claim', 'policy', 'actuarial', 'compliance']
+            found_terms = [term for term in accounting_terms if term in text_content.lower()]
+            
+            # Extract potential dates
+            import re
+            date_pattern = r'\b\d{1,2}/\d{1,2}/\d{4}\b|\b\d{4}-\d{2}-\d{2}\b'
+            dates_found = re.findall(date_pattern, text_content)[:5]
+            
+            # Generate basic summary
+            summary_text = f"""**Document Analysis Summary**
+
+**Document Overview:**
+- File: {metadata.get('title', 'Unknown Document')}
+- Type: {metadata.get('source_type', 'Unknown')}
+- Size: {word_count:,} words, {char_count:,} characters
+- Processing Date: {datetime.utcnow().strftime('%Y-%m-%d %H:%M')}
+
+**Content Analysis:**
+This document appears to be a {metadata.get('source_type', 'business')} document containing accounting or insurance-related content.
+
+**Key Topics Identified:**
+{', '.join(found_terms) if found_terms else 'General business content'}
+
+**Important Dates Found:**
+{', '.join(dates_found) if dates_found else 'No specific dates identified'}
+
+**Next Steps:**
+- Review document content for compliance requirements
+- Identify any action items or deadlines
+- Consider consultation with accounting/actuarial experts if needed
+
+*Note: This is a basic analysis. For detailed AI-powered insights, configure OpenAI API keys.*"""
+
+            return {
+                "summary": summary_text,
+                "key_insights": [
+                    {
+                        "type": "basic_analysis",
+                        "value": found_terms,
+                        "description": "Accounting terms identified in document"
+                    },
+                    {
+                        "type": "document_stats",
+                        "value": f"{word_count} words",
+                        "description": "Document size"
+                    }
+                ] if found_terms else [],
+                "document_metadata": metadata,
+                "generated_at": datetime.utcnow().isoformat(),
+                "confidence": 0.6,
+                "analysis_type": "basic"
+            }
+            
+        except Exception as e:
+            logger.error("Failed to generate basic summary", error=str(e))
+            return {
+                "summary": f"Document '{metadata.get('title', 'Unknown')}' was processed successfully. Basic analysis not available.",
+                "key_insights": [],
+                "document_metadata": metadata,
+                "generated_at": datetime.utcnow().isoformat(),
+                "confidence": 0.3,
+                "analysis_type": "minimal"
+            }
+
     def _map_source_type(self, source_type: str) -> str:
         """Map source type to RAG pipeline document type"""
         mapping = {
@@ -393,6 +475,7 @@ Analysis Status: Ready for multi-modal processing"""
             'filename': job['filename'],
             'created_at': job['created_at'],
             'chunks_created': job.get('chunks_created'),
+            'summary': job.get('summary'),
             'error': job.get('error')
         }
     
