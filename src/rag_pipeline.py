@@ -348,11 +348,14 @@ class RAGPipeline:
             # Generate response
             response = await self._generate_response(query, retrieved_docs, user_context)
             
-            # Extract citations
-            citations = self._extract_citations(retrieved_docs)
-            
-            # Calculate confidence score
-            confidence = self._calculate_confidence(retrieved_docs, response)
+            # Extract citations only if we have relevant documents
+            if retrieved_docs:
+                citations = self._extract_citations(retrieved_docs)
+                confidence = self._calculate_confidence(retrieved_docs, response)
+            else:
+                # No relevant documents found - no citations and low confidence
+                citations = []
+                confidence = 0.3  # Low confidence for general knowledge responses
             
             rag_response = RAGResponse(
                 answer=response,
@@ -458,26 +461,47 @@ class RAGPipeline:
     ) -> str:
         """Generate response using retrieved documents"""
         
-        # Build context from retrieved documents
-        context_parts = []
-        for i, doc in enumerate(retrieved_docs[:5]):  # Use top 5 docs
-            context_parts.append(f"[{i+1}] {doc['content']}")
-        
-        context = "\n\n".join(context_parts)
-        
-        # Build prompt
-        prompt = f"""You are AAIRE, an expert in insurance accounting and actuarial matters.
+        # Check if we have relevant documents
+        if not retrieved_docs:
+            # No relevant documents found - provide general knowledge response
+            prompt = f"""You are AAIRE, an expert in insurance accounting and actuarial matters.
+You provide accurate information based on US GAAP, IFRS, and general accounting principles.
+
+User Question: {query}
+
+No specific documents were found in your company's knowledge base that directly address this question.
+
+Instructions:
+- Provide a helpful general answer based on standard accounting and actuarial principles
+- Clearly state that this is general information, not from specific company documents
+- Mention relevant accounting standards (US GAAP, IFRS) where applicable
+- Never provide tax or legal advice
+- Suggest that the user consult company-specific policies or seek professional advice for specific situations
+- Do NOT reference any specific documents or sources
+
+Response:"""
+        else:
+            # Build context from retrieved documents
+            context_parts = []
+            for i, doc in enumerate(retrieved_docs[:5]):  # Use top 5 docs
+                context_parts.append(f"[{i+1}] {doc['content']}")
+            
+            context = "\n\n".join(context_parts)
+            
+            # Build prompt with document context
+            prompt = f"""You are AAIRE, an expert in insurance accounting and actuarial matters.
 You provide accurate information based on US GAAP, IFRS, and company policies.
 
 User Question: {query}
 
-Relevant Information:
+Relevant Information from Company Documents:
 {context}
 
 Instructions:
-- Provide a comprehensive answer based on the relevant information
-- Always cite your sources using [1], [2], etc. format
-- If information is insufficient, clearly state what additional details are needed
+- Provide a comprehensive answer based ONLY on the relevant information provided above
+- Always cite your sources using [1], [2], etc. format when referencing the provided information
+- If the provided information is insufficient to fully answer the question, clearly state this
+- You may supplement with general accounting knowledge, but clearly distinguish between document-based and general information
 - Never provide tax or legal advice
 - Focus on accounting and actuarial standards
 
@@ -496,12 +520,20 @@ Response:"""
         """Extract citation information from retrieved documents"""
         citations = []
         
+        # Only include citations for documents with sufficient relevance score
+        CITATION_THRESHOLD = 0.5  # Minimum score to include as citation
+        
         for i, doc in enumerate(retrieved_docs[:5]):
+            # Skip documents with low relevance scores
+            if doc['score'] < CITATION_THRESHOLD:
+                logger.info(f"Skipping citation for low-relevance document (score: {doc['score']})")
+                continue
+                
             # Get filename for source
             filename = doc['metadata'].get('filename', 'Unknown')
             
             citation = {
-                "id": i + 1,
+                "id": len(citations) + 1,  # Use actual citation count, not doc index
                 "text": doc['content'][:200] + "..." if len(doc['content']) > 200 else doc['content'],
                 "source": filename,
                 "source_type": doc['source_type'],
@@ -518,6 +550,7 @@ Response:"""
                 
             citations.append(citation)
         
+        logger.info(f"Generated {len(citations)} citations from {len(retrieved_docs)} retrieved documents")
         return citations
     
     def _calculate_confidence(self, retrieved_docs: List[Dict], response: str) -> float:
