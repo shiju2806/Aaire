@@ -431,6 +431,7 @@ class AAIREApp {
                 if (response.ok) {
                     const result = await response.json();
                     console.log('Upload success:', result);
+                    console.log('Initial status received:', result.status);
                     progressFill.style.width = `${((i + 1) / files.length) * 100}%`;
                     
                     // Add to uploaded files list
@@ -443,6 +444,9 @@ class AAIREApp {
                         message: result.message,
                         uploaded_at: new Date().toISOString()
                     });
+                    
+                    // Check for status updates with retries
+                    this.pollDocumentStatus(result.job_id, 0);
                     
                     if (i === files.length - 1) {
                         statusDiv.textContent = 'Upload completed successfully!';
@@ -495,6 +499,8 @@ class AAIREApp {
                                file.status === 'accepted' ? 'success' :
                                file.status === 'processing' ? 'processing' : 'error';
             
+            console.log(`File ${file.name} status: "${file.status}", will show summary button: ${file.status === 'completed'}`);
+            
             return `
                 <div class="file-item" data-job-id="${file.job_id}">
                     <div class="file-info">
@@ -544,6 +550,61 @@ class AAIREApp {
         } catch (e) {
             console.warn('Could not load uploaded files:', e);
         }
+    }
+
+    async pollDocumentStatus(jobId, attempt) {
+        const maxAttempts = 6; // Try for ~30 seconds
+        const delays = [2000, 3000, 5000, 5000, 10000, 10000]; // Increasing delays
+        
+        try {
+            const response = await fetch(`/api/v1/documents/${jobId}/status`);
+            if (response.ok) {
+                const status = await response.json();
+                console.log(`Document status check (attempt ${attempt + 1}):`, status);
+                
+                // Find and update the file in our list
+                const fileIndex = this.uploadedFiles.findIndex(file => file.job_id === jobId);
+                if (fileIndex !== -1) {
+                    const oldStatus = this.uploadedFiles[fileIndex].status;
+                    this.uploadedFiles[fileIndex].status = status.status;
+                    
+                    // If status changed, update the display
+                    if (oldStatus !== status.status) {
+                        console.log(`Status updated for ${jobId}: ${oldStatus} -> ${status.status}`);
+                        this.updateUploadedFilesList();
+                        this.saveUploadedFiles();
+                    }
+                    
+                    // If still processing and haven't exceeded max attempts, check again
+                    if (status.status === 'processing' || status.status === 'queued') {
+                        if (attempt < maxAttempts - 1) {
+                            setTimeout(() => {
+                                this.pollDocumentStatus(jobId, attempt + 1);
+                            }, delays[attempt] || 10000);
+                        }
+                    }
+                    // If accepted, also retry (might change to completed)
+                    else if (status.status === 'accepted' && attempt < 3) {
+                        setTimeout(() => {
+                            this.pollDocumentStatus(jobId, attempt + 1);
+                        }, delays[attempt] || 5000);
+                    }
+                }
+            }
+        } catch (error) {
+            console.warn(`Could not check document status (attempt ${attempt + 1}):`, error);
+            // Retry on error too
+            if (attempt < 3) {
+                setTimeout(() => {
+                    this.pollDocumentStatus(jobId, attempt + 1);
+                }, delays[attempt] || 5000);
+            }
+        }
+    }
+
+    async checkDocumentStatus(jobId) {
+        // Legacy method for compatibility - just do a single check
+        this.pollDocumentStatus(jobId, 0);
     }
 
     async viewSummary(jobId, fileName) {
