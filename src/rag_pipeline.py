@@ -113,9 +113,14 @@ class RAGPipeline:
             max_tokens=self.config['llm_config']['max_tokens']
         )
         
-        # Override the actual model name for API calls
+        # Store the actual model name for API calls
+        self.actual_model = model_name
         if model_name == "gpt-4o-mini":
-            self.llm._model = model_name
+            try:
+                self.llm._model = model_name
+            except (AttributeError, TypeError):
+                # Older llama-index version - store separately
+                logger.info("Using separate model tracking for older llama-index compatibility")
         
         logger.info(f"Using OpenAI model: {model_name}")
         
