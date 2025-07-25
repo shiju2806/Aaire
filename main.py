@@ -397,11 +397,16 @@ async def chat(request: ChatRequest):
             
             if document_matches:
                 response_text = f"Based on your uploaded documents, here's what I found:\n\n{document_matches}\n\nNote: This is a basic text search. For full AI-powered analysis, please configure OpenAI API key."
-                citations = ["Uploaded company documents"]
+                citations = [{"source": "Uploaded company documents", "text": "Basic text search results"}]
                 confidence = 0.7
             else:
-                response_text = f"I searched your uploaded documents but couldn't find specific information about '{request.query}'. For full AI-powered analysis of your documents, please configure OpenAI and Pinecone API keys."
-                citations = []
+                # No matches found in documents - provide general knowledge response without false citations
+                response_text = f"""I searched your uploaded documents but couldn't find specific information about '{request.query}'.
+
+In general accounting terms, accounts payable refers to amounts a company owes to suppliers or vendors for goods or services received but not yet paid for. It represents a liability on the company's balance sheet.
+
+Note: This is general accounting knowledge, not from your specific company documents. For company-specific policies or full AI-powered analysis, please configure OpenAI and vector database API keys."""
+                citations = []  # No citations for general knowledge
                 confidence = 0.3
             
             return ChatResponse(
@@ -566,8 +571,16 @@ async def websocket_chat(websocket: WebSocket):
                             sources = ["Uploaded company documents"]
                             confidence = 0.7
                         else:
-                            message = f"I searched your uploaded documents but couldn't find information about '{query}'. Configure OpenAI and Pinecone API keys for full AI functionality."
-                            sources = []
+                            # No matches found - provide general knowledge without false citations
+                            if "accounts payable" in query.lower():
+                                message = f"""I searched your uploaded documents but couldn't find specific information about '{query}'.
+
+In general accounting terms, accounts payable refers to amounts a company owes to suppliers or vendors for goods or services received but not yet paid for. It represents a liability on the company's balance sheet.
+
+Note: This is general accounting knowledge, not from your specific company documents. Configure OpenAI and vector database API keys for full AI-powered analysis."""
+                            else:
+                                message = f"I searched your uploaded documents but couldn't find information about '{query}'. Configure OpenAI and Pinecone API keys for full AI functionality."
+                            sources = []  # No false citations
                             confidence = 0.3
                         
                         await websocket.send_json({
