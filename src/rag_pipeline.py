@@ -9,6 +9,10 @@ from typing import List, Dict, Any, Optional, AsyncGenerator
 from datetime import datetime
 import asyncio
 import uuid
+import re
+import numpy as np
+from collections import defaultdict
+from rank_bm25 import BM25Okapi
 
 # LlamaIndex imports - current version structure  
 from llama_index.core import (
@@ -136,6 +140,9 @@ class RAGPipeline:
         # Initialize Redis for caching
         self._init_cache()
         
+        # Initialize hybrid search components
+        self._init_hybrid_search()
+        
         logger.info("RAG Pipeline initialized", 
                    model=self.config['llm_config']['model'],
                    embedding_model=self.config['embedding_config']['model'])
@@ -258,6 +265,50 @@ class RAGPipeline:
             logger.info("Redis cache not available, continuing without cache", error=str(e)[:50])
             self.cache = None
     
+    def _init_hybrid_search(self):
+        """Initialize BM25 keyword search for hybrid retrieval"""
+        try:
+            # Initialize BM25 index (will be populated when documents are added)
+            self.bm25_index = None
+            self.bm25_documents = []  # Store document texts for BM25
+            self.bm25_metadata = []   # Store metadata for BM25 documents
+            logger.info("✅ Hybrid search components initialized")
+        except Exception as e:
+            logger.error("Failed to initialize hybrid search", error=str(e))
+            # Set fallback values
+            self.bm25_index = None
+            self.bm25_documents = []
+            self.bm25_metadata = []
+    
+    def _update_bm25_index(self, nodes):
+        """Update BM25 index with new document nodes"""
+        try:
+            # Add node texts and metadata to BM25 storage
+            for node in nodes:
+                text = node.get_content() if hasattr(node, 'get_content') else str(node.text)
+                self.bm25_documents.append(text)
+                self.bm25_metadata.append({
+                    'node_id': node.node_id if hasattr(node, 'node_id') else str(uuid.uuid4()),
+                    'metadata': node.metadata or {},
+                    'text': text
+                })
+            
+            # Rebuild BM25 index with all documents
+            if self.bm25_documents:
+                # Tokenize documents for BM25 (simple word splitting)
+                tokenized_docs = [self._tokenize_text(doc) for doc in self.bm25_documents]
+                self.bm25_index = BM25Okapi(tokenized_docs)
+                logger.info(f"✅ BM25 index updated with {len(self.bm25_documents)} documents")
+        except Exception as e:
+            logger.error("Failed to update BM25 index", error=str(e))
+    
+    def _tokenize_text(self, text: str) -> List[str]:
+        """Simple tokenization for BM25"""
+        # Convert to lowercase and split on non-alphanumeric characters
+        text = text.lower()
+        tokens = re.findall(r'\b\w+\b', text)
+        return tokens
+    
     def _init_local_index(self):
         """Initialize local vector store as fallback"""
         # Create a simple in-memory vector store
@@ -296,6 +347,9 @@ class RAGPipeline:
             # Add to single index
             self.index.insert_nodes(nodes)
             
+            # Update BM25 index for hybrid search
+            self._update_bm25_index(nodes)
+            
             # Invalidate cache for this document type
             if self.cache:
                 pattern = f"query_cache:{doc_type}:*"
@@ -304,7 +358,8 @@ class RAGPipeline:
             
             logger.info(f"Added {len(documents)} documents to index",
                        doc_type=doc_type,
-                       total_nodes=len(nodes))
+                       total_nodes=len(nodes),
+                       bm25_documents=len(self.bm25_documents))
             
             return len(nodes)
             
@@ -428,7 +483,19 @@ class RAGPipeline:
         return doc_types if doc_types else None
     
     async def _retrieve_documents(self, query: str, doc_type_filter: Optional[List[str]]) -> List[Dict]:
-        """Retrieve relevant documents from single index with optional document type filtering"""
+        """Hybrid retrieval: combines vector search with BM25 keyword search"""
+        
+        # Get results from both search methods
+        vector_results = await self._vector_search(query, doc_type_filter)
+        keyword_results = await self._keyword_search(query, doc_type_filter)
+        
+        # Combine and rerank results
+        combined_results = self._combine_search_results(vector_results, keyword_results, query)
+        
+        return combined_results
+    
+    async def _vector_search(self, query: str, doc_type_filter: Optional[List[str]]) -> List[Dict]:
+        """Original vector-based semantic search"""
         all_results = []
         
         try:
@@ -453,7 +520,8 @@ class RAGPipeline:
                         'metadata': node.metadata or {},
                         'score': node.score,
                         'source_type': node.metadata.get('doc_type', 'unknown') if node.metadata else 'unknown',
-                        'node_id': node.id_
+                        'node_id': node.id_,
+                        'search_type': 'vector'
                     })
                     
         except Exception as e:
@@ -462,6 +530,113 @@ class RAGPipeline:
         # Sort by relevance score
         all_results.sort(key=lambda x: x['score'], reverse=True)
         return all_results[:self.config['retrieval_config']['max_results']]
+    
+    async def _keyword_search(self, query: str, doc_type_filter: Optional[List[str]]) -> List[Dict]:
+        """BM25-based keyword search"""
+        results = []
+        
+        try:
+            if not self.bm25_index or not self.bm25_documents:
+                logger.info("BM25 index not available, skipping keyword search")
+                return results
+            
+            # Tokenize query for BM25
+            query_tokens = self._tokenize_text(query)
+            
+            # Get BM25 scores for all documents
+            bm25_scores = self.bm25_index.get_scores(query_tokens)
+            
+            # Create results with scores
+            for i, score in enumerate(bm25_scores):
+                if score > 0 and i < len(self.bm25_metadata):  # Only include docs with positive scores
+                    doc_metadata = self.bm25_metadata[i]
+                    
+                    # Apply document type filter if specified
+                    if doc_type_filter:
+                        doc_type = doc_metadata['metadata'].get('doc_type')
+                        if doc_type not in doc_type_filter:
+                            continue
+                    
+                    results.append({
+                        'content': doc_metadata['text'],
+                        'metadata': doc_metadata['metadata'],
+                        'score': float(score),  # BM25 score
+                        'source_type': doc_metadata['metadata'].get('doc_type', 'unknown'),
+                        'node_id': doc_metadata['node_id'],
+                        'search_type': 'keyword'
+                    })
+            
+            # Sort by BM25 score and take top results
+            results.sort(key=lambda x: x['score'], reverse=True)
+            results = results[:self.config['retrieval_config']['max_results']]
+            
+            logger.info(f"BM25 keyword search found {len(results)} results")
+            
+        except Exception as e:
+            logger.error("Failed to perform BM25 keyword search", error=str(e))
+        
+        return results
+    
+    def _combine_search_results(self, vector_results: List[Dict], keyword_results: List[Dict], query: str) -> List[Dict]:
+        """Combine and rerank results from vector and keyword search"""
+        
+        try:
+            # Create a combined results dictionary to avoid duplicates
+            combined_dict = {}
+            
+            # Normalize scores and add vector results
+            max_vector_score = max([r['score'] for r in vector_results], default=1.0)
+            for result in vector_results:
+                node_id = result['node_id']
+                normalized_score = result['score'] / max_vector_score if max_vector_score > 0 else 0
+                
+                combined_dict[node_id] = result.copy()
+                combined_dict[node_id]['vector_score'] = normalized_score
+                combined_dict[node_id]['keyword_score'] = 0.0
+                combined_dict[node_id]['combined_score'] = normalized_score * 0.7  # Weight vector search at 70%
+            
+            # Normalize scores and add/update keyword results
+            max_keyword_score = max([r['score'] for r in keyword_results], default=1.0)
+            for result in keyword_results:
+                node_id = result['node_id']
+                normalized_score = result['score'] / max_keyword_score if max_keyword_score > 0 else 0
+                
+                if node_id in combined_dict:
+                    # Update existing result with keyword score
+                    combined_dict[node_id]['keyword_score'] = normalized_score
+                    combined_dict[node_id]['combined_score'] = (
+                        combined_dict[node_id]['vector_score'] * 0.7 + normalized_score * 0.3
+                    )
+                    combined_dict[node_id]['search_type'] = 'hybrid'
+                else:
+                    # Add new keyword-only result
+                    combined_dict[node_id] = result.copy()
+                    combined_dict[node_id]['vector_score'] = 0.0
+                    combined_dict[node_id]['keyword_score'] = normalized_score
+                    combined_dict[node_id]['combined_score'] = normalized_score * 0.3  # Weight keyword-only at 30%
+            
+            # Convert back to list and sort by combined score
+            final_results = list(combined_dict.values())
+            final_results.sort(key=lambda x: x['combined_score'], reverse=True)
+            
+            # Take top results and clean up temporary scoring fields
+            final_results = final_results[:self.config['retrieval_config']['max_results']]
+            for result in final_results:
+                result['score'] = result['combined_score']  # Set final score
+                # Keep detailed scores for debugging but rename
+                result.pop('combined_score', None)
+                # Optionally remove detailed scores to clean up
+                # result.pop('vector_score', None)
+                # result.pop('keyword_score', None)
+            
+            logger.info(f"Hybrid search combined {len(vector_results)} vector + {len(keyword_results)} keyword results into {len(final_results)} final results")
+            
+            return final_results
+            
+        except Exception as e:
+            logger.error("Failed to combine search results", error=str(e))
+            # Fallback to vector results only
+            return vector_results[:self.config['retrieval_config']['max_results']]
     
     async def _generate_response(
         self, 
