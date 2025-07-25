@@ -635,9 +635,12 @@ async def delete_document(job_id: str):
         
         # Delete from RAG pipeline if available
         if rag_pipeline:
-            # TODO: Implement document deletion from vector store
-            # For now, just log the deletion request
-            logger.info("Document deletion requested", job_id=job_id, user_id=user_id)
+            # Delete all chunks from vector store
+            deletion_result = await rag_pipeline.delete_document(job_id)
+            logger.info("Document deletion from vector store", 
+                       job_id=job_id, 
+                       user_id=user_id,
+                       result=deletion_result)
         
         # Log audit event if available
         if audit_logger:

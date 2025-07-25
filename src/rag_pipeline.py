@@ -293,12 +293,17 @@ class RAGPipeline:
             # Parse documents into nodes
             nodes = self.node_parser.get_nodes_from_documents(documents)
             
-            # Ensure nodes inherit the document type metadata
+            # Ensure nodes inherit the document metadata including job_id
             for node in nodes:
                 if not node.metadata:
                     node.metadata = {}
+                # Preserve important metadata from parent document
                 node.metadata['doc_type'] = doc_type
                 node.metadata['added_at'] = datetime.utcnow().isoformat()
+                # Ensure job_id is preserved for deletion tracking
+                if documents and documents[0].metadata and 'job_id' in documents[0].metadata:
+                    node.metadata['job_id'] = documents[0].metadata['job_id']
+                    node.metadata['filename'] = documents[0].metadata.get('filename', 'Unknown')
             
             # Add to single index
             self.index.insert_nodes(nodes)
@@ -601,6 +606,123 @@ Response:"""
             confidence=data['confidence'],
             session_id=session_id
         )
+    
+    async def delete_document(self, job_id: str) -> Dict[str, Any]:
+        """Delete all chunks associated with a document from the vector store"""
+        try:
+            deleted_count = 0
+            
+            if self.vector_store_type == "qdrant":
+                # Delete from Qdrant using metadata filter
+                from qdrant_client.models import Filter, FieldCondition, MatchValue
+                
+                # Search for all points with this job_id
+                search_result = self.qdrant_client.scroll(
+                    collection_name=self.collection_name,
+                    scroll_filter=Filter(
+                        must=[
+                            FieldCondition(
+                                key="job_id",
+                                match=MatchValue(value=job_id)
+                            )
+                        ]
+                    ),
+                    limit=1000  # Get all chunks for this document
+                )
+                
+                # Extract point IDs to delete
+                point_ids = [point.id for point in search_result[0]]
+                
+                if point_ids:
+                    # Delete the points
+                    self.qdrant_client.delete(
+                        collection_name=self.collection_name,
+                        points_selector=point_ids
+                    )
+                    deleted_count = len(point_ids)
+                    logger.info(f"Deleted {deleted_count} chunks from Qdrant for job_id: {job_id}")
+                else:
+                    logger.warning(f"No chunks found in Qdrant for job_id: {job_id}")
+                    
+            elif self.vector_store_type == "pinecone":
+                # Delete from Pinecone using metadata filter
+                # Note: Pinecone requires listing vectors with metadata filter first
+                logger.warning("Pinecone deletion not implemented in this version")
+                
+            else:
+                # Local index doesn't support deletion by metadata easily
+                logger.warning("Local index deletion not implemented - rebuild index recommended")
+            
+            # Clear cache entries related to this document
+            if self.cache:
+                # Clear all cache entries (simple approach)
+                pattern = "query_cache:*"
+                for key in self.cache.scan_iter(match=pattern):
+                    self.cache.delete(key)
+                logger.info("Cleared query cache after document deletion")
+            
+            return {
+                "status": "success",
+                "deleted_chunks": deleted_count,
+                "job_id": job_id,
+                "vector_store": self.vector_store_type
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to delete document from vector store", error=str(e), job_id=job_id)
+            return {
+                "status": "error",
+                "error": str(e),
+                "job_id": job_id
+            }
+    
+    async def cleanup_orphaned_chunks(self) -> Dict[str, Any]:
+        """Clean up chunks that don't have valid job_ids (legacy data)"""
+        try:
+            cleaned_count = 0
+            
+            if self.vector_store_type == "qdrant":
+                # Get all points without job_id
+                from qdrant_client.models import Filter, FieldCondition, IsNullCondition
+                
+                # Search for points without job_id
+                search_result = self.qdrant_client.scroll(
+                    collection_name=self.collection_name,
+                    scroll_filter=Filter(
+                        must=[
+                            IsNullCondition(
+                                key="job_id",
+                                is_null=True
+                            )
+                        ]
+                    ),
+                    limit=1000
+                )
+                
+                # Extract point IDs to delete
+                point_ids = [point.id for point in search_result[0]]
+                
+                if point_ids:
+                    # Delete the orphaned points
+                    self.qdrant_client.delete(
+                        collection_name=self.collection_name,
+                        points_selector=point_ids
+                    )
+                    cleaned_count = len(point_ids)
+                    logger.info(f"Cleaned {cleaned_count} orphaned chunks from Qdrant")
+                    
+            return {
+                "status": "success",
+                "cleaned_chunks": cleaned_count,
+                "vector_store": self.vector_store_type
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to cleanup orphaned chunks", error=str(e))
+            return {
+                "status": "error",
+                "error": str(e)
+            }
     
     async def get_stats(self) -> Dict[str, Any]:
         """Get RAG pipeline statistics"""
