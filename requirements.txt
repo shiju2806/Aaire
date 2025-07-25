@@ -7,16 +7,16 @@ uvicorn[standard]==0.27.0
 websockets==12.0
 pydantic==2.8.2
 
-# Essential llama-index components only
-llama-index-core==0.12.7
-llama-index-llms-openai==0.3.0
-llama-index-embeddings-openai==0.3.0
+# Fully compatible llama-index ecosystem for 0.10.x
+llama-index-core==0.10.57
+llama-index-llms-openai==0.1.29
+llama-index-embeddings-openai==0.1.11
 llama-index-vector-stores-qdrant==0.2.4
-llama-index-readers-file==0.4.0
+llama-index-readers-file==0.1.33
 
-# Vector Database - Compatible versions that work together
+# Vector Database - Compatible with llama-index 0.10.x
 qdrant-client==1.7.1
-fastembed==0.1.1
+fastembed==0.2.7
 
 # LLM Integration
 openai==1.58.1

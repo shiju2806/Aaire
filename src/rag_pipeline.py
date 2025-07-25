@@ -10,10 +10,10 @@ from datetime import datetime
 import asyncio
 import uuid
 
-# LlamaIndex 0.10.x imports
+# LlamaIndex imports - current version structure  
 from llama_index.core import (
     VectorStoreIndex,
-    SimpleDirectoryReader, 
+    SimpleDirectoryReader,
     Document,
     Settings,
     StorageContext
