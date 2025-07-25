@@ -91,47 +91,45 @@ class RAGPipeline:
     def __init__(self, config_path: str = "config/mvp_config.yaml"):
         """Initialize RAG pipeline with LlamaIndex and Pinecone"""
         
+        logger.info("🚀 Starting RAG Pipeline initialization...")
+        
         # Load configuration
+        logger.info(f"📖 Loading config from: {config_path}")
         with open(config_path, 'r') as f:
             self.config = yaml.safe_load(f)
+        logger.info("✅ Configuration loaded successfully")
         
         # Initialize OpenAI components
         # Allow environment variable override for model
         model_name = os.getenv("OPENAI_MODEL", self.config['llm_config']['model'])
+        logger.info(f"🎯 Target model: {model_name}")
         
-        # Map newer models to supported ones for older llama-index versions
-        llama_index_model = model_name
-        if model_name == "gpt-4o-mini":
-            # For older llama-index versions, use gpt-3.5-turbo as proxy
-            # The actual API calls will still use gpt-4o-mini
-            llama_index_model = "gpt-3.5-turbo"
-            logger.info("Mapping gpt-4o-mini to gpt-3.5-turbo for llama-index compatibility")
-        
-        # Initialize OpenAI LLM with version compatibility
-        logger.info(f"Attempting to initialize OpenAI with model: {llama_index_model}")
+        # For older llama-index versions, we need to be very careful with OpenAI initialization
+        # Let's try the most basic initialization first
+        logger.info("🔧 Attempting basic OpenAI initialization...")
         try:
-            self.llm = OpenAI(
-                model=llama_index_model,
-                temperature=self.config['llm_config']['temperature'],
-                max_tokens=self.config['llm_config']['max_tokens']
-            )
-            logger.info("✅ OpenAI initialized successfully with model parameter")
-        except Exception as e:
-            logger.error(f"❌ Failed to initialize OpenAI with model parameter: {e}")
-            # Try older initialization pattern
+            # Try the most basic initialization without any parameters first
+            self.llm = OpenAI()
+            logger.info("✅ Basic OpenAI initialization successful")
+            
+            # Now try to set attributes if they exist
             try:
-                self.llm = OpenAI(
-                    temperature=self.config['llm_config']['temperature'],
-                    max_tokens=self.config['llm_config']['max_tokens']
-                )
-                logger.info("✅ OpenAI initialized without model parameter")
-                # Set model after initialization if possible
-                if hasattr(self.llm, 'model'):
-                    self.llm.model = llama_index_model
-                    logger.info(f"✅ Set model attribute to {llama_index_model}")
-            except Exception as e2:
-                logger.error(f"❌ Failed to initialize OpenAI with fallback: {e2}")
-                raise e2
+                if hasattr(self.llm, 'temperature'):
+                    self.llm.temperature = self.config['llm_config']['temperature']
+                    logger.info(f"✅ Set temperature: {self.config['llm_config']['temperature']}")
+            except Exception as e:
+                logger.info(f"⚠️ Could not set temperature: {e}")
+                
+            try:
+                if hasattr(self.llm, 'max_tokens'):
+                    self.llm.max_tokens = self.config['llm_config']['max_tokens']
+                    logger.info(f"✅ Set max_tokens: {self.config['llm_config']['max_tokens']}")
+            except Exception as e:
+                logger.info(f"⚠️ Could not set max_tokens: {e}")
+                
+        except Exception as e:
+            logger.error(f"❌ Even basic OpenAI initialization failed: {e}")
+            raise e
         
         # Store the actual model name for API calls
         self.actual_model = model_name
