@@ -99,6 +99,7 @@ class AAIREApp {
         // Hide all sections
         document.getElementById('chat-section').style.display = 'none';
         document.getElementById('upload-section').style.display = 'none';
+        document.getElementById('workflows-section').style.display = 'none';
         document.getElementById('dashboard-section').style.display = 'none';
 
         // Show selected section
@@ -109,6 +110,7 @@ class AAIREApp {
         const titles = {
             'chat': 'Chat Assistant',
             'upload': 'Document Upload',
+            'workflows': 'Accounting Workflows',
             'dashboard': 'System Dashboard'
         };
         document.getElementById('section-title').textContent = titles[section];
@@ -116,6 +118,8 @@ class AAIREApp {
         // Load section-specific data
         if (section === 'dashboard') {
             this.loadDashboardData();
+        } else if (section === 'workflows') {
+            this.loadWorkflows();
         }
     }
 
@@ -815,6 +819,247 @@ class AAIREApp {
             localStorage.setItem('aaire_session_id', sessionId);
         }
         return sessionId;
+    }
+
+    // Workflow Management
+    async loadWorkflows() {
+        try {
+            const response = await fetch('/api/v1/workflows');
+            if (response.ok) {
+                const data = await response.json();
+                this.displayWorkflows(data.workflows);
+            } else {
+                document.getElementById('workflows-grid').innerHTML = 
+                    '<div class="loading-workflows">Failed to load workflows</div>';
+            }
+        } catch (error) {
+            console.error('Error loading workflows:', error);
+            document.getElementById('workflows-grid').innerHTML = 
+                '<div class="loading-workflows">Error loading workflows</div>';
+        }
+    }
+
+    displayWorkflows(workflows) {
+        const grid = document.getElementById('workflows-grid');
+        
+        if (workflows.length === 0) {
+            grid.innerHTML = '<div class="loading-workflows">No workflows available</div>';
+            return;
+        }
+
+        grid.innerHTML = workflows.map(workflow => `
+            <div class="workflow-card" onclick="window.app.startWorkflow('${workflow.id}')">
+                <div class="workflow-card-header">
+                    <div class="workflow-icon">
+                        <i class="fas fa-route"></i>
+                    </div>
+                    <h4>${workflow.name}</h4>
+                </div>
+                <p>${workflow.description}</p>
+                <div class="workflow-meta">
+                    <span><i class="fas fa-clock"></i> ${workflow.estimated_time}</span>
+                    <span class="difficulty-badge difficulty-${workflow.difficulty}">${workflow.difficulty}</span>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    async startWorkflow(templateId) {
+        try {
+            const sessionId = `workflow_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+            const response = await fetch(`/api/v1/workflows/${templateId}/start?session_id=${sessionId}`, {
+                method: 'POST'
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                this.currentWorkflowSession = sessionId;
+                this.showActiveWorkflow(data);
+            } else {
+                alert('Failed to start workflow. Please try again.');
+            }
+        } catch (error) {
+            console.error('Error starting workflow:', error);
+            alert('Error starting workflow. Please try again.');
+        }
+    }
+
+    showActiveWorkflow(workflowData) {
+        // Hide workflow library, show active workflow
+        document.querySelector('.workflow-library').style.display = 'none';
+        document.getElementById('active-workflow').style.display = 'block';
+
+        // Update workflow header
+        document.getElementById('workflow-title').textContent = workflowData.workflow_name;
+        document.getElementById('workflow-progress').style.width = `${workflowData.progress.percentage}%`;
+        document.getElementById('workflow-step-counter').textContent = 
+            `Step ${workflowData.progress.current} of ${workflowData.progress.total}`;
+
+        // Update step content
+        this.displayWorkflowStep(workflowData.current_step);
+    }
+
+    displayWorkflowStep(step) {
+        document.getElementById('step-title').textContent = step.title;
+        document.getElementById('step-description').textContent = step.description;
+        document.getElementById('step-instruction').textContent = step.instruction;
+        document.getElementById('step-help-text').textContent = step.help_text || '';
+
+        // Create appropriate input based on step type
+        const inputContainer = document.getElementById('step-input-container');
+        inputContainer.innerHTML = '';
+
+        if (step.input_type === 'choice') {
+            const choicesDiv = document.createElement('div');
+            choicesDiv.className = 'workflow-choices';
+            
+            step.choices.forEach(choice => {
+                const option = document.createElement('div');
+                option.className = 'choice-option';
+                option.dataset.value = choice.value;
+                option.innerHTML = `
+                    <input type="radio" name="workflow-choice" value="${choice.value}">
+                    <span>${choice.label}</span>
+                `;
+                
+                option.addEventListener('click', () => {
+                    document.querySelectorAll('.choice-option').forEach(opt => opt.classList.remove('selected'));
+                    option.classList.add('selected');
+                    option.querySelector('input').checked = true;
+                });
+                
+                choicesDiv.appendChild(option);
+            });
+            
+            inputContainer.appendChild(choicesDiv);
+        } else {
+            const input = document.createElement(step.input_type === 'text' && step.instruction.toLowerCase().includes('list') ? 'textarea' : 'input');
+            input.className = 'workflow-input';
+            input.id = 'workflow-step-input';
+            
+            if (input.tagName === 'TEXTAREA') {
+                input.className += ' workflow-textarea';
+                input.rows = 4;
+            } else {
+                input.type = 'text';
+            }
+            
+            if (step.validation && step.validation.type === 'number') {
+                input.type = 'number';
+                if (step.validation.min !== undefined) {
+                    input.min = step.validation.min;
+                }
+            }
+            
+            input.placeholder = step.help_text || 'Enter your response...';
+            inputContainer.appendChild(input);
+        }
+
+        // Update next button
+        const nextBtn = document.getElementById('step-next-btn');
+        nextBtn.textContent = step.required ? 'Next Step' : 'Skip Step';
+        nextBtn.innerHTML = step.required ? 
+            '<i class="fas fa-arrow-right"></i> Next Step' : 
+            '<i class="fas fa-arrow-right"></i> Skip Step';
+    }
+
+    async submitWorkflowStep() {
+        try {
+            let response = '';
+            
+            // Get response based on input type
+            const selectedChoice = document.querySelector('input[name="workflow-choice"]:checked');
+            if (selectedChoice) {
+                response = selectedChoice.value;
+            } else {
+                const input = document.getElementById('workflow-step-input');
+                if (input) {
+                    response = input.value.trim();
+                }
+            }
+
+            // Submit response
+            const apiResponse = await fetch(`/api/v1/workflows/${this.currentWorkflowSession}/step`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ response })
+            });
+
+            if (apiResponse.ok) {
+                const data = await apiResponse.json();
+                
+                if (data.status === 'continue') {
+                    // Move to next step
+                    this.updateWorkflowProgress(data.progress);
+                    this.displayWorkflowStep(data.current_step);
+                } else if (data.status === 'completed') {
+                    // Workflow completed
+                    this.showWorkflowCompletion(data);
+                }
+            } else {
+                const error = await apiResponse.json();
+                alert(error.detail || 'Error processing step. Please try again.');
+            }
+        } catch (error) {
+            console.error('Error submitting workflow step:', error);
+            alert('Error submitting step. Please try again.');
+        }
+    }
+
+    updateWorkflowProgress(progress) {
+        document.getElementById('workflow-progress').style.width = `${progress.percentage}%`;
+        document.getElementById('workflow-step-counter').textContent = 
+            `Step ${progress.current} of ${progress.total}`;
+    }
+
+    showWorkflowCompletion(data) {
+        const container = document.getElementById('active-workflow');
+        container.innerHTML = `
+            <div class="workflow-header">
+                <h3><i class="fas fa-check-circle" style="color: #2ecc71;"></i> Workflow Completed!</h3>
+                <button class="btn btn-secondary" onclick="window.app.exitWorkflow()">
+                    <i class="fas fa-times"></i> Close
+                </button>
+            </div>
+            <div class="workflow-content">
+                <div class="completion-summary">
+                    <h4>Summary</h4>
+                    <p><strong>Completed at:</strong> ${new Date(data.completed_at).toLocaleString()}</p>
+                    <p><strong>Duration:</strong> ${data.summary.duration_minutes} minutes</p>
+                    <p><strong>Steps completed:</strong> ${data.summary.steps_completed}</p>
+                    
+                    ${data.summary.recommendations ? `
+                        <h4>Recommendations</h4>
+                        <ul>
+                            ${data.summary.recommendations.map(rec => `<li>${rec}</li>`).join('')}
+                        </ul>
+                    ` : ''}
+                    
+                    <div class="step-actions">
+                        <button class="btn" onclick="navigator.clipboard.writeText('${JSON.stringify(data.all_responses)}')">
+                            <i class="fas fa-copy"></i> Copy Responses
+                        </button>
+                        <button class="btn btn-secondary" onclick="window.app.exitWorkflow()">
+                            <i class="fas fa-arrow-left"></i> Back to Workflows
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    exitWorkflow() {
+        // Reset workflow state
+        this.currentWorkflowSession = null;
+        
+        // Show workflow library, hide active workflow
+        document.querySelector('.workflow-library').style.display = 'block';
+        document.getElementById('active-workflow').style.display = 'none';
+        
+        // Reload workflows
+        this.loadWorkflows();
     }
 }
 

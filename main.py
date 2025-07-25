@@ -54,6 +54,16 @@ try:
 except ImportError:
     AuditLogger = None
 
+try:
+    from src.analytics_engine import AnalyticsEngine
+except ImportError:
+    AnalyticsEngine = None
+
+try:
+    from src.workflow_engine import WorkflowEngine
+except ImportError:
+    WorkflowEngine = None
+
 # Configure structured logging
 structlog.configure(
     processors=[
@@ -102,6 +112,8 @@ document_processor = None
 external_api_manager = None
 auth_manager = None
 audit_logger = None
+analytics_engine = None
+workflow_engine = None
 
 logger.info("Starting component initialization...")
 
@@ -161,6 +173,24 @@ try:
         logger.warning("❌ AuditLogger class not available")
 except Exception as e:
     logger.error("❌ Audit Logger initialization failed", error=str(e))
+
+try:
+    if AnalyticsEngine:
+        analytics_engine = AnalyticsEngine()
+        logger.info("✅ Analytics Engine initialized")
+    else:
+        logger.warning("❌ AnalyticsEngine class not available")
+except Exception as e:
+    logger.error("❌ Analytics Engine initialization failed", error=str(e))
+
+try:
+    if WorkflowEngine:
+        workflow_engine = WorkflowEngine()
+        logger.info("✅ Workflow Engine initialized")
+    else:
+        logger.warning("❌ WorkflowEngine class not available")
+except Exception as e:
+    logger.error("❌ Workflow Engine initialization failed", error=str(e))
 
 logger.info("Component initialization complete", 
            rag_pipeline_available=rag_pipeline is not None,
@@ -334,13 +364,28 @@ async def chat(request: ChatRequest):
                 user_context={}
             )
             
+            processing_time = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+            session_id = request.session_id or rag_response.session_id
+            
+            # Track analytics
+            if analytics_engine:
+                asyncio.create_task(analytics_engine.track_query(
+                    query=request.query,
+                    response=rag_response.answer,
+                    session_id=session_id,
+                    user_id=user_id,
+                    confidence=rag_response.confidence,
+                    sources=[cite.get("source", "") for cite in rag_response.citations],
+                    processing_time_ms=processing_time
+                ))
+            
             return ChatResponse(
                 response=rag_response.answer,
                 citations=rag_response.citations,
                 confidence=rag_response.confidence,
-                session_id=request.session_id or rag_response.session_id,
+                session_id=session_id,
                 compliance_triggered=False,
-                processing_time_ms=int((datetime.utcnow() - start_time).total_seconds() * 1000)
+                processing_time_ms=processing_time
             )
         else:
             # Fallback response - try to search uploaded documents
@@ -594,6 +639,98 @@ async def get_document_summary(job_id: str):
     except Exception as e:
         logger.error("Error retrieving document summary", job_id=job_id, error=str(e))
         raise HTTPException(status_code=500, detail=f"Failed to retrieve summary: {str(e)}")
+
+# Workflow API Endpoints
+@app.get("/api/v1/workflows")
+async def list_workflows():
+    """Get list of available workflow templates"""
+    if not workflow_engine:
+        raise HTTPException(status_code=503, detail="Workflow engine not available")
+    
+    workflows = await workflow_engine.list_workflows()
+    return {"workflows": workflows}
+
+@app.post("/api/v1/workflows/{template_id}/start")
+async def start_workflow(template_id: str, session_id: str = None):
+    """Start a new workflow session"""
+    if not workflow_engine:
+        raise HTTPException(status_code=503, detail="Workflow engine not available")
+    
+    if not session_id:
+        import uuid
+        session_id = f"workflow_{uuid.uuid4()}"
+    
+    result = await workflow_engine.start_workflow(template_id, session_id)
+    
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    
+    return result
+
+@app.post("/api/v1/workflows/{session_id}/step")
+async def process_workflow_step(session_id: str, response: dict):
+    """Process user response to current workflow step"""
+    if not workflow_engine:
+        raise HTTPException(status_code=503, detail="Workflow engine not available")
+    
+    user_response = response.get("response", "")
+    result = await workflow_engine.process_step_response(session_id, user_response)
+    
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    
+    # Track workflow step completion
+    if analytics_engine and result.get("status") == "continue":
+        asyncio.create_task(analytics_engine.track_workflow_step(
+            workflow_id=result.get("workflow_id", "unknown"),
+            step_id=result.get("current_step", {}).get("id", "unknown"),
+            step_name=result.get("current_step", {}).get("title", ""),
+            session_id=session_id,
+            completed=True
+        ))
+    
+    return result
+
+@app.get("/api/v1/workflows/{session_id}/status")
+async def get_workflow_status(session_id: str):
+    """Get current workflow status"""
+    if not workflow_engine:
+        raise HTTPException(status_code=503, detail="Workflow engine not available")
+    
+    result = await workflow_engine.get_workflow_status(session_id)
+    
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    
+    return result
+
+# Analytics API Endpoints
+@app.get("/api/v1/analytics/summary")
+async def get_analytics_summary(days: int = 30):
+    """Get usage analytics summary"""
+    if not analytics_engine:
+        raise HTTPException(status_code=503, detail="Analytics engine not available")
+    
+    if days < 1 or days > 365:
+        raise HTTPException(status_code=400, detail="Days must be between 1 and 365")
+    
+    summary = await analytics_engine.get_analytics_summary(days)
+    return summary
+
+@app.get("/api/v1/analytics/knowledge-gaps")
+async def get_knowledge_gaps(limit: int = 20):
+    """Get queries with low confidence scores (knowledge gaps)"""
+    if not analytics_engine:
+        raise HTTPException(status_code=503, detail="Analytics engine not available")
+    
+    summary = await analytics_engine.get_analytics_summary(30)
+    knowledge_gaps = summary.get("knowledge_gaps", [])[:limit]
+    
+    return {
+        "knowledge_gaps": knowledge_gaps,
+        "total_gaps": len(knowledge_gaps),
+        "generated_at": datetime.utcnow().isoformat()
+    }
 
 if __name__ == "__main__":
     uvicorn.run(
