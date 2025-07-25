@@ -131,19 +131,17 @@ class RAGPipeline:
         
         # Store the actual model name for API calls
         self.actual_model = model_name
+        
+        # For gpt-4o-mini, ensure the model field is set correctly
+        # Debug showed that this llama-index version uses 'model' field, not '_model'
         if model_name == "gpt-4o-mini":
-            # Try different ways to set the model for API calls
-            try:
-                self.llm._model = model_name
-                logger.info("Set _model field for gpt-4o-mini")
-            except (AttributeError, TypeError):
-                try:
-                    if hasattr(self.llm, 'model'):
-                        self.llm.model = model_name
-                        logger.info("Set model field for gpt-4o-mini")
-                except:
-                    # Older llama-index version - store separately
-                    logger.info("Using separate model tracking for older llama-index compatibility")
+            if hasattr(self.llm, 'model'):
+                self.llm.model = model_name
+                logger.info(f"✅ Set model field to {model_name}")
+            else:
+                logger.warning("OpenAI object has no model field - using separate tracking")
+        
+        logger.info(f"✅ OpenAI LLM initialized successfully with model: {self.llm.model if hasattr(self.llm, 'model') else 'unknown'}")
         
         logger.info(f"Using OpenAI model: {model_name}")
         
