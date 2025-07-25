@@ -179,6 +179,19 @@ class RAGPipeline:
                 )
                 logger.info(f"Created Qdrant collection: {self.collection_name}")
             
+            # Create index for job_id field to enable filtered deletion
+            try:
+                from qdrant_client.models import PayloadSchemaType
+                self.qdrant_client.create_payload_index(
+                    collection_name=self.collection_name,
+                    field_name="job_id",
+                    field_schema=PayloadSchemaType.KEYWORD
+                )
+                logger.info("Created index for job_id field")
+            except Exception as e:
+                # Index might already exist, which is fine
+                logger.info(f"job_id index status: {str(e)[:50]}")
+            
             # Initialize storage context with Qdrant
             self.storage_context = StorageContext.from_defaults(
                 vector_store=self.vector_store
