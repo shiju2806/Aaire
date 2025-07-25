@@ -10,29 +10,70 @@ from datetime import datetime
 import asyncio
 import uuid
 
-from llama_index import (
-    VectorStoreIndex,
-    SimpleDirectoryReader,
-    Document,
-    ServiceContext,
-    StorageContext
-)
-from llama_index.node_parser import SimpleNodeParser
-from llama_index.indices.base_retriever import BaseRetriever
-from llama_index.query_engine import RetrieverQueryEngine
-from llama_index.response.pprint_utils import pprint_response
-from llama_index.embeddings import OpenAIEmbedding
-from llama_index.llms import OpenAI
-from llama_index.vector_stores import PineconeVectorStore
+try:
+    # Try newer llama-index import structure (0.10.x+)
+    from llama_index.core import (
+        VectorStoreIndex,
+        SimpleDirectoryReader,
+        Document,
+        ServiceContext,
+        StorageContext
+    )
+    from llama_index.core.node_parser import SimpleNodeParser
+    from llama_index.core.indices.base_retriever import BaseRetriever
+    from llama_index.core.query_engine import RetrieverQueryEngine
+    from llama_index.core.response.pprint_utils import pprint_response
+    from llama_index.embeddings.openai import OpenAIEmbedding
+    from llama_index.llms.openai import OpenAI
+    from llama_index.vector_stores.pinecone import PineconeVectorStore
+except ImportError:
+    # Fall back to older import structure (0.9.x)
+    try:
+        from llama_index import (
+            VectorStoreIndex,
+            SimpleDirectoryReader,
+            Document,
+            ServiceContext,
+            StorageContext
+        )
+        from llama_index.node_parser import SimpleNodeParser
+        from llama_index.indices.base_retriever import BaseRetriever
+        from llama_index.query_engine import RetrieverQueryEngine
+        from llama_index.response.pprint_utils import pprint_response
+        from llama_index.embeddings import OpenAIEmbedding
+        from llama_index.llms import OpenAI
+        from llama_index.vector_stores import PineconeVectorStore
+    except ImportError:
+        # Try even older structure
+        from llama_index import VectorStoreIndex, Document
+        from llama_index.readers import SimpleDirectoryReader
+        from llama_index import ServiceContext, StorageContext
+        from llama_index.node_parser import SimpleNodeParser
+        from llama_index.embeddings.openai import OpenAIEmbedding
+        from llama_index.llms import OpenAI
+        try:
+            from llama_index.vector_stores import PineconeVectorStore
+        except:
+            PineconeVectorStore = None
 
 # Import vector store options
 import pinecone
 try:
     from qdrant_client import QdrantClient
-    from llama_index.vector_stores import QdrantVectorStore
+    try:
+        # Try newer import path
+        from llama_index.vector_stores.qdrant import QdrantVectorStore
+    except ImportError:
+        # Try older import path
+        try:
+            from llama_index.vector_stores import QdrantVectorStore
+        except ImportError:
+            # Try even older path
+            from llama_index.storage.vectorstore.qdrant import QdrantVectorStore
     QDRANT_AVAILABLE = True
 except ImportError:
     QDRANT_AVAILABLE = False
+    QdrantVectorStore = None
 
 import redis
 import structlog
