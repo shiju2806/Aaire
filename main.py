@@ -28,12 +28,6 @@ try:
     from src.rag_pipeline import RAGPipeline
 except ImportError:
     RAGPipeline = None
-    # Try simple pipeline as fallback
-    try:
-        from src.simple_rag_pipeline import SimpleRAGPipeline as RAGPipeline
-        logger.info("Using SimpleRAGPipeline as fallback")
-    except ImportError:
-        RAGPipeline = None
 
 try:
     from src.compliance_engine import ComplianceEngine

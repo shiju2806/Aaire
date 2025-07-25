@@ -1,0 +1,54 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+.venv
+
+# Development
+.git/
+.gitignore
+.env.local
+.env.development
+.env.test
+*.log
+*.sqlite3
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Project specific
+data/uploads/*
+logs/*
+.env
+*.backup
+reset_vector_db.py
+check_qdrant.py
+test_*.py
+fix_dependencies.sh
+src/__pycache__/
+
+# Documentation
+docs/
+*.md
+!README.md
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+
+# Temporary files
+tmp/
+temp/
+*.tmp

@@ -1,42 +1,63 @@
-# AAIRE MVP Dockerfile
-FROM python:3.11-slim
+# Multi-stage build for AAIRE
+FROM python:3.11-slim as builder
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    git \
+    && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
 WORKDIR /app
-
-# Install system dependencies with better error handling
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-    build-essential \
-    curl \
-    gcc \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/* \
-    && rm -rf /tmp/* \
-    && rm -rf /var/tmp/*
 
 # Copy requirements first for better caching
 COPY requirements.txt .
 
 # Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+# Production stage
+FROM python:3.11-slim
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y \
+    libpq5 \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user
+RUN useradd -m -u 1000 aaire
+
+# Set working directory
+WORKDIR /app
+
+# Copy Python packages from builder
+COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
 
 # Copy application code
-COPY . .
+COPY --chown=aaire:aaire . .
 
 # Create necessary directories
-RUN mkdir -p data/uploads data/chromadb
+RUN mkdir -p data/uploads logs && \
+    chown -R aaire:aaire data logs
 
-# Set environment variables
-ENV PYTHONPATH=/app
+# Switch to non-root user
+USER aaire
+
+# Environment variables
 ENV PYTHONUNBUFFERED=1
-
-# Expose port
-EXPOSE 8000
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PATH="/home/aaire/.local/bin:${PATH}"
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-# Run the application with smart startup
+# Expose port
+EXPOSE 8000
+
+# Start command
 CMD ["python", "start.py"]

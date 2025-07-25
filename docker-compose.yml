@@ -1,101 +1,95 @@
-# AAIRE MVP Docker Compose Configuration
-# For development and testing environments
-
+version: '3.8'
 
 services:
-  aaire-api:
+  aaire:
     build: .
+    container_name: aaire-app
     ports:
       - "8000:8000"
-    env_file:
-      - .env
     environment:
-      - ENVIRONMENT=development
-      - DATABASE_URL=postgresql://aaire:password@postgres:5432/aaire
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-3.5-turbo}
+      - QDRANT_URL=${QDRANT_URL:-http://qdrant:6333}
+      - QDRANT_API_KEY=${QDRANT_API_KEY}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-your_openai_key_here}
-      - PINECONE_API_KEY=${PINECONE_API_KEY:-your_pinecone_key_here}
-      - FRED_API_KEY=${FRED_API_KEY:-your_fred_key_here}
+      - DATABASE_URL=postgresql://aaire:aaire_password@postgres:5432/aaire_db
     volumes:
-      - ./data:/app/data
-      - ./config:/app/config
+      - ./data/uploads:/app/data/uploads
+      - ./logs:/app/logs
     depends_on:
-      - postgres
       - redis
+      - postgres
+      - qdrant
     restart: unless-stopped
-    command: ["python", "start.py"]
-
-  postgres:
-    image: postgres:15
-    environment:
-      - POSTGRES_DB=aaire
-      - POSTGRES_USER=aaire
-      - POSTGRES_PASSWORD=password
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./scripts/init_db.sql:/docker-entrypoint-initdb.d/init.sql
-    ports:
-      - "5432:5432"
-    restart: unless-stopped
+    networks:
+      - aaire-network
 
   redis:
     image: redis:7-alpine
+    container_name: aaire-redis
     ports:
       - "6379:6379"
     volumes:
-      - redis_data:/data
+      - redis-data:/data
     restart: unless-stopped
+    networks:
+      - aaire-network
 
-  # Optional: Nginx reverse proxy for production
+  postgres:
+    image: postgres:15-alpine
+    container_name: aaire-postgres
+    environment:
+      - POSTGRES_USER=aaire
+      - POSTGRES_PASSWORD=aaire_password
+      - POSTGRES_DB=aaire_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      - aaire-network
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: aaire-qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant-data:/qdrant/storage
+    environment:
+      - QDRANT__SERVICE__HTTP_PORT=6333
+      - QDRANT__SERVICE__GRPC_PORT=6334
+      - QDRANT__LOG_LEVEL=INFO
+    restart: unless-stopped
+    networks:
+      - aaire-network
+
+  # Optional: Nginx reverse proxy
   nginx:
     image: nginx:alpine
+    container_name: aaire-nginx
     ports:
       - "80:80"
       - "443:443"
     volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf
-      - ./ssl:/etc/ssl/certs
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
     depends_on:
-      - aaire-api
+      - aaire
     restart: unless-stopped
+    networks:
+      - aaire-network
     profiles:
       - production
 
-  # Optional: Prometheus monitoring
-  prometheus:
-    image: prom/prometheus
-    ports:
-      - "9090:9090"
-    volumes:
-      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
-      - prometheus_data:/prometheus
-    restart: unless-stopped
-    profiles:
-      - monitoring
-
-  # Optional: Grafana dashboards
-  grafana:
-    image: grafana/grafana
-    ports:
-      - "3000:3000"
-    environment:
-      - GF_SECURITY_ADMIN_PASSWORD=admin
-    volumes:
-      - grafana_data:/var/lib/grafana
-      - ./monitoring/grafana:/etc/grafana/provisioning
-    depends_on:
-      - prometheus
-    restart: unless-stopped
-    profiles:
-      - monitoring
-
 volumes:
-  postgres_data:
-  redis_data:
-  prometheus_data:
-  grafana_data:
+  redis-data:
+  postgres-data:
+  qdrant-data:
 
 networks:
-  default:
-    name: aaire-network
+  aaire-network:
+    driver: bridge

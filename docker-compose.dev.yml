@@ -1,0 +1,45 @@
+version: '3.8'
+
+# Simplified Docker Compose for development
+# Uses external Qdrant Cloud and minimal local services
+
+services:
+  aaire:
+    build: .
+    container_name: aaire-dev
+    ports:
+      - "8000:8000"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
+      # Use external Qdrant Cloud
+      - QDRANT_URL=${QDRANT_URL}
+      - QDRANT_API_KEY=${QDRANT_API_KEY}
+      # Local Redis
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    volumes:
+      - ./data/uploads:/app/data/uploads
+      - ./logs:/app/logs
+      # Mount source code for development
+      - ./src:/app/src
+      - ./templates:/app/templates
+      - ./static:/app/static
+    depends_on:
+      - redis
+    restart: unless-stopped
+    networks:
+      - aaire-dev-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: aaire-redis-dev
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    networks:
+      - aaire-dev-network
+
+networks:
+  aaire-dev-network:
+    driver: bridge
