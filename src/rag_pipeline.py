@@ -26,22 +26,15 @@ from llama_index.llms.openai import OpenAI
 
 # Vector stores - Qdrant only (Pinecone removed for simplicity)
 
-# Qdrant with patch for fastembed compatibility
+# Qdrant
 try:
     from qdrant_client import QdrantClient
-    # Apply patch for IDF_EMBEDDING_MODELS issue
-    from .qdrant_patch import try_import_qdrant_vector_store
-    QdrantVectorStore = try_import_qdrant_vector_store()
-    QDRANT_AVAILABLE = QdrantVectorStore is not None
-    if QDRANT_AVAILABLE:
-        print("✅ Qdrant vector store available with patch")
-    else:
-        print("⚠️ Qdrant patch failed, using local storage")
+    from llama_index.vector_stores.qdrant import QdrantVectorStore
+    QDRANT_AVAILABLE = True
 except ImportError:
     QDRANT_AVAILABLE = False
     QdrantVectorStore = None
     QdrantClient = None
-    print("❌ Qdrant client not available")
 
 import redis
 import structlog
