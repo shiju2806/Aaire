@@ -491,7 +491,8 @@ class AAIREApp {
         filesList.innerHTML = this.uploadedFiles.map(file => {
             const fileSize = this.formatFileSize(file.size);
             const uploadTime = new Date(file.uploaded_at).toLocaleString();
-            const statusClass = file.status === 'accepted' ? 'success' : 
+            const statusClass = file.status === 'completed' ? 'success' : 
+                               file.status === 'accepted' ? 'success' :
                                file.status === 'processing' ? 'processing' : 'error';
             
             return `
