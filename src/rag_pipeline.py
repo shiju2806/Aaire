@@ -10,70 +10,38 @@ from datetime import datetime
 import asyncio
 import uuid
 
+# LlamaIndex 0.10.x imports
+from llama_index.core import (
+    VectorStoreIndex,
+    SimpleDirectoryReader, 
+    Document,
+    Settings,
+    StorageContext
+)
+from llama_index.core.node_parser import SimpleNodeParser
+from llama_index.core.indices.base_retriever import BaseRetriever
+from llama_index.core.query_engine import RetrieverQueryEngine
+from llama_index.embeddings.openai import OpenAIEmbedding
+from llama_index.llms.openai import OpenAI
+
+# Vector stores
 try:
-    # Try newer llama-index import structure (0.10.x+)
-    from llama_index.core import (
-        VectorStoreIndex,
-        SimpleDirectoryReader,
-        Document,
-        ServiceContext,
-        StorageContext
-    )
-    from llama_index.core.node_parser import SimpleNodeParser
-    from llama_index.core.indices.base_retriever import BaseRetriever
-    from llama_index.core.query_engine import RetrieverQueryEngine
-    from llama_index.core.response.pprint_utils import pprint_response
-    from llama_index.embeddings.openai import OpenAIEmbedding
-    from llama_index.llms.openai import OpenAI
     from llama_index.vector_stores.pinecone import PineconeVectorStore
 except ImportError:
-    # Fall back to older import structure (0.9.x)
-    try:
-        from llama_index import (
-            VectorStoreIndex,
-            SimpleDirectoryReader,
-            Document,
-            ServiceContext,
-            StorageContext
-        )
-        from llama_index.node_parser import SimpleNodeParser
-        from llama_index.indices.base_retriever import BaseRetriever
-        from llama_index.query_engine import RetrieverQueryEngine
-        from llama_index.response.pprint_utils import pprint_response
-        from llama_index.embeddings import OpenAIEmbedding
-        from llama_index.llms import OpenAI
-        from llama_index.vector_stores import PineconeVectorStore
-    except ImportError:
-        # Try even older structure
-        from llama_index import VectorStoreIndex, Document
-        from llama_index.readers import SimpleDirectoryReader
-        from llama_index import ServiceContext, StorageContext
-        from llama_index.node_parser import SimpleNodeParser
-        from llama_index.embeddings.openai import OpenAIEmbedding
-        from llama_index.llms import OpenAI
-        try:
-            from llama_index.vector_stores import PineconeVectorStore
-        except:
-            PineconeVectorStore = None
+    PineconeVectorStore = None
 
-# Import vector store options
+# Vector store options
 import pinecone
+
+# Qdrant
 try:
     from qdrant_client import QdrantClient
-    try:
-        # Try newer import path
-        from llama_index.vector_stores.qdrant import QdrantVectorStore
-    except ImportError:
-        # Try older import path
-        try:
-            from llama_index.vector_stores import QdrantVectorStore
-        except ImportError:
-            # Try even older path
-            from llama_index.storage.vectorstore.qdrant import QdrantVectorStore
+    from llama_index.vector_stores.qdrant import QdrantVectorStore
     QDRANT_AVAILABLE = True
 except ImportError:
     QDRANT_AVAILABLE = False
     QdrantVectorStore = None
+    QdrantClient = None
 
 import redis
 import structlog
@@ -142,11 +110,12 @@ class RAGPipeline:
             model=self.config['embedding_config']['model']
         )
         
-        # Initialize service context
-        self.service_context = ServiceContext.from_defaults(
-            llm=self.llm,
-            embed_model=self.embedding_model
-        )
+        # Configure global settings (replaces ServiceContext in 0.10.x)
+        Settings.llm = self.llm
+        Settings.embed_model = self.embedding_model
+        
+        # Keep reference for backward compatibility
+        self.service_context = None
         
         # Initialize node parser with simple chunking (hierarchical not available in 0.9.x)
         self.node_parser = SimpleNodeParser.from_defaults(
@@ -277,15 +246,13 @@ class RAGPipeline:
             # Create or load index with Qdrant
             try:
                 self.index = VectorStoreIndex.from_vector_store(
-                    vector_store=self.vector_store,
-                    service_context=self.service_context
+                    vector_store=self.vector_store
                 )
                 logger.info("Loaded existing Qdrant index")
             except:
                 self.index = VectorStoreIndex(
                     nodes=[],
-                    storage_context=self.storage_context,
-                    service_context=self.service_context
+                    storage_context=self.storage_context
                 )
                 logger.info("Created new Qdrant index")
             
@@ -354,15 +321,13 @@ class RAGPipeline:
         # Try to load existing index or create new one
         try:
             self.index = VectorStoreIndex.from_vector_store(
-                vector_store=vector_store,
-                service_context=self.service_context
+                vector_store=vector_store
             )
             logger.info("Loaded existing Pinecone index")
         except:
             self.index = VectorStoreIndex(
                 nodes=[],
-                storage_context=storage_context,
-                service_context=self.service_context
+                storage_context=storage_context
             )
             logger.info("Created new Pinecone index")
     
@@ -370,8 +335,7 @@ class RAGPipeline:
         """Initialize local vector store as fallback"""
         # Create a simple in-memory vector store
         self.index = VectorStoreIndex(
-            nodes=[],
-            service_context=self.service_context
+            nodes=[]
         )
         logger.info("Initialized local vector store")
     
