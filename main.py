@@ -203,6 +203,7 @@ class ChatRequest(BaseModel):
     session_id: Optional[str] = None
     filters: Optional[Dict[str, Any]] = None
     conversation_history: Optional[List[Dict[str, str]]] = None
+    user_context: Optional[Dict[str, str]] = None
 
 class ChatResponse(BaseModel):
     response: str
@@ -331,13 +332,24 @@ async def chat(request: ChatRequest):
         # For MVP, skip authentication temporarily
         user_id = "demo-user"
         
-        # Log query if audit logger is available
+        # Log query with user context if audit logger is available
         if audit_logger:
             await audit_logger.log_event(
                 event="query_submitted",
                 user_id=user_id,
-                data={"query": request.query, "session_id": request.session_id}
+                data={
+                    "query": request.query, 
+                    "session_id": request.session_id,
+                    "user_context": request.user_context
+                }
             )
+        
+        # Log user context for enterprise MVP demonstration
+        if request.user_context:
+            logger.info(f"Query from {request.user_context.get('department', 'Unknown')} department",
+                       user=request.user_context.get('name', 'Unknown'),
+                       role=request.user_context.get('role', 'Unknown'),
+                       query=request.query[:50] + "..." if len(request.query) > 50 else request.query)
         
         # Check compliance rules if available
         if compliance_engine:
@@ -365,7 +377,7 @@ async def chat(request: ChatRequest):
             rag_response = await rag_pipeline.process_query(
                 query=request.query,
                 filters=request.filters,
-                user_context={},
+                user_context=request.user_context or {},
                 session_id=request.session_id,
                 conversation_history=request.conversation_history
             )
@@ -554,15 +566,23 @@ async def websocket_chat(websocket: WebSocket):
                 query = data.get("message", "")
                 session_id = data.get("session_id", "")
                 conversation_history = data.get("conversation_history", [])
+                user_context = data.get("user_context", {})
                 
                 try:
                     if rag_pipeline:
                         # Process with RAG pipeline
                         logger.info(f"WebSocket using RAG pipeline for query: {query}")
+                        # Log WebSocket user context
+                        if user_context:
+                            logger.info(f"WebSocket query from {user_context.get('department', 'Unknown')} department",
+                                       user=user_context.get('name', 'Unknown'),
+                                       role=user_context.get('role', 'Unknown'),
+                                       query=query[:50] + "..." if len(query) > 50 else query)
+                        
                         rag_response = await rag_pipeline.process_query(
                             query=query,
                             filters=None,
-                            user_context={},
+                            user_context=user_context,
                             session_id=session_id,
                             conversation_history=conversation_history
                         )

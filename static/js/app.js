@@ -11,6 +11,7 @@ class AAIREApp {
         this.queryCount = 0;
         this.messages = [];
         this.uploadedFiles = [];
+        this.currentUser = null;
         
         this.init();
     }
@@ -22,6 +23,7 @@ class AAIREApp {
         this.updateSessionTimer();
         this.loadChatHistory();
         this.loadUploadedFiles();
+        this.initializeUser();
     }
 
     setupEventListeners() {
@@ -219,7 +221,8 @@ class AAIREApp {
                 type: 'query',
                 message: message,
                 session_id: this.getSessionId(),
-                conversation_history: this.getConversationHistory()
+                conversation_history: this.getConversationHistory(),
+                user_context: this.getCurrentUserContext()
             }));
         } else {
             console.log('🔄 Using HTTP fallback');
@@ -242,7 +245,8 @@ class AAIREApp {
                 body: JSON.stringify({
                     query: message,
                     session_id: this.getSessionId(),
-                    conversation_history: this.getConversationHistory()
+                    conversation_history: this.getConversationHistory(),
+                    user_context: this.getCurrentUserContext()
                 })
             });
 
@@ -556,6 +560,12 @@ class AAIREApp {
 
     updateUploadedFilesList() {
         const filesList = document.getElementById('files-list');
+        
+        // Update global repository count
+        const repoCount = document.getElementById('doc-count-repo');
+        if (repoCount) {
+            repoCount.textContent = this.uploadedFiles.length;
+        }
         
         if (this.uploadedFiles.length === 0) {
             filesList.innerHTML = '<div class="no-files">No files uploaded yet</div>';
@@ -952,6 +962,110 @@ class AAIREApp {
         return sessionId;
     }
 
+    initializeUser() {
+        // Load saved user or default to first option
+        const savedUser = localStorage.getItem('aaire_current_user');
+        const userSelector = document.getElementById('user-selector');
+        
+        if (savedUser && userSelector) {
+            userSelector.value = savedUser;
+            this.switchUser(savedUser);
+        } else if (userSelector) {
+            this.switchUser(userSelector.value);
+        }
+    }
+
+    switchUser(userId = null) {
+        const userSelector = document.getElementById('user-selector');
+        if (!userId && userSelector) {
+            userId = userSelector.value;
+        }
+        
+        if (!userId) return;
+        
+        // Update current user
+        this.currentUser = this.getUserInfo(userId);
+        
+        // Save to localStorage
+        localStorage.setItem('aaire_current_user', userId);
+        
+        // Update welcome message
+        this.updateWelcomeMessage();
+        
+        console.log('Switched to user:', this.currentUser);
+    }
+
+    getUserInfo(userId) {
+        const users = {
+            'sarah-accounting': {
+                name: 'Sarah Chen',
+                department: 'Accounting',
+                role: 'Senior Accountant',
+                expertise: 'GAAP, Financial Reporting'
+            },
+            'mike-actuarial': {
+                name: 'Mike Rodriguez', 
+                department: 'Actuarial',
+                role: 'Actuarial Analyst',
+                expertise: 'Reserve Calculations, Risk Assessment'
+            },
+            'lisa-audit': {
+                name: 'Lisa Thompson',
+                department: 'Audit',
+                role: 'Internal Auditor',
+                expertise: 'Compliance, Risk Management'
+            },
+            'david-compliance': {
+                name: 'David Kim',
+                department: 'Compliance',
+                role: 'Compliance Officer',
+                expertise: 'Regulatory Standards, Policy Review'
+            }
+        };
+        
+        return users[userId] || users['sarah-accounting'];
+    }
+
+    updateWelcomeMessage() {
+        if (!this.currentUser) return;
+        
+        const messagesContainer = document.getElementById('chat-messages');
+        const welcomeMessage = messagesContainer.querySelector('.message');
+        
+        if (welcomeMessage) {
+            const messageContent = welcomeMessage.querySelector('.message-content');
+            if (messageContent) {
+                messageContent.innerHTML = `
+                    <strong>Welcome to AAIRE Enterprise, ${this.currentUser.name}!</strong><br>
+                    <em>Department: ${this.currentUser.department} | Role: ${this.currentUser.role}</em>
+                    <br><br>
+                    Your intelligent assistant for insurance accounting and actuarial guidance. I can help you with:
+                    <br><br>
+                    • US GAAP and IFRS accounting standards<br>
+                    • Insurance reserve calculations<br>
+                    • Actuarial analysis and modeling<br>
+                    • Regulatory compliance questions<br>
+                    • Document analysis and insights
+                    <br><br>
+                    <strong>📚 Accessing Global Repository:</strong> All departments can ask questions about any topic - accounting, actuarial, compliance, or audit matters.
+                    <br><br>
+                    How can I assist you today?
+                `;
+            }
+        }
+    }
+
+    getCurrentUserContext() {
+        if (!this.currentUser) return {};
+        
+        return {
+            name: this.currentUser.name,
+            department: this.currentUser.department,
+            role: this.currentUser.role,
+            expertise: this.currentUser.expertise
+        };
+    }
+
     getConversationHistory() {
         // Return last 6 messages (3 exchanges) for context
         const recentMessages = this.messages.slice(-6);
@@ -1325,6 +1439,12 @@ function askFollowUpQuestion(question) {
             // Trigger the send
             window.app.sendMessage();
         }
+    }
+}
+
+function switchUser() {
+    if (window.app) {
+        window.app.switchUser();
     }
 }
 

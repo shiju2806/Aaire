@@ -915,17 +915,47 @@
             color: #3498db;
         }
 
-        /* Connection Status */
-        .connection-status {
+        /* User Context */
+        .user-context {
             position: fixed;
             top: 20px;
             right: 20px;
             padding: 10px 15px;
+            background: rgba(52, 152, 219, 0.1);
+            border: 1px solid #3498db;
             border-radius: 20px;
             font-size: 12px;
             font-weight: bold;
             z-index: 1000;
+            display: flex;
+            align-items: center;
+            gap: 10px;
         }
+
+        .user-selector {
+            background: white;
+            border: 1px solid #3498db;
+            border-radius: 15px;
+            padding: 5px 10px;
+            font-size: 12px;
+            cursor: pointer;
+            outline: none;
+        }
+
+        .repository-info {
+            background: #2c3e50;
+            color: white;
+            padding: 8px 16px;
+            font-size: 13px;
+            text-align: center;
+            border-bottom: 1px solid #34495e;
+        }
+
+        .repository-info i {
+            margin-right: 5px;
+        }
+
+        /* Connection Status (removed, replaced with user context) */
 
         .connection-status.connected {
             background: #2ecc71;
@@ -980,7 +1010,12 @@
         <div class="sidebar">
             <div class="sidebar-header">
                 <div class="logo">AAIRE</div>
-                <div class="tagline">Insurance Resource Expert</div>
+                <div class="tagline">Enterprise Insurance Resource Expert</div>
+            </div>
+            
+            <div class="repository-info">
+                <i class="fas fa-database"></i>
+                <span id="repository-status">Global Repository: <span id="doc-count-repo">0</span> documents</span>
             </div>
             
             <div class="nav-menu">
@@ -1217,7 +1252,17 @@
         </div>
     </div>
 
+    <!-- User Context Widget -->
+    <div class="user-context" id="user-context">
+        <span>👤</span>
+        <select class="user-selector" id="user-selector" onchange="switchUser()">
+            <option value="sarah-accounting">Sarah Chen (Accounting)</option>
+            <option value="mike-actuarial">Mike Rodriguez (Actuarial)</option>
+            <option value="lisa-audit">Lisa Thompson (Audit)</option>
+            <option value="david-compliance">David Kim (Compliance)</option>
+        </select>
+    </div>
 
-    <script src="/static/js/app.js?v=14&t=20250125-memory"></script>
+    <script src="/static/js/app.js?v=15&t=20250125-enterprise"></script>
 </body>
 </html>
