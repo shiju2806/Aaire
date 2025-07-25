@@ -55,11 +55,16 @@ class RAGPipeline:
             self.config = yaml.safe_load(f)
         
         # Initialize OpenAI components
+        # Allow environment variable override for model
+        model_name = os.getenv("OPENAI_MODEL", self.config['llm_config']['model'])
+        
         self.llm = OpenAI(
-            model=self.config['llm_config']['model'],
+            model=model_name,
             temperature=self.config['llm_config']['temperature'],
             max_tokens=self.config['llm_config']['max_tokens']
         )
+        
+        logger.info(f"Using OpenAI model: {model_name}")
         
         self.embedding_model = OpenAIEmbedding(
             model=self.config['embedding_config']['model']
