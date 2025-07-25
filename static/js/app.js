@@ -108,7 +108,7 @@ class AAIREApp {
 
         // Update header title
         const titles = {
-            'chat': 'Chat Assistant',
+            'chat': 'Welcome to AAIRE',
             'upload': 'Document Upload',
             'workflows': 'Accounting Workflows',
             'dashboard': 'System Dashboard'

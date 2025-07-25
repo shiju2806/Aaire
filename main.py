@@ -80,7 +80,7 @@ logger = structlog.get_logger()
 
 app = FastAPI(
     title="AAIRE",
-    description="AI-powered conversational assistant for insurance accounting and actuarial questions",
+    description="Insurance Resource Expert - AI-powered assistant for accounting and actuarial guidance",
     version="1.0-MVP",
     docs_url="/api/docs",
     redoc_url="/api/redoc"
