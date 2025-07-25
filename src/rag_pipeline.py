@@ -370,25 +370,27 @@ class RAGPipeline:
             # Retrieve relevant documents
             retrieved_docs = await self._retrieve_documents(query, doc_type_filter)
             
-            # Generate response
-            response = await self._generate_response(query, retrieved_docs, user_context)
-            
             # Check if this is a general knowledge query
             is_general_query = self._is_general_knowledge_query(query)
             
-            # Extract citations only if we have relevant documents AND it's not a general knowledge query
-            if retrieved_docs and not is_general_query:
-                citations = self._extract_citations(retrieved_docs)
-                confidence = self._calculate_confidence(retrieved_docs, response)
-            elif is_general_query:
-                # General knowledge query - no citations even if documents found
+            # For general knowledge queries, don't pass any documents to avoid citation generation
+            if is_general_query:
+                logger.info(f"General knowledge query detected: '{query}' - using general knowledge response")
+                response = await self._generate_response(query, [], user_context)  # Empty docs list
                 citations = []
                 confidence = 0.3  # Low confidence for general knowledge responses
-                logger.info(f"General knowledge query detected: '{query}' - suppressing citations")
             else:
-                # No relevant documents found - no citations and low confidence
-                citations = []
-                confidence = 0.3  # Low confidence for general knowledge responses
+                # Generate response with retrieved documents
+                response = await self._generate_response(query, retrieved_docs, user_context)
+                
+                # Extract citations only if we have relevant documents
+                if retrieved_docs:
+                    citations = self._extract_citations(retrieved_docs)
+                    confidence = self._calculate_confidence(retrieved_docs, response)
+                else:
+                    # No relevant documents found - no citations and low confidence
+                    citations = []
+                    confidence = 0.3  # Low confidence for general knowledge responses
             
             rag_response = RAGResponse(
                 answer=response,
@@ -502,15 +504,16 @@ You provide accurate information based on US GAAP, IFRS, and general accounting 
 
 User Question: {query}
 
-No specific documents were found in your company's knowledge base that directly address this question.
+This appears to be a general accounting question. I will provide a standard accounting explanation.
 
 Instructions:
 - Provide a helpful general answer based on standard accounting and actuarial principles
-- Clearly state that this is general information, not from specific company documents
+- This is general accounting knowledge, not from any specific company documents
 - Mention relevant accounting standards (US GAAP, IFRS) where applicable
 - Never provide tax or legal advice
-- Suggest that the user consult company-specific policies or seek professional advice for specific situations
+- Do NOT include any citation numbers like [1], [2], etc.
 - Do NOT reference any specific documents or sources
+- Make it clear this is general knowledge, not company-specific information
 
 Response:"""
         else:

@@ -46,8 +46,10 @@ def test_queries():
     test_cases = [
         # General knowledge queries (should return True)
         ("what is accounts payable", True),
+        ("what is accounts receivable?", True),
         ("What is accounts payable?", True),
         ("define accounts payable", True),
+        ("define accounts receivable", True),
         ("explain accounting principles", True),
         ("how does accounting work?", True),
         ("what does accrual mean", True),
