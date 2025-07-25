@@ -1,57 +1,39 @@
-# AAIRE MVP Requirements - Following SRS v2.0
+# AAIRE Fixed Requirements - Complete llama-index installation
+# Core FastAPI
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
 websockets==12.0
 pydantic==2.5.0
 
-# RAG Pipeline - LlamaIndex based (per MVP requirements)  
-llama-index>=0.12.7  # Updated for gpt-4o-mini support and vector stores compatibility
-llama-index-vector-stores-qdrant==0.6.1  # Qdrant vector store support
-# Vector Database - Qdrant only
-qdrant-client>=1.7.1
+# Complete llama-index 0.12.x installation with all required components
+llama-index==0.12.7
+llama-index-core==0.12.7
 
-# LLM Integration
-openai==1.12.0  # Updated for gpt-4o-mini support
+# Essential llama-index components that must be installed separately in 0.12.x
+llama-index-readers-file==0.1.15
+llama-index-llms-openai==0.3.0
+llama-index-embeddings-openai==0.2.5
+llama-index-vector-stores-qdrant==0.6.1
+llama-index-indices-managed-llama-cloud==0.3.0
+
+# Vector Database
+qdrant-client==1.7.3
+
+# LLM Integration  
+openai==1.12.0
 
 # Document Processing
 PyPDF2==3.0.1
 python-docx==1.1.0
-pandas==2.1.4
-numpy==1.24.3
 
-# API Integration
-httpx==0.25.2
-requests==2.31.0
-
-# Caching & Database
+# Basic utilities
 redis==5.0.1
-sqlalchemy==2.0.23
-alembic==1.13.1
-psycopg2-binary==2.9.9
-
-# Authentication & Security
-python-jose[cryptography]==3.3.0
-passlib[bcrypt]==1.7.4
-python-multipart==0.0.6
-PyJWT==2.8.0  # Required for JWT token handling
-
-# Configuration & Environment
 python-dotenv==1.0.0
 pyyaml==6.0.1
-
-# Monitoring & Logging
 structlog==23.2.0
 
-# Background Jobs
-celery==5.3.4
-# redis==5.0.1  # Removed duplicate
+# Authentication
+PyJWT==2.8.0
 
-# Testing
-pytest==7.4.3
-pytest-asyncio==0.21.1
-pytest-mock==3.12.0
-
-# Development
-black==23.12.0
-isort==5.13.2
-flake8==6.1.0
+# HTTP requests
+httpx==0.25.2
