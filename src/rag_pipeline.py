@@ -316,12 +316,15 @@ class RAGPipeline:
         self, 
         query: str, 
         filters: Optional[Dict[str, Any]] = None,
-        user_context: Optional[Dict[str, Any]] = None
+        user_context: Optional[Dict[str, Any]] = None,
+        session_id: Optional[str] = None,
+        conversation_history: Optional[List[Dict]] = None
     ) -> RAGResponse:
         """
-        Process a user query through the RAG pipeline
+        Process a user query through the RAG pipeline with conversation memory
         """
-        session_id = str(uuid.uuid4())
+        if not session_id:
+            session_id = str(uuid.uuid4())
         
         try:
             # Check cache first
@@ -344,12 +347,12 @@ class RAGPipeline:
             # For general knowledge queries, don't pass any documents to avoid citation generation
             if is_general_query:
                 logger.info(f"General knowledge query detected: '{query}' - using general knowledge response")
-                response = await self._generate_response(query, [], user_context)  # Empty docs list
+                response = await self._generate_response(query, [], user_context, conversation_history)  # Empty docs list
                 citations = []
                 confidence = 0.3  # Low confidence for general knowledge responses
             else:
                 # Generate response with retrieved documents
-                response = await self._generate_response(query, retrieved_docs, user_context)
+                response = await self._generate_response(query, retrieved_docs, user_context, conversation_history)
                 
                 # Extract citations only if we have relevant documents
                 if retrieved_docs:
@@ -464,21 +467,34 @@ class RAGPipeline:
         self, 
         query: str, 
         retrieved_docs: List[Dict],
-        user_context: Optional[Dict[str, Any]] = None
+        user_context: Optional[Dict[str, Any]] = None,
+        conversation_history: Optional[List[Dict]] = None
     ) -> str:
-        """Generate response using retrieved documents"""
+        """Generate response using retrieved documents and conversation context"""
+        
+        # Build conversation context if available
+        conversation_context = ""
+        if conversation_history and len(conversation_history) > 0:
+            conversation_context = "\n\nConversation History (last 3 exchanges):\n"
+            # Get last 3 exchanges (6 messages total - 3 user + 3 assistant)
+            recent_history = conversation_history[-6:] if len(conversation_history) > 6 else conversation_history
+            for msg in recent_history:
+                role = "User" if msg.get('sender') == 'user' else "Assistant"
+                content = msg.get('content', '')[:200]  # Truncate for context
+                conversation_context += f"{role}: {content}\n"
         
         # Check if we have relevant documents
         if not retrieved_docs:
             # No relevant documents found - provide general knowledge response
             prompt = f"""You are AAIRE, an expert in insurance accounting and actuarial matters.
 You provide accurate information based on US GAAP, IFRS, and general accounting principles.
-
-User Question: {query}
+{conversation_context}
+Current User Question: {query}
 
 This appears to be a general accounting question. I will provide a standard accounting explanation.
 
 Instructions:
+- Consider the conversation history to provide contextual answers
 - Provide a helpful general answer based on standard accounting and actuarial principles
 - This is general accounting knowledge, not from any specific company documents
 - Mention relevant accounting standards (US GAAP, IFRS) where applicable
@@ -499,19 +515,21 @@ Response:"""
             # Build prompt with document context
             prompt = f"""You are AAIRE, an expert in insurance accounting and actuarial matters.
 You provide accurate information based on US GAAP, IFRS, and company policies.
-
-User Question: {query}
+{conversation_context}
+Current User Question: {query}
 
 Relevant Information from Company Documents:
 {context}
 
 Instructions:
+- Consider the conversation history to provide contextual and relevant answers
 - Provide a comprehensive answer based ONLY on the relevant information provided above
 - Always cite your sources using [1], [2], etc. format when referencing the provided information
 - If the provided information is insufficient to fully answer the question, clearly state this
 - You may supplement with general accounting knowledge, but clearly distinguish between document-based and general information
 - Never provide tax or legal advice
 - Focus on accounting and actuarial standards
+- Build upon previous conversation context when appropriate
 
 Response:"""
 
@@ -524,8 +542,75 @@ Response:"""
             logger.error("Failed to generate response", error=str(e))
             return "I apologize, but I'm unable to generate a response at this time. Please try again."
     
+    def _determine_question_categories(self, query: str, response: str, retrieved_docs: List[Dict]) -> List[str]:
+        """Determine appropriate question categories based on context"""
+        categories = []
+        
+        query_lower = query.lower()
+        response_lower = response.lower()
+        
+        # Check for specific topics and suggest relevant categories
+        if any(term in query_lower for term in ['gaap', 'ifrs', 'standard', 'compliance']):
+            categories.extend(['comparison', 'compliance'])
+        
+        if any(term in query_lower for term in ['reserve', 'calculation', 'premium', 'claim']):
+            categories.extend(['examples', 'technical'])
+        
+        if any(term in query_lower for term in ['audit', 'test', 'review']):
+            categories.extend(['application', 'compliance'])
+        
+        if any(term in response_lower for term in ['require', 'must', 'shall']):
+            categories.append('clarification')
+        
+        # Default categories if none detected
+        if not categories:
+            categories = ['clarification', 'examples', 'application']
+        
+        return list(set(categories))  # Remove duplicates
+    
+    def _get_category_examples(self, categories: List[str]) -> Dict[str, List[str]]:
+        """Get example questions for each category"""
+        category_questions = {
+            'clarification': [
+                "Can you explain this in simpler terms?",
+                "What does this mean in practice?",
+                "Could you break this down further?"
+            ],
+            'examples': [
+                "Can you provide a real-world example?",
+                "How would this work for a life insurance company?",
+                "What would this look like in financial statements?"
+            ],
+            'comparison': [
+                "How does this differ under IFRS vs US GAAP?",
+                "What are the key differences from previous standards?",
+                "How does this compare to industry practice?"
+            ],
+            'technical': [
+                "What are the detailed calculation steps?",
+                "What assumptions are typically used?",
+                "How do you handle edge cases?"
+            ],
+            'application': [
+                "How do companies typically implement this?",
+                "What systems support this process?",
+                "How often should this be performed?"
+            ],
+            'compliance': [
+                "What are the audit requirements?",
+                "How do regulators typically examine this?",
+                "What documentation is needed?"
+            ]
+        }
+        
+        return {cat: category_questions.get(cat, []) for cat in categories}
+
     async def _generate_follow_up_questions(self, query: str, response: str, retrieved_docs: List[Dict]) -> List[str]:
         """Generate contextual follow-up questions based on the query and response"""
+        
+        # Determine appropriate question categories
+        categories = self._determine_question_categories(query, response, retrieved_docs)
+        category_examples = self._get_category_examples(categories)
         
         # Determine context for better follow-up questions
         topic_context = ""
@@ -538,6 +623,11 @@ Response:"""
             if topics:
                 topic_context = f"Related to documents: {', '.join(topics[:2])}"
         
+        # Build category guidance
+        category_guidance = ""
+        for cat, examples in category_examples.items():
+            category_guidance += f"\n{cat.title()}: {', '.join(examples[:2])}"
+        
         prompt = f"""As AAIRE, an insurance accounting and actuarial expert, generate 2-3 specific follow-up questions that would help the user understand this topic better.
 
 Original Question: {query}
@@ -546,19 +636,16 @@ My Response: {response}
 
 {topic_context}
 
+Suggested Question Categories:{category_guidance}
+
 Instructions:
 - Generate exactly 2-3 concise, specific follow-up questions
-- Focus on practical applications, comparisons, or deeper explanations
+- Use different categories from the suggestions above for variety
 - Make questions relevant to insurance accounting, actuarial science, or compliance
 - Keep questions under 15 words each
 - Format as a simple list, one question per line
 - No numbering, bullets, or extra formatting
-- Questions should encourage deeper understanding
-
-Examples of good follow-up questions:
-"How does this apply to life insurance reserves?"
-"What are the IFRS differences?"
-"How do auditors typically test this?"
+- Questions should encourage deeper understanding and practical application
 
 Follow-up Questions:"""
 

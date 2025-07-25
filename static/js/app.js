@@ -218,7 +218,8 @@ class AAIREApp {
             this.ws.send(JSON.stringify({
                 type: 'query',
                 message: message,
-                session_id: this.getSessionId()
+                session_id: this.getSessionId(),
+                conversation_history: this.getConversationHistory()
             }));
         } else {
             console.log('🔄 Using HTTP fallback');
@@ -240,7 +241,8 @@ class AAIREApp {
                 },
                 body: JSON.stringify({
                     query: message,
-                    session_id: this.getSessionId()
+                    session_id: this.getSessionId(),
+                    conversation_history: this.getConversationHistory()
                 })
             });
 
@@ -948,6 +950,16 @@ class AAIREApp {
             localStorage.setItem('aaire_session_id', sessionId);
         }
         return sessionId;
+    }
+
+    getConversationHistory() {
+        // Return last 6 messages (3 exchanges) for context
+        const recentMessages = this.messages.slice(-6);
+        return recentMessages.map(msg => ({
+            sender: msg.sender,
+            content: msg.content,
+            timestamp: msg.timestamp
+        }));
     }
 
     // Workflow Management

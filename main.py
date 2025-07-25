@@ -202,6 +202,7 @@ class ChatRequest(BaseModel):
     query: str = Field(..., max_length=2000, description="User query")
     session_id: Optional[str] = None
     filters: Optional[Dict[str, Any]] = None
+    conversation_history: Optional[List[Dict[str, str]]] = None
 
 class ChatResponse(BaseModel):
     response: str
@@ -364,7 +365,9 @@ async def chat(request: ChatRequest):
             rag_response = await rag_pipeline.process_query(
                 query=request.query,
                 filters=request.filters,
-                user_context={}
+                user_context={},
+                session_id=request.session_id,
+                conversation_history=request.conversation_history
             )
             logger.info(f"RAG response citations count: {len(rag_response.citations)}")
             
@@ -550,6 +553,7 @@ async def websocket_chat(websocket: WebSocket):
             if data.get("type") == "query":
                 query = data.get("message", "")
                 session_id = data.get("session_id", "")
+                conversation_history = data.get("conversation_history", [])
                 
                 try:
                     if rag_pipeline:
@@ -558,7 +562,9 @@ async def websocket_chat(websocket: WebSocket):
                         rag_response = await rag_pipeline.process_query(
                             query=query,
                             filters=None,
-                            user_context={}
+                            user_context={},
+                            session_id=session_id,
+                            conversation_history=conversation_history
                         )
                         logger.info(f"WebSocket RAG response citations: {rag_response.citations}")
                         
