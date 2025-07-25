@@ -917,29 +917,32 @@
 
         /* User Context */
         .user-context {
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            padding: 10px 15px;
-            background: rgba(52, 152, 219, 0.1);
-            border: 1px solid #3498db;
-            border-radius: 20px;
-            font-size: 12px;
-            font-weight: bold;
-            z-index: 1000;
+            padding: 15px 20px;
+            background: #ecf0f1;
+            border-top: 1px solid #bdc3c7;
+            border-bottom: 1px solid #bdc3c7;
+            font-size: 13px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .user-info {
             display: flex;
             align-items: center;
             gap: 10px;
+            color: #2c3e50;
         }
 
         .user-selector {
             background: white;
             border: 1px solid #3498db;
-            border-radius: 15px;
-            padding: 5px 10px;
-            font-size: 12px;
+            border-radius: 5px;
+            padding: 8px 12px;
+            font-size: 13px;
             cursor: pointer;
             outline: none;
+            min-width: 200px;
         }
 
         .repository-info {
@@ -1065,6 +1068,20 @@
                         <i class="fas fa-download"></i> Export
                     </button>
                 </div>
+            </div>
+
+            <!-- User Context Bar -->
+            <div class="user-context" id="user-context">
+                <div class="user-info">
+                    <i class="fas fa-user"></i>
+                    <span>Current User:</span>
+                </div>
+                <select class="user-selector" id="user-selector" onchange="switchUser()">
+                    <option value="bill-accounting">Bill Johnson (Accounting)</option>
+                    <option value="court-accounting">Court Williams (Accounting)</option>
+                    <option value="sarah-actuarial">Sarah Davis (Actuarial)</option>
+                    <option value="bob-actuarial">Bob Miller (Actuarial)</option>
+                </select>
             </div>
 
             <!-- Chat Section -->
@@ -1252,17 +1269,6 @@
         </div>
     </div>
 
-    <!-- User Context Widget -->
-    <div class="user-context" id="user-context">
-        <span>👤</span>
-        <select class="user-selector" id="user-selector" onchange="switchUser()">
-            <option value="sarah-accounting">Sarah Chen (Accounting)</option>
-            <option value="mike-actuarial">Mike Rodriguez (Actuarial)</option>
-            <option value="lisa-audit">Lisa Thompson (Audit)</option>
-            <option value="david-compliance">David Kim (Compliance)</option>
-        </select>
-    </div>
-
-    <script src="/static/js/app.js?v=15&t=20250125-enterprise"></script>
+    <script src="/static/js/app.js?v=16&t=20250125-users"></script>
 </body>
 </html>

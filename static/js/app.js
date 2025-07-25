@@ -997,33 +997,33 @@ class AAIREApp {
 
     getUserInfo(userId) {
         const users = {
-            'sarah-accounting': {
-                name: 'Sarah Chen',
+            'bill-accounting': {
+                name: 'Bill Johnson',
                 department: 'Accounting',
                 role: 'Senior Accountant',
                 expertise: 'GAAP, Financial Reporting'
             },
-            'mike-actuarial': {
-                name: 'Mike Rodriguez', 
+            'court-accounting': {
+                name: 'Court Williams', 
+                department: 'Accounting',
+                role: 'Staff Accountant',
+                expertise: 'General Ledger, Month-end Close'
+            },
+            'sarah-actuarial': {
+                name: 'Sarah Davis',
                 department: 'Actuarial',
                 role: 'Actuarial Analyst',
                 expertise: 'Reserve Calculations, Risk Assessment'
             },
-            'lisa-audit': {
-                name: 'Lisa Thompson',
-                department: 'Audit',
-                role: 'Internal Auditor',
-                expertise: 'Compliance, Risk Management'
-            },
-            'david-compliance': {
-                name: 'David Kim',
-                department: 'Compliance',
-                role: 'Compliance Officer',
-                expertise: 'Regulatory Standards, Policy Review'
+            'bob-actuarial': {
+                name: 'Bob Miller',
+                department: 'Actuarial',
+                role: 'Senior Actuary',
+                expertise: 'Pricing Models, Capital Analysis'
             }
         };
         
-        return users[userId] || users['sarah-accounting'];
+        return users[userId] || users['bill-accounting'];
     }
 
     updateWelcomeMessage() {
