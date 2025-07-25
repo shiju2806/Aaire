@@ -521,12 +521,15 @@ Response:"""
         citations = []
         
         # Only include citations for documents with sufficient relevance score
-        CITATION_THRESHOLD = 0.5  # Minimum score to include as citation
+        CITATION_THRESHOLD = 0.85  # High threshold to prevent false citations
         
         for i, doc in enumerate(retrieved_docs[:5]):
+            # Log all document scores for debugging
+            logger.info(f"Document {i+1}: score={doc['score']}, filename={doc['metadata'].get('filename', 'Unknown')}")
+            
             # Skip documents with low relevance scores
             if doc['score'] < CITATION_THRESHOLD:
-                logger.info(f"Skipping citation for low-relevance document (score: {doc['score']})")
+                logger.info(f"SKIPPING citation for low-relevance document (score: {doc['score']}) - threshold: {CITATION_THRESHOLD}")
                 continue
                 
             # Get filename for source
