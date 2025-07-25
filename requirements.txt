@@ -4,12 +4,11 @@ uvicorn[standard]==0.24.0
 websockets==12.0
 pydantic==2.5.0
 
-# RAG Pipeline - LlamaIndex based (per MVP requirements)
-llama-index==0.9.48
+# RAG Pipeline - LlamaIndex based (per MVP requirements)  
+llama-index==0.10.43  # Updated for gpt-4o-mini support
 # Vector Database Options
-# Use older Pinecone client compatible with llama-index 0.9.x
-pinecone-client==2.2.4
-pinecone-text==0.4.2
+# Updated Pinecone client compatible with llama-index 0.10.x
+pinecone-client==3.2.2
 # Qdrant as alternative
 qdrant-client==1.7.0
 
