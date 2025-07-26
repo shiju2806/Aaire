@@ -1080,8 +1080,16 @@ Follow-up Questions:"""
         """Extract citation information from retrieved documents"""
         citations = []
         
-        # Only include citations for documents with sufficient relevance score
-        CITATION_THRESHOLD = 0.75  # Balanced threshold - cite documents that are actually used in response
+        # Use adaptive citation threshold based on retrieved document scores
+        # Take the minimum score from top 3 docs, but no lower than 0.6
+        if retrieved_docs:
+            top_scores = [doc['score'] for doc in retrieved_docs[:3]]
+            min_top_score = min(top_scores) if top_scores else 0.75
+            CITATION_THRESHOLD = max(0.6, min_top_score - 0.05)  # Slightly lower than retrieval to ensure citations
+        else:
+            CITATION_THRESHOLD = 0.75  # Fallback to original threshold
+        
+        logger.info(f"Citation threshold calculated: {CITATION_THRESHOLD}")
         
         for i, doc in enumerate(retrieved_docs[:5]):
             # Log all document scores for debugging
