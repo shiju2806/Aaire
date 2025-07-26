@@ -291,6 +291,53 @@
             margin-right: 5px;
         }
 
+        /* Completion notification (toast) */
+        .completion-notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: white;
+            border: 1px solid #27ae60;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            z-index: 10000;
+            animation: slideIn 0.3s ease-out;
+        }
+
+        .completion-content {
+            padding: 15px 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            color: #27ae60;
+        }
+
+        .completion-content i {
+            font-size: 20px;
+        }
+
+        .completion-content strong {
+            font-size: 14px;
+            margin-bottom: 5px;
+        }
+
+        .completion-content p {
+            margin: 0;
+            font-size: 13px;
+            color: #666;
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
         .message-meta {
             font-size: 11px;
             color: #7f8c8d;
@@ -495,6 +542,13 @@
             border-radius: 4px;
             font-size: 12px;
             font-weight: bold;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .file-status i.fa-spin {
+            animation-duration: 2s;
         }
 
         .file-status.success {

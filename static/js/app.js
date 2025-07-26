@@ -523,12 +523,16 @@ class AAIREApp {
                     this.pollDocumentStatus(result.job_id, 0);
                     
                     if (i === files.length - 1) {
-                        statusDiv.textContent = 'Upload completed successfully!';
+                        statusDiv.innerHTML = '<i class="fas fa-check"></i> Upload completed! Processing documents & generating summaries...';
                         statusDiv.style.color = '#2ecc71';
+                        setTimeout(() => {
+                            statusDiv.innerHTML = '<i class="fas fa-cog fa-spin"></i> AI summaries being generated...';
+                            statusDiv.style.color = '#f39c12';
+                        }, 2000);
                         setTimeout(() => {
                             progressContainer.style.display = 'none';
                             progressFill.style.width = '0%';
-                        }, 3000);
+                        }, 8000); // Longer delay to show summary generation
                     }
                 } else {
                     const errorText = await response.text();
@@ -576,8 +580,37 @@ class AAIREApp {
             const fileSize = this.formatFileSize(file.size);
             const uploadTime = new Date(file.uploaded_at).toLocaleString();
             const statusClass = file.status === 'completed' ? 'success' : 
-                               file.status === 'accepted' ? 'success' :
+                               file.status === 'accepted' ? 'processing' :
                                file.status === 'processing' ? 'processing' : 'error';
+            
+            // Determine status text and icon
+            let statusText, statusIcon, showSummaryButton;
+            switch(file.status) {
+                case 'completed':
+                    statusText = 'Processing complete, summary ready';
+                    statusIcon = 'fas fa-check-circle';
+                    showSummaryButton = true;
+                    break;
+                case 'accepted':
+                    statusText = 'Processing document & generating summary...';
+                    statusIcon = 'fas fa-cog fa-spin';
+                    showSummaryButton = false;
+                    break;
+                case 'processing':
+                    statusText = 'Processing document...';
+                    statusIcon = 'fas fa-cog fa-spin';
+                    showSummaryButton = false;
+                    break;
+                case 'queued':
+                    statusText = 'Queued for processing...';
+                    statusIcon = 'fas fa-clock';
+                    showSummaryButton = false;
+                    break;
+                default:
+                    statusText = file.status || 'Upload failed';
+                    statusIcon = 'fas fa-exclamation-triangle';
+                    showSummaryButton = false;
+            }
             
             console.log(`File ${file.name} status: "${file.status}", will show summary button: ${file.status === 'completed'}`);
             
@@ -589,8 +622,10 @@ class AAIREApp {
                         <div class="file-meta">Job ID: ${file.job_id}</div>
                     </div>
                     <div class="file-actions">
-                        <div class="file-status ${statusClass}">${file.status}</div>
-                        ${file.status === 'completed' ? `
+                        <div class="file-status ${statusClass}">
+                            <i class="${statusIcon}"></i> ${statusText}
+                        </div>
+                        ${showSummaryButton ? `
                             <button class="summary-btn" onclick="window.app.viewSummary('${file.job_id}', '${file.name}')" title="View AI Summary">
                                 <i class="fas fa-file-alt"></i>
                             </button>
@@ -653,6 +688,11 @@ class AAIREApp {
                         console.log(`Status updated for ${jobId}: ${oldStatus} -> ${status.status}`);
                         this.updateUploadedFilesList();
                         this.saveUploadedFiles();
+                        
+                        // Check if this was the last document to complete
+                        if (status.status === 'completed') {
+                            this.checkAllDocumentsCompleted();
+                        }
                     }
                     
                     // If still processing and haven't exceeded max attempts, check again
@@ -685,6 +725,53 @@ class AAIREApp {
     async checkDocumentStatus(jobId) {
         // Legacy method for compatibility - just do a single check
         this.pollDocumentStatus(jobId, 0);
+    }
+
+    checkAllDocumentsCompleted() {
+        // Check if all recent documents are completed
+        const recentDocuments = this.uploadedFiles.filter(file => {
+            const uploadTime = new Date(file.uploaded_at);
+            const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+            return uploadTime > fiveMinutesAgo;
+        });
+
+        const allCompleted = recentDocuments.length > 0 && 
+                           recentDocuments.every(file => file.status === 'completed');
+
+        if (allCompleted && recentDocuments.length > 0) {
+            this.showCompletionNotification(recentDocuments.length);
+        }
+    }
+
+    showCompletionNotification(documentCount) {
+        // Show a toast notification
+        const notification = document.createElement('div');
+        notification.className = 'completion-notification';
+        notification.innerHTML = `
+            <div class="completion-content">
+                <i class="fas fa-check-circle"></i>
+                <strong>Processing Complete!</strong>
+                <p>${documentCount} document${documentCount > 1 ? 's' : ''} processed and ${documentCount > 1 ? 'summaries' : 'summary'} generated.</p>
+            </div>
+        `;
+
+        document.body.appendChild(notification);
+
+        // Auto-remove after 5 seconds
+        setTimeout(() => {
+            if (notification.parentNode) {
+                notification.remove();
+            }
+        }, 5000);
+
+        // Scroll to documents section if not visible
+        const filesSection = document.getElementById('upload-section');
+        if (filesSection && filesSection.style.display !== 'none') {
+            const filesList = document.getElementById('files-list');
+            if (filesList) {
+                filesList.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            }
+        }
     }
 
     async viewSummary(jobId, fileName) {
