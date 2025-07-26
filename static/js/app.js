@@ -988,6 +988,17 @@ class AAIREApp {
         // Update current user
         this.currentUser = this.getUserInfo(userId);
         
+        // Update selector to match
+        if (userSelector) {
+            userSelector.value = userId;
+        }
+        
+        // Update current user name display
+        const currentUserNameElement = document.getElementById('current-user-name');
+        if (currentUserNameElement) {
+            currentUserNameElement.textContent = this.currentUser.name;
+        }
+        
         // Save to localStorage
         localStorage.setItem('aaire_current_user', userId);
         
