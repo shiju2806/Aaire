@@ -40,6 +40,7 @@ class DocumentProcessor:
             'application/vnd.openxmlformats-officedocument.wordprocessingml.document': {
                 'extension': '.docx', 'max_size_mb': 50, 'category': 'document'
             },
+            'text/plain': {'extension': '.txt', 'max_size_mb': 10, 'category': 'document'},
             'text/csv': {'extension': '.csv', 'max_size_mb': 25, 'category': 'data'},
             'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': {
                 'extension': '.xlsx', 'max_size_mb': 25, 'category': 'data'
@@ -241,6 +242,8 @@ class DocumentProcessor:
                 return await self._extract_from_pdf(file_path)
             elif file_extension == '.docx':
                 return await self._extract_from_docx(file_path)
+            elif file_extension == '.txt':
+                return await self._extract_from_txt(file_path)
             elif file_extension == '.csv':
                 return await self._extract_from_csv(file_path)
             elif file_extension == '.xlsx':
@@ -275,6 +278,18 @@ class DocumentProcessor:
                     continue
         
         return "\n\n".join(text_content)
+    
+    async def _extract_from_txt(self, file_path: Path) -> str:
+        """Extract text from plain text file"""
+        try:
+            with open(file_path, 'r', encoding='utf-8') as file:
+                content = file.read()
+                return content.strip()
+        except UnicodeDecodeError:
+            # Try with different encoding if UTF-8 fails
+            with open(file_path, 'r', encoding='latin-1') as file:
+                content = file.read()
+                return content.strip()
     
     async def _extract_from_docx(self, file_path: Path) -> str:
         """Extract text from DOCX file"""
