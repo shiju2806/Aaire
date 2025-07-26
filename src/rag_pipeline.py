@@ -393,8 +393,11 @@ class RAGPipeline:
             # Determine document type filter
             doc_type_filter = self._get_doc_type_filter(filters)
             
-            # Retrieve relevant documents
-            retrieved_docs = await self._retrieve_documents(query, doc_type_filter)
+            # Expand query for better retrieval
+            expanded_query = self._expand_query(query)
+            
+            # Retrieve relevant documents using expanded query
+            retrieved_docs = await self._retrieve_documents(expanded_query, doc_type_filter)
             
             # Check if this is a general knowledge query
             is_general_query = self._is_general_knowledge_query(query)
@@ -593,7 +596,7 @@ class RAGPipeline:
                 combined_dict[node_id] = result.copy()
                 combined_dict[node_id]['vector_score'] = normalized_score
                 combined_dict[node_id]['keyword_score'] = 0.0
-                combined_dict[node_id]['combined_score'] = normalized_score * 0.7  # Weight vector search at 70%
+                combined_dict[node_id]['combined_score'] = normalized_score * 0.6  # Weight vector search at 60%
             
             # Normalize scores and add/update keyword results
             max_keyword_score = max([r['score'] for r in keyword_results], default=1.0)
@@ -605,7 +608,7 @@ class RAGPipeline:
                     # Update existing result with keyword score
                     combined_dict[node_id]['keyword_score'] = normalized_score
                     combined_dict[node_id]['combined_score'] = (
-                        combined_dict[node_id]['vector_score'] * 0.7 + normalized_score * 0.3
+                        combined_dict[node_id]['vector_score'] * 0.6 + normalized_score * 0.4
                     )
                     combined_dict[node_id]['search_type'] = 'hybrid'
                 else:
@@ -613,7 +616,7 @@ class RAGPipeline:
                     combined_dict[node_id] = result.copy()
                     combined_dict[node_id]['vector_score'] = 0.0
                     combined_dict[node_id]['keyword_score'] = normalized_score
-                    combined_dict[node_id]['combined_score'] = normalized_score * 0.3  # Weight keyword-only at 30%
+                    combined_dict[node_id]['combined_score'] = normalized_score * 0.4  # Weight keyword-only at 40%
             
             # Convert back to list and sort by combined score
             final_results = list(combined_dict.values())
@@ -849,6 +852,52 @@ Follow-up Questions:"""
                 "What are the practical implications?",
                 "How does this apply in practice?"
             ]
+    
+    def _expand_query(self, query: str) -> str:
+        """Expand general queries with specific domain terms for better retrieval"""
+        query_lower = query.lower()
+        
+        # Domain-specific term mappings for insurance and accounting
+        expansion_mappings = {
+            # Capital and financial health terms
+            'capital health': 'capital health LICAT ratio core ratio total ratio capital adequacy',
+            'company capital': 'company capital LICAT ratio core ratio total ratio regulatory capital',
+            'assess capital': 'assess capital LICAT ratio core ratio total ratio capital adequacy',
+            'financial strength': 'financial strength LICAT ratio core ratio total ratio capital adequacy',
+            'capital adequacy': 'capital adequacy LICAT ratio core ratio total ratio regulatory capital',
+            
+            # Insurance specific expansions
+            'insurance': 'insurance LICAT OSFI regulatory capital solvency',
+            'regulatory': 'regulatory OSFI LICAT compliance capital requirements',
+            'solvency': 'solvency LICAT ratio capital adequacy regulatory capital',
+            
+            # Accounting standard expansions
+            'accounting': 'accounting GAAP IFRS standards disclosure requirements',
+            'financial reporting': 'financial reporting GAAP IFRS disclosure standards',
+            'compliance': 'compliance regulatory requirements OSFI GAAP IFRS',
+            
+            # Risk management expansions
+            'risk': 'risk management capital risk regulatory risk operational risk',
+            'management': 'management risk management capital management regulatory management'
+        }
+        
+        # Apply expansions
+        expanded_query = query
+        for general_term, expansion in expansion_mappings.items():
+            if general_term in query_lower:
+                # Add specific terms to the query
+                specific_terms = expansion.replace(general_term, '').strip()
+                if specific_terms:
+                    expanded_query = f"{query} {specific_terms}"
+                break
+        
+        # Log expansion for debugging
+        if expanded_query != query:
+            logger.info("Query expanded", 
+                       original=query, 
+                       expanded=expanded_query)
+        
+        return expanded_query
     
     def _is_general_knowledge_query(self, query: str) -> bool:
         """Check if query is asking for general knowledge vs specific document content"""
