@@ -22,7 +22,7 @@ class AAIREApp {
         this.connectWebSocket();
         this.checkAPIHealth();
         this.updateSessionTimer();
-        this.loadChatHistory();
+        // Load chat history for current user (will be set after user selection)
         this.loadUploadedFiles();
         this.initializeUser();
     }
@@ -425,15 +425,17 @@ class AAIREApp {
             messagesContainer.dispatchEvent(new Event('scroll'));
         }, 100);
         
-        // Store message
+        // Store message with all necessary data for reconstruction
         this.messages.push({
             sender,
             content,
             sources,
+            followUpQuestions,
             timestamp: Date.now()
         });
         
-        this.saveChatHistory();
+        // Auto-save user's chat history
+        this.saveUserChatHistory(this.currentUser.name);
     }
 
     copyToClipboard(text, button) {
@@ -1156,8 +1158,13 @@ class AAIREApp {
         // Save to localStorage
         localStorage.setItem('aaire_current_user', userId);
         
-        // Clear chat history and create new session for this user
-        this.clearChatForUserSwitch();
+        // Save current user's chat history before switching
+        if (previousUser && this.messages.length > 0) {
+            this.saveUserChatHistory(previousUser);
+        }
+        
+        // Load new user's chat history
+        this.loadUserChatHistory(userId);
         
         // Generate new session ID for this user
         this.sessionId = `${userId}_${Date.now()}`;
@@ -1244,23 +1251,157 @@ class AAIREApp {
         };
     }
 
-    clearChatForUserSwitch() {
-        // Clear messages array but keep the welcome message
-        this.messages = [];
+    saveUserChatHistory(username) {
+        // Save current chat state for the user
+        const chatHistory = {
+            messages: this.messages,
+            sessionId: this.sessionId,
+            timestamp: new Date().toISOString()
+        };
         
-        // Clear chat UI
+        const storageKey = `aaire_chat_history_${username.replace(/\s+/g, '_')}`;
+        localStorage.setItem(storageKey, JSON.stringify(chatHistory));
+        
+        console.log(`💾 Saved chat history for ${username} (${this.messages.length} messages)`);
+    }
+    
+    loadUserChatHistory(userId) {
+        const user = this.getUserInfo(userId);
+        const storageKey = `aaire_chat_history_${user.name.replace(/\s+/g, '_')}`;
+        const savedHistory = localStorage.getItem(storageKey);
+        
+        // Clear current chat UI first
         const messagesContainer = document.getElementById('chat-messages');
         if (messagesContainer) {
-            // Keep only the welcome message, remove all others
-            const allMessages = messagesContainer.querySelectorAll('.message');
-            allMessages.forEach((message, index) => {
-                if (index > 0) { // Keep first message (welcome), remove rest
-                    message.remove();
-                }
-            });
+            messagesContainer.innerHTML = '';
         }
         
-        console.log('🧹 Chat cleared for user switch');
+        if (savedHistory) {
+            try {
+                const chatHistory = JSON.parse(savedHistory);
+                this.messages = chatHistory.messages || [];
+                
+                // Restore chat UI
+                this.messages.forEach(msg => {
+                    this.addMessageToUI(msg.sender, msg.content, msg.sources, msg.followUpQuestions);
+                });
+                
+                console.log(`📚 Loaded chat history for ${user.name} (${this.messages.length} messages)`);
+            } catch (error) {
+                console.error('Failed to load chat history:', error);
+                this.initializeEmptyChat(user);
+            }
+        } else {
+            // No saved history, start fresh
+            this.initializeEmptyChat(user);
+        }
+    }
+    
+    initializeEmptyChat(user) {
+        this.messages = [];
+        this.updateWelcomeMessage();
+        console.log(`🌟 Initialized empty chat for ${user.name}`);
+    }
+    
+    addMessageToUI(sender, content, sources = null, followUpQuestions = null) {
+        // This is the UI-only version of addMessage that doesn't modify this.messages
+        const messagesContainer = document.getElementById('chat-messages');
+        const messageDiv = document.createElement('div');
+        messageDiv.className = `message ${sender}`;
+        
+        let messageContent = `<div class="message-content">`;
+        
+        if (sender === 'error') {
+            messageContent += `<div style="color: #e74c3c;">${content}</div>`;
+        } else if (sender === 'assistant') {
+            messageContent += this.formatMessageContent(content);
+        } else {
+            messageContent += content;
+        }
+        
+        // Add sources if available
+        if (sources && sources.length > 0) {
+            const sourceList = sources.map(source => {
+                if (typeof source === 'string') {
+                    return source;
+                } else if (source && source.source) {
+                    return source.source;
+                } else {
+                    return 'Unknown Source';
+                }
+            });
+            
+            const uniqueSources = [...new Set(sourceList)];
+            messageContent += '<br><br><small><strong>Source:</strong><br>';
+            uniqueSources.forEach(source => {
+                messageContent += `• ${source}<br>`;
+            });
+            messageContent += '</small>';
+        }
+        
+        // Add follow-up questions for assistant messages
+        if (sender === 'assistant' && followUpQuestions && followUpQuestions.length > 0) {
+            messageContent += '<div class="follow-up-questions">';
+            messageContent += '<div class="follow-up-title">💡 Suggested follow-up questions:</div>';
+            followUpQuestions.forEach((question, index) => {
+                messageContent += `
+                    <button class="follow-up-btn" onclick="askFollowUpQuestion('${question.replace(/'/g, "\\'")}')">
+                        ${question}
+                    </button>
+                `;
+            });
+            messageContent += '</div>';
+        }
+        
+        // Add feedback buttons for assistant messages
+        if (sender === 'assistant') {
+            const messageId = 'msg_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+            messageContent += `
+                <div class="response-feedback">
+                    <span class="feedback-label">Was this helpful?</span>
+                    <button class="feedback-btn thumbs-up" onclick="submitFeedback('${messageId}', 'thumbs_up')" title="Helpful">
+                        👍
+                    </button>
+                    <button class="feedback-btn thumbs-down" onclick="submitFeedback('${messageId}', 'thumbs_down')" title="Not helpful">
+                        👎
+                    </button>
+                    <button class="feedback-btn report-issue" onclick="reportIssue('${messageId}')" title="Report issue">
+                        ⚠️
+                    </button>
+                </div>
+            `;
+        }
+
+        // Add copy button for assistant messages
+        if (sender === 'assistant') {
+            messageContent += `
+                <button class="copy-btn" title="Copy response">
+                    <i class="fas fa-copy"></i>
+                </button>
+            `;
+        }
+        
+        messageContent += `<div class="message-meta">${new Date().toLocaleTimeString()}</div>`;
+        messageContent += '</div>';
+        
+        messageDiv.innerHTML = messageContent;
+        messagesContainer.appendChild(messageDiv);
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        
+        // Setup copy functionality
+        if (sender === 'assistant') {
+            const copyBtn = messageDiv.querySelector('.copy-btn');
+            if (copyBtn) {
+                copyBtn.addEventListener('click', () => {
+                    navigator.clipboard.writeText(content).then(() => {
+                        copyBtn.innerHTML = '<i class="fas fa-check"></i>';
+                        setTimeout(() => {
+                            copyBtn.innerHTML = '<i class="fas fa-copy"></i>';
+                        }, 2000);
+                    });
+                });
+            }
+        }
     }
 
     showUserSwitchNotification(previousUser, newUser) {
