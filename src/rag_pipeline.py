@@ -396,8 +396,11 @@ class RAGPipeline:
             # Expand query for better retrieval
             expanded_query = self._expand_query(query)
             
-            # Retrieve relevant documents using expanded query
-            retrieved_docs = await self._retrieve_documents(expanded_query, doc_type_filter)
+            # Get adaptive similarity threshold
+            similarity_threshold = self._get_similarity_threshold(query)
+            
+            # Retrieve relevant documents using expanded query and adaptive threshold
+            retrieved_docs = await self._retrieve_documents(expanded_query, doc_type_filter, similarity_threshold)
             
             # Check if this is a general knowledge query
             is_general_query = self._is_general_knowledge_query(query)
@@ -485,11 +488,11 @@ class RAGPipeline:
         
         return doc_types if doc_types else None
     
-    async def _retrieve_documents(self, query: str, doc_type_filter: Optional[List[str]]) -> List[Dict]:
+    async def _retrieve_documents(self, query: str, doc_type_filter: Optional[List[str]], similarity_threshold: Optional[float] = None) -> List[Dict]:
         """Hybrid retrieval: combines vector search with BM25 keyword search"""
         
         # Get results from both search methods
-        vector_results = await self._vector_search(query, doc_type_filter)
+        vector_results = await self._vector_search(query, doc_type_filter, similarity_threshold)
         keyword_results = await self._keyword_search(query, doc_type_filter)
         
         # Combine and rerank results
@@ -497,7 +500,7 @@ class RAGPipeline:
         
         return combined_results
     
-    async def _vector_search(self, query: str, doc_type_filter: Optional[List[str]]) -> List[Dict]:
+    async def _vector_search(self, query: str, doc_type_filter: Optional[List[str]], similarity_threshold: Optional[float] = None) -> List[Dict]:
         """Original vector-based semantic search"""
         all_results = []
         
@@ -510,8 +513,11 @@ class RAGPipeline:
             # Retrieve documents
             nodes = retriever.retrieve(query)
             
+            # Use adaptive threshold if provided, otherwise fall back to config
+            threshold = similarity_threshold if similarity_threshold is not None else self.config['retrieval_config']['similarity_threshold']
+            
             for node in nodes:
-                if node.score >= self.config['retrieval_config']['similarity_threshold']:
+                if node.score >= threshold:
                     # Apply document type filter if specified
                     if doc_type_filter:
                         node_doc_type = node.metadata.get('doc_type') if node.metadata else None
@@ -898,6 +904,44 @@ Follow-up Questions:"""
                        expanded=expanded_query)
         
         return expanded_query
+    
+    def _get_similarity_threshold(self, query: str) -> float:
+        """Determine optimal similarity threshold based on query type"""
+        query_lower = query.lower()
+        
+        # Use stricter threshold for specific/critical queries that need precision
+        specific_indicators = [
+            'specific', 'exact', 'precise', 'what is the', 'define',
+            'calculation', 'formula', 'ratio', 'compliance requirement',
+            'regulatory requirement', 'standard requires', 'rule states',
+            'policy says', 'according to', 'as per', 'mandate'
+        ]
+        
+        # Use relaxed threshold for general/exploratory queries that need comprehensiveness
+        general_indicators = [
+            'how to', 'what are ways', 'assess', 'evaluate', 'overview',
+            'explain', 'understand', 'approach', 'methods', 'strategies',
+            'best practices', 'considerations', 'factors', 'guidance',
+            'help me', 'show me how'
+        ]
+        
+        # Check for specific indicators first
+        if any(indicator in query_lower for indicator in specific_indicators):
+            threshold = 0.75  # Stricter for precision
+            reason = "specific query"
+        elif any(indicator in query_lower for indicator in general_indicators):
+            threshold = 0.65  # Relaxed for comprehensiveness  
+            reason = "general query"
+        else:
+            threshold = 0.70  # Balanced middle ground
+            reason = "neutral query"
+        
+        logger.info("Adaptive threshold selected", 
+                   query=query[:50] + "..." if len(query) > 50 else query,
+                   threshold=threshold,
+                   reason=reason)
+        
+        return threshold
     
     def _is_general_knowledge_query(self, query: str) -> bool:
         """Check if query is asking for general knowledge vs specific document content"""
