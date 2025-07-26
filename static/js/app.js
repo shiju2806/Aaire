@@ -12,6 +12,7 @@ class AAIREApp {
         this.messages = [];
         this.uploadedFiles = [];
         this.currentUser = null;
+        this.updateTimeout = null;
         
         this.init();
     }
@@ -88,6 +89,31 @@ class AAIREApp {
             console.log('Upload area clicked - triggering file input');
             console.log('File input element:', fileInput);
             fileInput.click();
+        });
+
+        // Event delegation for file action buttons (summary and delete)
+        document.addEventListener('click', (e) => {
+            // Handle summary button clicks
+            if (e.target.closest('.summary-btn')) {
+                const button = e.target.closest('.summary-btn');
+                const jobId = button.dataset.jobId;
+                const filename = button.dataset.filename;
+                if (jobId && filename) {
+                    e.preventDefault();
+                    this.viewSummary(jobId, filename);
+                }
+            }
+            
+            // Handle delete button clicks
+            if (e.target.closest('.delete-btn')) {
+                const button = e.target.closest('.delete-btn');
+                const jobId = button.dataset.jobId;
+                const filename = button.dataset.filename;
+                if (jobId && filename) {
+                    e.preventDefault();
+                    this.deleteFile(jobId, filename);
+                }
+            }
         });
     }
 
@@ -563,6 +589,17 @@ class AAIREApp {
     }
 
     updateUploadedFilesList() {
+        // Debounce rapid updates during uploads
+        if (this.updateTimeout) {
+            clearTimeout(this.updateTimeout);
+        }
+        
+        this.updateTimeout = setTimeout(() => {
+            this.performFileListUpdate();
+        }, 100);
+    }
+
+    performFileListUpdate() {
         const filesList = document.getElementById('files-list');
         
         // Update global repository count
@@ -626,11 +663,11 @@ class AAIREApp {
                             <i class="${statusIcon}"></i> ${statusText}
                         </div>
                         ${showSummaryButton ? `
-                            <button class="summary-btn" onclick="window.app.viewSummary('${file.job_id}', '${file.name}')" title="View AI Summary">
+                            <button class="summary-btn" data-job-id="${file.job_id}" data-filename="${file.name}" title="View AI Summary">
                                 <i class="fas fa-file-alt"></i>
                             </button>
                         ` : ''}
-                        <button class="delete-btn" onclick="window.app.deleteFile('${file.job_id}', '${file.name}')">
+                        <button class="delete-btn" data-job-id="${file.job_id}" data-filename="${file.name}" title="Delete Document">
                             <i class="fas fa-trash"></i>
                         </button>
                     </div>
