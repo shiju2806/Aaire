@@ -342,8 +342,19 @@ class AAIREApp {
         
         // Add sources if available
         if (sources && sources.length > 0) {
+            // Handle both string array (WebSocket) and object array (HTTP) formats
+            const sourceList = sources.map(source => {
+                if (typeof source === 'string') {
+                    return source;
+                } else if (source && source.source) {
+                    return source.source;
+                } else {
+                    return 'Unknown Source';
+                }
+            });
+            
             // Deduplicate sources
-            const uniqueSources = [...new Set(sources)];
+            const uniqueSources = [...new Set(sourceList)];
             messageContent += '<br><br><small><strong>Source:</strong><br>';
             uniqueSources.forEach(source => {
                 messageContent += `• ${source}<br>`;
