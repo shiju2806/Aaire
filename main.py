@@ -599,9 +599,11 @@ async def upload_document(
             os.makedirs("data/uploads", exist_ok=True)
             file_path = f"data/uploads/{job_id}_{file.filename}"
             
-            file.file.seek(0)  # Reset file pointer
+            # Reset file pointer and read content
+            file.file.seek(0)
+            content = await file.read()
+            
             with open(file_path, "wb") as buffer:
-                content = await file.read()
                 buffer.write(content)
             
             # Parse metadata
