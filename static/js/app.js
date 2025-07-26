@@ -1299,8 +1299,39 @@ class AAIREApp {
     
     initializeEmptyChat(user) {
         this.messages = [];
-        this.updateWelcomeMessage();
+        this.createWelcomeMessage();
         console.log(`🌟 Initialized empty chat for ${user.name}`);
+    }
+    
+    createWelcomeMessage() {
+        if (!this.currentUser) return;
+        
+        const messagesContainer = document.getElementById('chat-messages');
+        const welcomeDiv = document.createElement('div');
+        welcomeDiv.className = 'message assistant';
+        
+        welcomeDiv.innerHTML = `
+            <div class="message-content">
+                <strong>Welcome to AAIRE Enterprise, ${this.currentUser.name}!</strong><br>
+                <em>Department: ${this.currentUser.department} | Role: ${this.currentUser.role}</em>
+                <br><br>
+                Your intelligent assistant for insurance accounting and actuarial guidance. I can help you with:
+                <br><br>
+                • US GAAP and IFRS accounting standards<br>
+                • Insurance reserve calculations<br>
+                • Actuarial analysis and modeling<br>
+                • Regulatory compliance questions<br>
+                • Document analysis and insights
+                <br><br>
+                <strong>📚 Accessing Global Repository:</strong> All departments can ask questions about any topic - accounting, actuarial, compliance, or audit matters.
+                <br><br>
+                How can I assist you today?
+                <div class="message-meta">${new Date().toLocaleTimeString()}</div>
+            </div>
+        `;
+        
+        messagesContainer.appendChild(welcomeDiv);
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
     }
     
     addMessageToUI(sender, content, sources = null, followUpQuestions = null) {
