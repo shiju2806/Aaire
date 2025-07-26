@@ -225,6 +225,20 @@ class DocumentUploadResponse(BaseModel):
     status: str
     message: str
 
+class FeedbackRequest(BaseModel):
+    message_id: str
+    feedback_type: str  # 'thumbs_up', 'thumbs_down', 'issue_report'
+    issue_type: Optional[str] = None  # For issue reports
+    issue_description: Optional[str] = None  # For detailed issue descriptions
+    timestamp: str
+    user_id: str
+    session_id: str
+
+class FeedbackResponse(BaseModel):
+    status: str
+    message: str
+    feedback_id: Optional[str] = None
+
 async def search_uploaded_documents(query: str) -> str:
     """Simple text search in uploaded documents"""
     try:
@@ -795,6 +809,122 @@ async def get_knowledge_stats():
                 "external_api_manager": external_api_manager is not None
             }
         }
+
+@app.post("/api/v1/feedback", response_model=FeedbackResponse)
+async def submit_feedback(feedback: FeedbackRequest):
+    """Submit user feedback for response quality"""
+    try:
+        import uuid
+        
+        # Generate unique feedback ID
+        feedback_id = str(uuid.uuid4())
+        
+        # Create feedback record
+        feedback_data = {
+            "feedback_id": feedback_id,
+            "message_id": feedback.message_id,
+            "feedback_type": feedback.feedback_type,
+            "issue_type": feedback.issue_type,
+            "issue_description": feedback.issue_description,
+            "timestamp": feedback.timestamp,
+            "user_id": feedback.user_id,
+            "session_id": feedback.session_id,
+            "created_at": datetime.utcnow().isoformat()
+        }
+        
+        # Log the feedback for now (in production, save to database)
+        logger.info("User feedback received", **feedback_data)
+        
+        # Store feedback in a simple JSON file for MVP
+        feedback_dir = Path("data/feedback")
+        feedback_dir.mkdir(parents=True, exist_ok=True)
+        
+        feedback_file = feedback_dir / f"feedback_{datetime.now().strftime('%Y%m%d')}.jsonl"
+        with open(feedback_file, "a") as f:
+            f.write(json.dumps(feedback_data) + "\n")
+        
+        # Basic automated quality metrics
+        if feedback.feedback_type == "thumbs_down" or feedback.feedback_type == "issue_report":
+            # Log for monitoring/alerting
+            logger.warning("Negative feedback received",
+                         feedback_type=feedback.feedback_type,
+                         issue_type=feedback.issue_type,
+                         user_id=feedback.user_id,
+                         session_id=feedback.session_id)
+        
+        return FeedbackResponse(
+            status="success",
+            message="Feedback recorded successfully",
+            feedback_id=feedback_id
+        )
+        
+    except Exception as e:
+        logger.error("Failed to record feedback", error=str(e))
+        raise HTTPException(status_code=500, detail="Failed to record feedback")
+
+@app.get("/api/v1/feedback/analytics")
+async def get_feedback_analytics():
+    """Get basic feedback analytics for the dashboard"""
+    try:
+        feedback_dir = Path("data/feedback")
+        if not feedback_dir.exists():
+            return {
+                "total_feedback": 0,
+                "feedback_breakdown": {},
+                "daily_feedback": {},
+                "avg_quality_metrics": {},
+                "recent_issues": []
+            }
+        
+        all_feedback = []
+        feedback_breakdown = {}
+        daily_feedback = {}
+        issues = []
+        
+        # Read all feedback files
+        for feedback_file in feedback_dir.glob("feedback_*.jsonl"):
+            with open(feedback_file, 'r') as f:
+                for line in f:
+                    if line.strip():
+                        feedback_data = json.loads(line.strip())
+                        all_feedback.append(feedback_data)
+                        
+                        # Count feedback types
+                        feedback_type = feedback_data.get('feedback_type', 'unknown')
+                        feedback_breakdown[feedback_type] = feedback_breakdown.get(feedback_type, 0) + 1
+                        
+                        # Count daily feedback
+                        date = feedback_data.get('timestamp', '').split('T')[0]
+                        daily_feedback[date] = daily_feedback.get(date, 0) + 1
+                        
+                        # Collect issues
+                        if feedback_type in ['thumbs_down', 'issue_report']:
+                            issues.append({
+                                'timestamp': feedback_data.get('timestamp'),
+                                'type': feedback_data.get('issue_type', 'unknown'),
+                                'description': feedback_data.get('issue_description', ''),
+                                'user_id': feedback_data.get('user_id'),
+                                'session_id': feedback_data.get('session_id')
+                            })
+        
+        # Calculate satisfaction rate
+        positive_feedback = feedback_breakdown.get('thumbs_up', 0)
+        negative_feedback = feedback_breakdown.get('thumbs_down', 0)
+        total_ratings = positive_feedback + negative_feedback
+        satisfaction_rate = (positive_feedback / total_ratings * 100) if total_ratings > 0 else 0
+        
+        return {
+            "total_feedback": len(all_feedback),
+            "feedback_breakdown": feedback_breakdown,
+            "satisfaction_rate": round(satisfaction_rate, 1),
+            "daily_feedback": daily_feedback,
+            "recent_issues": issues[-10:] if issues else [],  # Last 10 issues
+            "generated_at": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error("Failed to generate feedback analytics", error=str(e))
+        raise HTTPException(status_code=500, detail="Failed to generate analytics")
 
 @app.get("/api/v1/debug/documents")
 async def debug_all_documents():

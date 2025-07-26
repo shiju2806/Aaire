@@ -46,12 +46,13 @@ import structlog
 logger = structlog.get_logger()
 
 class RAGResponse:
-    def __init__(self, answer: str, citations: List[Dict], confidence: float, session_id: str, follow_up_questions: List[str] = None):
+    def __init__(self, answer: str, citations: List[Dict], confidence: float, session_id: str, follow_up_questions: List[str] = None, quality_metrics: Dict[str, float] = None):
         self.answer = answer
         self.citations = citations
         self.confidence = confidence
         self.session_id = session_id
         self.follow_up_questions = follow_up_questions or []
+        self.quality_metrics = quality_metrics or {}
 
 class RAGPipeline:
     def __init__(self, config_path: str = "config/mvp_config.yaml"):
@@ -427,12 +428,16 @@ class RAGPipeline:
             # Generate contextual follow-up questions
             follow_up_questions = await self._generate_follow_up_questions(query, response, retrieved_docs)
             
+            # Calculate quality metrics
+            quality_metrics = self._calculate_quality_metrics(query, response, retrieved_docs, citations)
+            
             rag_response = RAGResponse(
                 answer=response,
                 citations=citations,
                 confidence=confidence,
                 session_id=session_id,
-                follow_up_questions=follow_up_questions
+                follow_up_questions=follow_up_questions,
+                quality_metrics=quality_metrics
             )
             
             # Cache the response
@@ -905,6 +910,96 @@ Follow-up Questions:"""
         
         return expanded_query
     
+    def _calculate_quality_metrics(self, query: str, response: str, retrieved_docs: List[Dict], citations: List[Dict]) -> Dict[str, float]:
+        """Calculate automated quality metrics for the response"""
+        try:
+            # Initialize metrics
+            metrics = {}
+            
+            # 1. Citation Coverage - How well the response is supported by sources
+            if retrieved_docs:
+                # Count how many retrieved docs are actually cited
+                cited_docs = len(citations) if citations else 0
+                total_docs = len(retrieved_docs)
+                metrics['citation_coverage'] = cited_docs / total_docs if total_docs > 0 else 0.0
+            else:
+                metrics['citation_coverage'] = 0.0
+            
+            # 2. Response Length Appropriateness - Not too short, not too long
+            response_words = len(response.split())
+            if response_words < 20:
+                metrics['length_score'] = 0.3  # Too short
+            elif response_words > 500:
+                metrics['length_score'] = 0.7  # Might be too long
+            else:
+                metrics['length_score'] = 1.0  # Appropriate length
+            
+            # 3. Query-Response Relevance - Basic keyword overlap
+            query_words = set(query.lower().split())
+            response_words_set = set(response.lower().split())
+            
+            # Remove common words
+            stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'is', 'are', 'was', 'were', 'be', 'been', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'may', 'might', 'can'}
+            query_keywords = query_words - stop_words
+            response_keywords = response_words_set - stop_words
+            
+            if query_keywords:
+                overlap = len(query_keywords & response_keywords)
+                metrics['keyword_relevance'] = overlap / len(query_keywords)
+            else:
+                metrics['keyword_relevance'] = 0.5  # Neutral if no keywords
+            
+            # 4. Source Quality - Average similarity scores of retrieved docs
+            if retrieved_docs:
+                scores = [doc.get('score', 0.0) for doc in retrieved_docs]
+                metrics['source_quality'] = sum(scores) / len(scores) if scores else 0.0
+            else:
+                metrics['source_quality'] = 0.0
+            
+            # 5. Response Completeness - Basic heuristics
+            has_structured_response = any(marker in response for marker in ['1.', '2.', '•', '-', 'Steps:', 'Requirements:'])
+            has_specific_details = any(term in response.lower() for term in ['ratio', 'percentage', '%', '$', 'requirement', 'standard', 'regulation'])
+            
+            completeness_score = 0.5  # Base score
+            if has_structured_response:
+                completeness_score += 0.25
+            if has_specific_details:
+                completeness_score += 0.25
+            
+            metrics['completeness'] = min(completeness_score, 1.0)
+            
+            # 6. Overall Quality Score (weighted average)
+            weights = {
+                'citation_coverage': 0.25,
+                'length_score': 0.15,
+                'keyword_relevance': 0.25,
+                'source_quality': 0.20,
+                'completeness': 0.15
+            }
+            
+            overall_score = sum(metrics[key] * weights[key] for key in weights if key in metrics)
+            metrics['overall_quality'] = overall_score
+            
+            # Log quality metrics for monitoring
+            logger.info("Response quality metrics calculated",
+                       overall_quality=overall_score,
+                       citation_coverage=metrics['citation_coverage'],
+                       keyword_relevance=metrics['keyword_relevance'],
+                       source_quality=metrics['source_quality'])
+            
+            return metrics
+            
+        except Exception as e:
+            logger.error("Failed to calculate quality metrics", error=str(e))
+            return {
+                "citation_coverage": 0.0,
+                "length_score": 0.5,
+                "keyword_relevance": 0.5,
+                "source_quality": 0.0,
+                "completeness": 0.5,
+                "overall_quality": 0.3
+            }
+    
     def _get_similarity_threshold(self, query: str) -> float:
         """Determine optimal similarity threshold based on query type"""
         query_lower = query.lower()
@@ -1066,7 +1161,8 @@ Follow-up Questions:"""
             citations=data['citations'],
             confidence=data['confidence'],
             session_id=session_id,
-            follow_up_questions=data.get('follow_up_questions', [])
+            follow_up_questions=data.get('follow_up_questions', []),
+            quality_metrics=data.get('quality_metrics', {})
         )
     
     async def delete_document(self, job_id: str) -> Dict[str, Any]:

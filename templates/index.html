@@ -229,6 +229,78 @@
             margin-bottom: 0;
         }
 
+        /* Response Feedback Styles */
+        .response-feedback {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 12px;
+            padding: 8px 0;
+            border-top: 1px solid #eee;
+            font-size: 14px;
+        }
+
+        .feedback-label {
+            color: #666;
+            font-size: 13px;
+            margin-right: 4px;
+        }
+
+        .feedback-btn {
+            background: none;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            padding: 4px 8px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 32px;
+            height: 28px;
+        }
+
+        .feedback-btn:hover {
+            border-color: #3498db;
+            background: #f8f9fa;
+            transform: scale(1.05);
+        }
+
+        .feedback-btn.selected {
+            background: #3498db;
+            border-color: #3498db;
+            color: white;
+            transform: scale(1.1);
+        }
+
+        .feedback-btn.thumbs-up:hover {
+            border-color: #27ae60;
+        }
+
+        .feedback-btn.thumbs-up.selected {
+            background: #27ae60;
+            border-color: #27ae60;
+        }
+
+        .feedback-btn.thumbs-down:hover {
+            border-color: #e74c3c;
+        }
+
+        .feedback-btn.thumbs-down.selected {
+            background: #e74c3c;
+            border-color: #e74c3c;
+        }
+
+        .feedback-btn.report-issue:hover {
+            border-color: #f39c12;
+        }
+
+        .feedback-btn.report-issue.selected {
+            background: #f39c12;
+            border-color: #f39c12;
+        }
+
         .message.user {
             justify-content: flex-end;
         }

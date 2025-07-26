@@ -376,6 +376,25 @@ class AAIREApp {
             messageContent += '</div>';
         }
         
+        // Add feedback buttons for assistant messages
+        if (sender === 'assistant') {
+            const messageId = 'msg_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+            messageContent += `
+                <div class="response-feedback">
+                    <span class="feedback-label">Was this helpful?</span>
+                    <button class="feedback-btn thumbs-up" onclick="submitFeedback('${messageId}', 'thumbs_up')" title="Helpful">
+                        👍
+                    </button>
+                    <button class="feedback-btn thumbs-down" onclick="submitFeedback('${messageId}', 'thumbs_down')" title="Not helpful">
+                        👎
+                    </button>
+                    <button class="feedback-btn report-issue" onclick="reportIssue('${messageId}')" title="Report issue">
+                        ⚠️
+                    </button>
+                </div>
+            `;
+        }
+
         // Add copy button for assistant messages (inside the message content)
         if (sender === 'assistant') {
             messageContent += `
@@ -1667,6 +1686,87 @@ function clearUploadedFiles() {
         app.updateUploadedFilesList();
         app.saveUploadedFiles();
         console.log('Uploaded files list cleared');
+    }
+}
+
+// Feedback functions
+function submitFeedback(messageId, feedbackType) {
+    console.log('Feedback submitted:', messageId, feedbackType);
+    
+    // Visual feedback - highlight the selected button
+    const messageElement = document.querySelector(`[onclick*="${messageId}"]`).closest('.message');
+    const buttons = messageElement.querySelectorAll('.feedback-btn');
+    buttons.forEach(btn => btn.classList.remove('selected'));
+    
+    const clickedButton = event.target;
+    clickedButton.classList.add('selected');
+    
+    // Send feedback to backend
+    fetch('/api/v1/feedback', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            message_id: messageId,
+            feedback_type: feedbackType,
+            timestamp: new Date().toISOString(),
+            user_id: window.app ? window.app.currentUser.id : 'demo-user',
+            session_id: window.app ? window.app.sessionId : 'unknown'
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        console.log('Feedback recorded:', data);
+        // Show brief confirmation
+        clickedButton.style.transform = 'scale(1.2)';
+        setTimeout(() => {
+            clickedButton.style.transform = 'scale(1)';
+        }, 200);
+    })
+    .catch(error => {
+        console.error('Error submitting feedback:', error);
+    });
+}
+
+function reportIssue(messageId) {
+    const issueType = prompt('What type of issue would you like to report?\n\n1. Incorrect information\n2. Missing information\n3. Irrelevant response\n4. Other\n\nEnter 1-4 or describe the issue:');
+    
+    if (issueType) {
+        const issueMapping = {
+            '1': 'incorrect_information',
+            '2': 'missing_information', 
+            '3': 'irrelevant_response',
+            '4': 'other'
+        };
+        
+        const issueTypeCode = issueMapping[issueType] || 'other';
+        const issueDescription = issueType.length > 1 ? issueType : '';
+        
+        fetch('/api/v1/feedback', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                message_id: messageId,
+                feedback_type: 'issue_report',
+                issue_type: issueTypeCode,
+                issue_description: issueDescription,
+                timestamp: new Date().toISOString(),
+                user_id: window.app ? window.app.currentUser.id : 'demo-user',
+                session_id: window.app ? window.app.sessionId : 'unknown'
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            console.log('Issue reported:', data);
+            alert('Thank you for reporting this issue. We will review it and improve our responses.');
+        })
+        .catch(error => {
+            console.error('Error reporting issue:', error);
+            alert('Error submitting issue report. Please try again.');
+        });
     }
 }
 
