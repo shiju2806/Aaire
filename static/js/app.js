@@ -434,8 +434,8 @@ class AAIREApp {
             timestamp: Date.now()
         });
         
-        // Auto-save user's chat history
-        this.saveUserChatHistory(this.currentUser.name);
+        // Auto-save disabled - users now manage sessions manually via Clear Chat
+        // this.saveUserChatHistory(this.currentUser.name);
     }
 
     copyToClipboard(text, button) {
@@ -1158,10 +1158,10 @@ class AAIREApp {
         // Save to localStorage
         localStorage.setItem('aaire_current_user', userId);
         
-        // Save current user's chat history before switching
-        if (previousUser && this.messages.length > 0) {
-            this.saveUserChatHistory(previousUser);
-        }
+        // Auto-save disabled - users manage sessions manually via Clear Chat
+        // if (previousUser && this.messages.length > 0) {
+        //     this.saveUserChatHistory(previousUser);
+        // }
         
         // Always start with empty chat for new sessions
         // Users can load previous sessions from Chat History if needed
@@ -1253,75 +1253,22 @@ class AAIREApp {
     }
 
     saveUserChatHistory(username) {
-        // Save current chat state for the user
-        const chatHistory = {
-            messages: this.messages,
-            sessionId: this.sessionId,
-            timestamp: new Date().toISOString()
-        };
-        
-        const storageKey = `aaire_chat_history_${username.replace(/\s+/g, '_')}`;
-        localStorage.setItem(storageKey, JSON.stringify(chatHistory));
-        
-        console.log(`💾 Saved chat history for ${username} (${this.messages.length} messages)`);
+        // OLD SAVE SYSTEM DISABLED
+        // Users now use session-based system via Clear Chat button
+        console.log(`⚠️ saveUserChatHistory called but disabled - use session system instead`);
+        console.log(`💡 Users should use "Clear Chat" to save sessions manually`);
     }
     
     loadUserChatHistory(userId) {
+        // NO LONGER LOAD OLD CHAT HISTORY AUTOMATICALLY
+        // Users now start with empty chat and can access sessions from Chat History panel
         const user = this.getUserInfo(userId);
-        const storageKey = `aaire_chat_history_${user.name.replace(/\s+/g, '_')}`;
-        const savedHistory = localStorage.getItem(storageKey);
         
-        // Clear current chat UI first
-        const messagesContainer = document.getElementById('chat-messages');
-        if (messagesContainer) {
-            messagesContainer.innerHTML = '';
-        }
+        console.log(`🆕 Starting fresh chat session for ${user.name} (old auto-loading disabled)`);
+        console.log(`💡 Access previous conversations via Chat History panel`);
         
-        if (savedHistory) {
-            try {
-                const chatHistory = JSON.parse(savedHistory);
-                this.messages = chatHistory.messages || [];
-                
-                // Filter out any problematic responses (like those with false citations)
-                this.messages = this.messages.filter(msg => {
-                    // Skip assistant messages that contain generic greetings with citations
-                    if (msg.sender === 'assistant' && msg.sources && msg.sources.length > 0) {
-                        const content = msg.content.toLowerCase();
-                        if (content.includes('how can i assist you today') || 
-                            content.includes('feel free to share') ||
-                            content.includes('hello! how can i assist') ||
-                            content.includes('canadian tax book') ||
-                            msg.sources.some(source => source.toLowerCase().includes('canadian tax book'))) {
-                            console.log('🧹 Filtered out problematic assistant response with false citation:', msg.sources);
-                            return false;
-                        }
-                    }
-                    return true;
-                });
-                
-                // Only restore chat if we have valid messages
-                if (this.messages.length > 0) {
-                    // Start with welcome message
-                    this.createWelcomeMessage();
-                    
-                    // Restore chat UI (skip the welcome message)
-                    this.messages.forEach(msg => {
-                        this.addMessageToUI(msg.sender, msg.content, msg.sources, msg.followUpQuestions);
-                    });
-                    
-                    console.log(`📚 Loaded filtered chat history for ${user.name} (${this.messages.length} messages)`);
-                } else {
-                    // All messages were filtered out, start fresh
-                    this.initializeEmptyChat(user);
-                }
-            } catch (error) {
-                console.error('Failed to load chat history:', error);
-                this.initializeEmptyChat(user);
-            }
-        } else {
-            // No saved history, start fresh
-            this.initializeEmptyChat(user);
-        }
+        // Always start with empty chat
+        this.initializeEmptyChat(user);
     }
     
     initializeEmptyChat(user) {
