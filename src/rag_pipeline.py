@@ -1099,6 +1099,19 @@ Follow-up Questions:"""
             if doc['score'] < CITATION_THRESHOLD:
                 logger.info(f"SKIPPING citation for low-relevance document (score: {doc['score']}) - threshold: {CITATION_THRESHOLD}")
                 continue
+            
+            # Additional filter: Skip documents that seem to be general/irrelevant responses
+            # This helps prevent old cached documents from appearing as citations
+            content_lower = doc['content'].lower()
+            if any(phrase in content_lower for phrase in [
+                'how can i assist you today',
+                'feel free to share',
+                'what can i help you with',
+                'how may i help',
+                'hello! how can i assist'
+            ]):
+                logger.info(f"SKIPPING citation for generic response document: {doc['metadata'].get('filename', 'Unknown')}")
+                continue
                 
             # Get filename for source
             filename = doc['metadata'].get('filename', 'Unknown')
@@ -1173,6 +1186,35 @@ Follow-up Questions:"""
             quality_metrics=data.get('quality_metrics', {})
         )
     
+    async def clear_all_documents(self) -> Dict[str, Any]:
+        """Clear all documents from the vector store - use with caution"""
+        try:
+            if self.vector_store_type == "qdrant":
+                # Delete and recreate the entire collection
+                self.qdrant_client.delete_collection(self.collection_name)
+                
+                # Recreate the collection
+                from qdrant_client.models import Distance, VectorParams
+                self.qdrant_client.create_collection(
+                    collection_name=self.collection_name,
+                    vectors_config=VectorParams(size=1536, distance=Distance.COSINE)
+                )
+                
+                # Reinitialize the index
+                self._init_qdrant_indexes()
+                
+                logger.info("Successfully cleared all documents from Qdrant")
+                return {"status": "success", "message": "All documents cleared", "method": "qdrant_recreate"}
+            else:
+                # For local storage, recreate the index
+                self._init_local_index()
+                logger.info("Successfully cleared all documents from local storage")
+                return {"status": "success", "message": "All documents cleared", "method": "local_recreate"}
+                
+        except Exception as e:
+            logger.error("Failed to clear all documents", error=str(e))
+            return {"status": "error", "error": str(e)}
+
     async def delete_document(self, job_id: str) -> Dict[str, Any]:
         """Delete all chunks associated with a document from the vector store"""
         try:

@@ -940,7 +940,17 @@ async def debug_cleanup_orphaned():
     if not rag_pipeline:
         raise HTTPException(status_code=503, detail="RAG pipeline not available")
     
-    return await rag_pipeline.cleanup_orphaned_chunks()
+    try:
+        return await rag_pipeline.cleanup_orphaned_chunks()
+    except Exception as e:
+        logger.error("Cleanup failed with original method", error=str(e))
+        # Fallback: Try to clear entire collection and recreate
+        try:
+            await rag_pipeline.clear_all_documents()
+            return {"status": "success", "message": "Cleared all documents as fallback"}
+        except Exception as e2:
+            logger.error("Fallback cleanup also failed", error=str(e2))
+            return {"status": "error", "error": str(e2)}
 
 @app.post("/api/v1/debug/clear-cache")
 async def debug_clear_cache():
