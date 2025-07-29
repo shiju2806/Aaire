@@ -48,7 +48,7 @@ retrieval_config:
 llm_config:
   provider: "openai"
   model: "gpt-4o-mini"  # Default model (override with OPENAI_MODEL env var)
-  fallback: "gpt-3.5-turbo"  # Fallback model for compatibility
+  fallback: "gpt-4o-mini"  # Fallback model - same as primary for consistency
   temperature: 0.1  # Low temperature for consistent responses
   max_tokens: 4000  # Increased for GPT-4o-mini's better context handling
   

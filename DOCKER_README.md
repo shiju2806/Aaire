@@ -61,7 +61,7 @@ Required:
 - `QDRANT_API_KEY`: Qdrant API key (if using cloud)
 
 Optional:
-- `OPENAI_MODEL`: Model to use (default: gpt-3.5-turbo, recommended: gpt-4o-mini)
+- `OPENAI_MODEL`: Model to use (default: gpt-4o-mini)
 - `REDIS_HOST`: Redis host (default: redis)
 - `REDIS_PORT`: Redis port (default: 6379)
 

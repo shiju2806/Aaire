@@ -17,7 +17,7 @@ AAIRE is an AI-powered conversational assistant that provides accurate, citation
 ### Technical Features
 - **LlamaIndex RAG Pipeline**: Hierarchical document chunking
 - **Pinecone Vector Database**: Scalable semantic search
-- **OpenAI GPT-4**: Advanced language understanding
+- **OpenAI GPT-4o-mini**: Advanced language understanding with cost efficiency
 - **Redis Caching**: Fast query response times
 - **Comprehensive Audit Logging**: Full compliance trail
 - **Authentication**: SAML 2.0 SSO ready (JWT for MVP)
@@ -97,9 +97,9 @@ The API will be available at `http://localhost:8000`
 ```yaml
 # config/mvp_config.yaml
 llm_config:
-  model: "gpt-4-turbo"
+  model: "gpt-4o-mini"
   temperature: 0.1
-  max_tokens: 2000
+  max_tokens: 4000
 
 retrieval_config:
   similarity_threshold: 0.75
@@ -293,7 +293,7 @@ This project is proprietary software. All rights reserved.
 - Initial MVP release
 - LlamaIndex RAG pipeline
 - Pinecone vector storage
-- OpenAI GPT-4 integration
+- OpenAI GPT-4o-mini integration
 - SEC EDGAR and FRED APIs
 - Compliance engine
 - Document processing
