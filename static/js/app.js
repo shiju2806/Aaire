@@ -1163,8 +1163,15 @@ class AAIREApp {
             this.saveUserChatHistory(previousUser);
         }
         
-        // Load new user's chat history
-        this.loadUserChatHistory(userId);
+        // Special handling for Bill Johnson - clear his problematic data
+        if (this.currentUser.name === 'Bill Johnson') {
+            console.log('🚨 Detected Bill Johnson - clearing problematic chat history');
+            this.clearBillJohnsonData();
+            this.initializeEmptyChat(this.currentUser);
+        } else {
+            // Load new user's chat history
+            this.loadUserChatHistory(userId);
+        }
         
         // Generate new session ID for this user
         this.sessionId = `${userId}_${Date.now()}`;
@@ -1288,8 +1295,10 @@ class AAIREApp {
                         const content = msg.content.toLowerCase();
                         if (content.includes('how can i assist you today') || 
                             content.includes('feel free to share') ||
-                            content.includes('hello! how can i assist')) {
-                            console.log('🧹 Filtered out problematic assistant response with false citation');
+                            content.includes('hello! how can i assist') ||
+                            content.includes('canadian tax book') ||
+                            msg.sources.some(source => source.toLowerCase().includes('canadian tax book'))) {
+                            console.log('🧹 Filtered out problematic assistant response with false citation:', msg.sources);
                             return false;
                         }
                     }
@@ -1329,7 +1338,7 @@ class AAIREApp {
     
     clearProblematicChatHistory() {
         // Clear any saved chat history that might contain false citations
-        const users = ['Court_Williams', 'Bill_Smith', 'Sarah_Chen', 'Bob_Johnson'];
+        const users = ['Court_Williams', 'Bill_Smith', 'Sarah_Chen', 'Bob_Johnson', 'Bill_Johnson'];
         users.forEach(username => {
             const storageKey = `aaire_chat_history_${username}`;
             const savedHistory = localStorage.getItem(storageKey);
@@ -1345,7 +1354,8 @@ class AAIREApp {
                                 const content = msg.content.toLowerCase();
                                 if (content.includes('how can i assist you today') || 
                                     content.includes('feel free to share') ||
-                                    content.includes('hello! how can i assist')) {
+                                    content.includes('hello! how can i assist') ||
+                                    content.includes('canadian tax book')) {
                                     return false;
                                 }
                             }
@@ -1362,6 +1372,14 @@ class AAIREApp {
                 }
             }
         });
+    }
+    
+    // Specifically clear Bill Johnson's problematic data
+    clearBillJohnsonData() {
+        const storageKey = 'aaire_chat_history_Bill_Johnson';
+        console.log('🚮 Completely clearing Bill Johnson chat history due to persistent false citations');
+        localStorage.removeItem(storageKey);
+        console.log('✅ Bill Johnson chat history cleared');
     }
     
     createWelcomeMessage() {
