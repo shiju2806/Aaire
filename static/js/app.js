@@ -1163,15 +1163,9 @@ class AAIREApp {
             this.saveUserChatHistory(previousUser);
         }
         
-        // Special handling for Bill Johnson - clear his problematic data
-        if (this.currentUser.name === 'Bill Johnson') {
-            console.log('🚨 Detected Bill Johnson - clearing problematic chat history');
-            this.clearBillJohnsonData();
-            this.initializeEmptyChat(this.currentUser);
-        } else {
-            // Load new user's chat history
-            this.loadUserChatHistory(userId);
-        }
+        // Always start with empty chat for new sessions
+        // Users can load previous sessions from Chat History if needed
+        this.initializeEmptyChat(this.currentUser);
         
         // Generate new session ID for this user
         this.sessionId = `${userId}_${Date.now()}`;
@@ -1382,23 +1376,75 @@ class AAIREApp {
         console.log('✅ Bill Johnson chat history cleared');
     }
     
-    // Clear current user's chat history permanently
-    clearCurrentUserChat() {
-        if (!this.currentUser) return;
+    // Save current chat as a session and clear the active chat
+    saveCurrentChatAsSession() {
+        if (!this.currentUser || this.messages.length === 0) return;
         
-        console.log(`🗑️ Clearing chat history for ${this.currentUser.name}`);
+        console.log(`💾 Saving current chat session for ${this.currentUser.name}`);
         
-        // Clear in-memory messages
+        // Create session data
+        const session = {
+            id: `session_${Date.now()}`,
+            timestamp: new Date().toISOString(),
+            messageCount: this.messages.length,
+            messages: [...this.messages],
+            user: this.currentUser.name
+        };
+        
+        // Get existing chat sessions for this user
+        const sessionsKey = `aaire_chat_sessions_${this.currentUser.name.replace(' ', '_')}`;
+        const existingSessions = JSON.parse(localStorage.getItem(sessionsKey) || '[]');
+        
+        // Add new session to the beginning
+        existingSessions.unshift(session);
+        
+        // Keep only last 10 sessions to prevent storage bloat
+        if (existingSessions.length > 10) {
+            existingSessions.splice(10);
+        }
+        
+        // Save sessions
+        localStorage.setItem(sessionsKey, JSON.stringify(existingSessions));
+        
+        // Clear current chat
         this.messages = [];
-        
-        // Clear from localStorage
-        const storageKey = `aaire_chat_history_${this.currentUser.name.replace(' ', '_')}`;
-        localStorage.removeItem(storageKey);
-        
-        // Reset UI to welcome message
         this.initializeEmptyChat(this.currentUser);
         
-        console.log(`✅ Chat history cleared for ${this.currentUser.name}`);
+        console.log(`✅ Chat session saved and current chat cleared for ${this.currentUser.name}`);
+        return session.id;
+    }
+    
+    // Load a specific chat session
+    loadChatSession(sessionId) {
+        if (!this.currentUser) return;
+        
+        const sessionsKey = `aaire_chat_sessions_${this.currentUser.name.replace(' ', '_')}`;
+        const sessions = JSON.parse(localStorage.getItem(sessionsKey) || '[]');
+        
+        const session = sessions.find(s => s.id === sessionId);
+        if (!session) return;
+        
+        // Save current chat if it has messages
+        if (this.messages.length > 0) {
+            this.saveCurrentChatAsSession();
+        }
+        
+        // Load session messages
+        this.messages = [...session.messages];
+        
+        // Clear and rebuild UI
+        const messagesContainer = document.getElementById('chat-messages');
+        messagesContainer.innerHTML = '';
+        
+        // Create welcome message first
+        this.createWelcomeMessage();
+        
+        // Add session messages
+        this.messages.forEach(msg => {
+            this.addMessageToUI(msg.sender, msg.content, msg.sources, msg.followUpQuestions);
+        });
+        
+        console.log(`📖 Loaded chat session: ${session.id} (${session.messageCount} messages)`);
     }
     
     createWelcomeMessage() {
@@ -1831,16 +1877,16 @@ class AAIREApp {
 
 // Global functions
 function clearChat() {
-    if (confirm('Are you sure you want to clear the current chat history? This cannot be undone.')) {
-        if (window.app && window.app.currentUser) {
-            // Clear current user's specific chat history
-            window.app.clearCurrentUserChat();
-        } else {
-            // Fallback for old system
-            const messagesContainer = document.getElementById('chat-messages');
-            messagesContainer.innerHTML = '';
-            localStorage.removeItem('aaire_chat_history');
-        }
+    if (!window.app || !window.app.currentUser) return;
+    
+    if (window.app.messages.length === 0) {
+        alert('No messages to clear in current chat.');
+        return;
+    }
+    
+    if (confirm('Clear current chat? This will save the conversation to your chat history.')) {
+        window.app.saveCurrentChatAsSession();
+        console.log('✅ Chat cleared and saved to history');
     }
 }
 
@@ -1861,127 +1907,212 @@ function updateChatHistoryPanel() {
     // Update current user info
     document.getElementById('history-current-user').textContent = window.app.currentUser.name;
     
-    // Get current user's chat stats
-    const messageCount = window.app.messages.length;
-    const storageKey = `aaire_chat_history_${window.app.currentUser.name.replace(' ', '_')}`;
-    const storageSize = localStorage.getItem(storageKey)?.length || 0;
+    // Update current user's sessions
+    updateCurrentUserSessions();
     
-    document.getElementById('current-user-message-count').textContent = `${messageCount} messages`;
-    document.getElementById('current-user-storage-size').textContent = `${Math.round(storageSize / 1024)} KB`;
-    
-    // Update all users list
-    updateAllUsersHistoryList();
+    // Update all users summary
+    updateAllUsersSummary();
 }
 
-function updateAllUsersHistoryList() {
-    const listContainer = document.getElementById('all-users-history-list');
+function updateCurrentUserSessions() {
+    const sessionsContainer = document.getElementById('current-user-sessions');
+    const username = window.app.currentUser.name.replace(' ', '_');
+    const sessionsKey = `aaire_chat_sessions_${username}`;
+    const sessions = JSON.parse(localStorage.getItem(sessionsKey) || '[]');
+    
+    sessionsContainer.innerHTML = '';
+    
+    if (sessions.length === 0) {
+        sessionsContainer.innerHTML = '<div class="text-muted">No chat sessions saved yet</div>';
+        return;
+    }
+    
+    sessions.forEach(session => {
+        const date = new Date(session.timestamp);
+        const preview = getSessionPreview(session.messages);
+        
+        const tile = document.createElement('div');
+        tile.className = 'session-tile';
+        tile.innerHTML = `
+            <div class="session-header">
+                <div class="session-date">${date.toLocaleDateString()} ${date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</div>
+                <div class="session-stats">${session.messageCount} messages</div>
+            </div>
+            <div class="session-preview">${preview}</div>
+            <div class="session-actions">
+                <button class="btn btn-sm btn-primary" onclick="loadSession('${session.id}')" title="Load this session">
+                    <i class="fas fa-eye"></i>
+                </button>
+                <button class="btn btn-sm btn-secondary" onclick="exportSession('${session.id}')" title="Export this session">
+                    <i class="fas fa-download"></i>
+                </button>
+                <button class="btn btn-sm btn-danger" onclick="deleteSession('${session.id}')" title="Delete this session">
+                    <i class="fas fa-trash"></i>
+                </button>
+            </div>
+        `;
+        
+        sessionsContainer.appendChild(tile);
+    });
+}
+
+function getSessionPreview(messages) {
+    if (!messages || messages.length === 0) return 'Empty session';
+    
+    // Find first user message
+    const userMessage = messages.find(msg => msg.sender === 'user');
+    if (userMessage) {
+        return userMessage.content.substring(0, 80) + (userMessage.content.length > 80 ? '...' : '');
+    }
+    
+    return 'Chat session';
+}
+
+function updateAllUsersSummary() {
+    const summaryContainer = document.getElementById('all-users-summary');
     const users = ['Court_Williams', 'Bill_Smith', 'Sarah_Chen', 'Bob_Johnson', 'Bill_Johnson'];
     
-    listContainer.innerHTML = '';
+    summaryContainer.innerHTML = '';
     
     users.forEach(username => {
-        const storageKey = `aaire_chat_history_${username}`;
-        const historyData = localStorage.getItem(storageKey);
+        const sessionsKey = `aaire_chat_sessions_${username}`;
+        const sessions = JSON.parse(localStorage.getItem(sessionsKey) || '[]');
         
-        if (historyData) {
-            const data = JSON.parse(historyData);
-            const messageCount = data.messages?.length || 0;
-            const storageSize = historyData.length;
+        if (sessions.length > 0) {
+            const totalMessages = sessions.reduce((sum, session) => sum + session.messageCount, 0);
+            const storageSize = localStorage.getItem(sessionsKey)?.length || 0;
             
-            const userItem = document.createElement('div');
-            userItem.className = 'user-history-item';
-            userItem.innerHTML = `
-                <div class="user-history-info">
-                    <div class="user-history-name">${username.replace('_', ' ')}</div>
-                    <div class="user-history-stats">${messageCount} messages | ${Math.round(storageSize / 1024)} KB</div>
+            const userTile = document.createElement('div');
+            userTile.className = 'user-summary-tile';
+            userTile.innerHTML = `
+                <div class="user-summary-info">
+                    <div class="user-summary-name">${username.replace('_', ' ')}</div>
+                    <div class="user-summary-stats">${sessions.length} sessions | ${totalMessages} total messages | ${Math.round(storageSize / 1024)} KB</div>
                 </div>
-                <div class="user-history-actions">
-                    <button class="btn btn-sm btn-primary" onclick="exportUserChat('${username}')">
+                <div class="user-summary-actions">
+                    <button class="btn btn-sm btn-primary" onclick="exportAllUserSessions('${username}')" title="Export all sessions">
                         <i class="fas fa-download"></i>
                     </button>
-                    <button class="btn btn-sm btn-danger" onclick="clearUserChat('${username}')">
+                    <button class="btn btn-sm btn-danger" onclick="deleteAllUserSessions('${username}')" title="Delete all sessions">
                         <i class="fas fa-trash"></i>
                     </button>
                 </div>
             `;
-            listContainer.appendChild(userItem);
+            summaryContainer.appendChild(userTile);
         }
     });
     
-    if (listContainer.innerHTML === '') {
-        listContainer.innerHTML = '<div class="text-muted">No chat history found</div>';
+    if (summaryContainer.innerHTML === '') {
+        summaryContainer.innerHTML = '<div class="text-muted">No chat sessions found for any users</div>';
     }
 }
 
-function clearCurrentUserChatHistory() {
-    if (window.app && window.app.currentUser) {
-        if (confirm(`Clear all chat history for ${window.app.currentUser.name}? This cannot be undone.`)) {
-            window.app.clearCurrentUserChat();
-            updateChatHistoryPanel();
-        }
+// Session management functions
+function loadSession(sessionId) {
+    if (window.app) {
+        window.app.loadChatSession(sessionId);
+        toggleChatHistoryPanel(); // Close panel after loading
     }
 }
 
-function clearUserChat(username) {
-    if (confirm(`Clear all chat history for ${username.replace('_', ' ')}? This cannot be undone.`)) {
-        const storageKey = `aaire_chat_history_${username}`;
-        localStorage.removeItem(storageKey);
-        updateChatHistoryPanel();
-        console.log(`✅ Cleared chat history for ${username}`);
-    }
-}
-
-function clearAllChatHistory() {
-    if (confirm('Clear ALL chat history for ALL users? This cannot be undone!')) {
-        const users = ['Court_Williams', 'Bill_Smith', 'Sarah_Chen', 'Bob_Johnson', 'Bill_Johnson'];
-        users.forEach(username => {
-            const storageKey = `aaire_chat_history_${username}`;
-            localStorage.removeItem(storageKey);
-        });
-        
-        // Clear current user's in-memory messages too
-        if (window.app) {
-            window.app.messages = [];
-            window.app.initializeEmptyChat(window.app.currentUser);
-        }
-        
-        updateChatHistoryPanel();
-        console.log('✅ Cleared all chat history');
-    }
-}
-
-function exportCurrentUserChat() {
-    if (window.app && window.app.currentUser) {
-        exportUserChat(window.app.currentUser.name.replace(' ', '_'));
-    }
-}
-
-function exportUserChat(username) {
-    const storageKey = `aaire_chat_history_${username}`;
-    const historyData = localStorage.getItem(storageKey);
+function exportSession(sessionId) {
+    const username = window.app.currentUser.name.replace(' ', '_');
+    const sessionsKey = `aaire_chat_sessions_${username}`;
+    const sessions = JSON.parse(localStorage.getItem(sessionsKey) || '[]');
+    const session = sessions.find(s => s.id === sessionId);
     
-    if (!historyData) {
-        alert('No chat history found for this user');
+    if (!session) {
+        alert('Session not found');
         return;
     }
     
-    const data = JSON.parse(historyData);
     const exportData = {
-        user: username.replace('_', ' '),
-        exported_at: new Date().toISOString(),
-        message_count: data.messages?.length || 0,
-        messages: data.messages || []
+        session_id: session.id,
+        user: session.user,
+        timestamp: session.timestamp,
+        message_count: session.messageCount,
+        messages: session.messages
     };
     
     const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `aaire_chat_${username}_${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = `aaire_session_${session.user.replace(' ', '_')}_${new Date(session.timestamp).toISOString().slice(0, 10)}.json`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+}
+
+function deleteSession(sessionId) {
+    if (!confirm('Delete this chat session? This cannot be undone.')) return;
+    
+    const username = window.app.currentUser.name.replace(' ', '_');
+    const sessionsKey = `aaire_chat_sessions_${username}`;
+    const sessions = JSON.parse(localStorage.getItem(sessionsKey) || '[]');
+    
+    const updatedSessions = sessions.filter(s => s.id !== sessionId);
+    localStorage.setItem(sessionsKey, JSON.stringify(updatedSessions));
+    
+    updateChatHistoryPanel();
+    console.log(`✅ Deleted session: ${sessionId}`);
+}
+
+function exportAllUserSessions(username) {
+    const sessionsKey = `aaire_chat_sessions_${username}`;
+    const sessions = JSON.parse(localStorage.getItem(sessionsKey) || '[]');
+    
+    if (sessions.length === 0) {
+        alert('No chat sessions found for this user');
+        return;
+    }
+    
+    const exportData = {
+        user: username.replace('_', ' '),
+        exported_at: new Date().toISOString(),
+        total_sessions: sessions.length,
+        sessions: sessions
+    };
+    
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `aaire_all_sessions_${username}_${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
+function deleteAllUserSessions(username) {
+    if (!confirm(`Delete ALL chat sessions for ${username.replace('_', ' ')}? This cannot be undone!`)) return;
+    
+    const sessionsKey = `aaire_chat_sessions_${username}`;
+    localStorage.removeItem(sessionsKey);
+    
+    updateChatHistoryPanel();
+    console.log(`✅ Deleted all sessions for ${username}`);
+}
+
+function clearAllChatHistory() {
+    if (!confirm('Delete ALL chat sessions for ALL users? This cannot be undone!')) return;
+    
+    const users = ['Court_Williams', 'Bill_Smith', 'Sarah_Chen', 'Bob_Johnson', 'Bill_Johnson'];
+    users.forEach(username => {
+        const sessionsKey = `aaire_chat_sessions_${username}`;
+        localStorage.removeItem(sessionsKey);
+    });
+    
+    // Clear current user's in-memory messages too
+    if (window.app) {
+        window.app.messages = [];
+        window.app.initializeEmptyChat(window.app.currentUser);
+    }
+    
+    updateChatHistoryPanel();
+    console.log('✅ Deleted all chat sessions for all users');
 }
 
 function exportChat() {
