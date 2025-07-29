@@ -1281,12 +1281,36 @@ class AAIREApp {
                 const chatHistory = JSON.parse(savedHistory);
                 this.messages = chatHistory.messages || [];
                 
-                // Restore chat UI
-                this.messages.forEach(msg => {
-                    this.addMessageToUI(msg.sender, msg.content, msg.sources, msg.followUpQuestions);
+                // Filter out any problematic responses (like those with false citations)
+                this.messages = this.messages.filter(msg => {
+                    // Skip assistant messages that contain generic greetings with citations
+                    if (msg.sender === 'assistant' && msg.sources && msg.sources.length > 0) {
+                        const content = msg.content.toLowerCase();
+                        if (content.includes('how can i assist you today') || 
+                            content.includes('feel free to share') ||
+                            content.includes('hello! how can i assist')) {
+                            console.log('🧹 Filtered out problematic assistant response with false citation');
+                            return false;
+                        }
+                    }
+                    return true;
                 });
                 
-                console.log(`📚 Loaded chat history for ${user.name} (${this.messages.length} messages)`);
+                // Only restore chat if we have valid messages
+                if (this.messages.length > 0) {
+                    // Start with welcome message
+                    this.createWelcomeMessage();
+                    
+                    // Restore chat UI (skip the welcome message)
+                    this.messages.forEach(msg => {
+                        this.addMessageToUI(msg.sender, msg.content, msg.sources, msg.followUpQuestions);
+                    });
+                    
+                    console.log(`📚 Loaded filtered chat history for ${user.name} (${this.messages.length} messages)`);
+                } else {
+                    // All messages were filtered out, start fresh
+                    this.initializeEmptyChat(user);
+                }
             } catch (error) {
                 console.error('Failed to load chat history:', error);
                 this.initializeEmptyChat(user);
@@ -1303,35 +1327,82 @@ class AAIREApp {
         console.log(`🌟 Initialized empty chat for ${user.name}`);
     }
     
+    clearProblematicChatHistory() {
+        // Clear any saved chat history that might contain false citations
+        const users = ['Court_Williams', 'Bill_Smith', 'Sarah_Chen', 'Bob_Johnson'];
+        users.forEach(username => {
+            const storageKey = `aaire_chat_history_${username}`;
+            const savedHistory = localStorage.getItem(storageKey);
+            if (savedHistory) {
+                try {
+                    const chatHistory = JSON.parse(savedHistory);
+                    const originalLength = chatHistory.messages?.length || 0;
+                    
+                    if (chatHistory.messages) {
+                        // Filter out problematic messages
+                        chatHistory.messages = chatHistory.messages.filter(msg => {
+                            if (msg.sender === 'assistant' && msg.sources && msg.sources.length > 0) {
+                                const content = msg.content.toLowerCase();
+                                if (content.includes('how can i assist you today') || 
+                                    content.includes('feel free to share') ||
+                                    content.includes('hello! how can i assist')) {
+                                    return false;
+                                }
+                            }
+                            return true;
+                        });
+                        
+                        if (chatHistory.messages.length !== originalLength) {
+                            localStorage.setItem(storageKey, JSON.stringify(chatHistory));
+                            console.log(`🧹 Cleaned chat history for ${username}: ${originalLength} → ${chatHistory.messages.length} messages`);
+                        }
+                    }
+                } catch (error) {
+                    console.error(`Error cleaning chat history for ${username}:`, error);
+                }
+            }
+        });
+    }
+    
     createWelcomeMessage() {
         if (!this.currentUser) return;
         
         const messagesContainer = document.getElementById('chat-messages');
-        const welcomeDiv = document.createElement('div');
-        welcomeDiv.className = 'message assistant';
         
+        // Clear any existing messages first to prevent duplicates
+        messagesContainer.innerHTML = '';
+        
+        const welcomeDiv = document.createElement('div');
+        welcomeDiv.className = 'message assistant welcome-message';
+        
+        // Use proper HTML structure with paragraph tags for better formatting
         welcomeDiv.innerHTML = `
             <div class="message-content">
-                <strong>Welcome to AAIRE Enterprise, ${this.currentUser.name}!</strong><br>
-                <em>Department: ${this.currentUser.department} | Role: ${this.currentUser.role}</em>
-                <br><br>
-                Your intelligent assistant for insurance accounting and actuarial guidance. I can help you with:
-                <br><br>
-                • US GAAP and IFRS accounting standards<br>
-                • Insurance reserve calculations<br>
-                • Actuarial analysis and modeling<br>
-                • Regulatory compliance questions<br>
-                • Document analysis and insights
-                <br><br>
-                <strong>📚 Accessing Global Repository:</strong> All departments can ask questions about any topic - accounting, actuarial, compliance, or audit matters.
-                <br><br>
-                How can I assist you today?
+                <p><strong>Welcome to AAIRE Enterprise, ${this.currentUser.name}!</strong><br>
+                <em>Department: ${this.currentUser.department} | Role: ${this.currentUser.role}</em></p>
+                
+                <p>Your intelligent assistant for insurance accounting and actuarial guidance. I can help you with:</p>
+                
+                <ul style="margin: 10px 0; padding-left: 20px;">
+                    <li>US GAAP and IFRS accounting standards</li>
+                    <li>Insurance reserve calculations</li>
+                    <li>Actuarial analysis and modeling</li>
+                    <li>Regulatory compliance questions</li>
+                    <li>Document analysis and insights</li>
+                </ul>
+                
+                <p><strong>📚 Accessing Global Repository:</strong> All departments can ask questions about any topic - accounting, actuarial, compliance, or audit matters.</p>
+                
+                <p><strong>How can I assist you today?</strong></p>
+                
                 <div class="message-meta">${new Date().toLocaleTimeString()}</div>
             </div>
         `;
         
         messagesContainer.appendChild(welcomeDiv);
         messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        
+        console.log(`✅ Created clean welcome message for ${this.currentUser.name}`);
     }
     
     addMessageToUI(sender, content, sources = null, followUpQuestions = null) {
