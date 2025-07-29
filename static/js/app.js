@@ -21,6 +21,36 @@ class AAIREApp {
     }
     
     performOneTimeCleanup() {
+        // FORCE CACHE REFRESH - Check if user has old cached version
+        const currentVersion = '17-cleanup-fix';
+        const lastVersion = localStorage.getItem('aaire_app_version');
+        
+        if (lastVersion !== currentVersion) {
+            console.log(`🔄 Version mismatch detected: ${lastVersion} → ${currentVersion}`);
+            console.log('🧹 Forcing cache refresh and performing comprehensive cleanup...');
+            
+            // Clear ALL localStorage to ensure clean state
+            const allKeys = Object.keys(localStorage);
+            allKeys.forEach(key => {
+                if (key.startsWith('aaire_')) {
+                    localStorage.removeItem(key);
+                    console.log(`🗑️ Removed: ${key}`);
+                }
+            });
+            
+            // Set new version
+            localStorage.setItem('aaire_app_version', currentVersion);
+            
+            console.log('✅ Cache cleared and version updated. App will use fresh code.');
+            
+            // Force a hard refresh to ensure no cached JavaScript
+            if (lastVersion && lastVersion !== currentVersion) {
+                console.log('🔄 Performing hard refresh to load latest code...');
+                window.location.reload(true);
+                return;
+            }
+        }
+        
         console.log('🧹 Performing one-time cleanup of stale localStorage data');
         
         // List of all possible stale keys that could cause issues

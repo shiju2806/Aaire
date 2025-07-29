@@ -95,9 +95,25 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount static files
+# Mount static files with cache control
 if os.path.exists("static"):
-    app.mount("/static", StaticFiles(directory="static"), name="static")
+    # Custom static files handler to prevent caching of JS/CSS files
+    from fastapi.staticfiles import StaticFiles
+    from fastapi import Request
+    from fastapi.responses import FileResponse
+    import os.path
+    
+    class NoCacheStaticFiles(StaticFiles):
+        def file_response(self, full_path: str, stat_result=None, method: str = None, request_headers=None):
+            response = super().file_response(full_path, stat_result, method, request_headers)
+            # Add no-cache headers for JavaScript and CSS files
+            if full_path.endswith(('.js', '.css')):
+                response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+                response.headers["Pragma"] = "no-cache"
+                response.headers["Expires"] = "0"
+            return response
+    
+    app.mount("/static", NoCacheStaticFiles(directory="static"), name="static")
 
 # Create static directory if it doesn't exist
 os.makedirs("static/js", exist_ok=True)
