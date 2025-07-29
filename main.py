@@ -765,32 +765,67 @@ async def get_document_status(job_id: str):
 
 @app.delete("/api/v1/documents/{job_id}")
 async def delete_document(job_id: str):
-    """Delete a document from the system"""
+    """Delete a document completely from the system"""
     try:
         # For MVP, use demo user
         user_id = "demo-user"
+        deletion_results = {}
         
-        # Delete from RAG pipeline if available
+        logger.info(f"🗑️ Starting complete deletion for job_id: {job_id}")
+        
+        # 1. Delete from RAG pipeline (vector database + cache)
         if rag_pipeline:
-            # Delete all chunks from vector store
-            deletion_result = await rag_pipeline.delete_document(job_id)
-            logger.info("Document deletion from vector store", 
-                       job_id=job_id, 
-                       user_id=user_id,
-                       result=deletion_result)
+            deletion_results["vector_store"] = await rag_pipeline.delete_document(job_id)
+            logger.info(f"✅ Vector store deletion: {deletion_results['vector_store']}")
         
-        # Log audit event if available
+        # 2. Clear from fallback jobs (in-memory state)
+        fallback_jobs = getattr(app.state, 'fallback_jobs', {})
+        if job_id in fallback_jobs:
+            job_data = fallback_jobs.pop(job_id)
+            deletion_results["fallback_jobs"] = {"removed": job_data.get("filename", "unknown")}
+            logger.info(f"✅ Removed from fallback jobs: {job_data.get('filename')}")
+        
+        # 3. Clear from document processor if available
+        if document_processor:
+            try:
+                # Remove from processing jobs
+                await document_processor.cleanup_job(job_id, user_id)
+                deletion_results["document_processor"] = "cleaned"
+                logger.info(f"✅ Document processor cleanup completed")
+            except Exception as e:
+                logger.warning(f"⚠️ Document processor cleanup failed: {str(e)}")
+                deletion_results["document_processor"] = f"failed: {str(e)}"
+        
+        # 4. Clear any targeted cache entries
+        if rag_pipeline and hasattr(rag_pipeline, 'redis_client') and rag_pipeline.redis_client:
+            try:
+                # Clear document-specific cache entries
+                cache_pattern = f"*{job_id}*"
+                cleared_keys = await rag_pipeline._clear_cache_pattern(cache_pattern)
+                deletion_results["cache_cleanup"] = {"cleared_keys": cleared_keys}
+                logger.info(f"✅ Cache cleanup: {cleared_keys} keys cleared")
+            except Exception as e:
+                logger.warning(f"⚠️ Cache cleanup failed: {str(e)}")
+                deletion_results["cache_cleanup"] = f"failed: {str(e)}"
+        
+        # 5. Log audit event if available
         if audit_logger:
             await audit_logger.log_event(
                 event="document_deleted",
                 user_id=user_id,
-                data={"job_id": job_id}
+                data={"job_id": job_id, "deletion_results": deletion_results}
             )
         
-        return {"status": "success", "message": f"Document {job_id} deleted"}
+        logger.info(f"🎉 Complete deletion finished for {job_id}: {deletion_results}")
+        
+        return {
+            "status": "success", 
+            "message": f"Document {job_id} completely deleted",
+            "deletion_results": deletion_results
+        }
         
     except Exception as e:
-        logger.error("Error deleting document", job_id=job_id, error=str(e))
+        logger.error(f"❌ Error deleting document {job_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to delete document: {str(e)}")
 
 @app.get("/api/v1/knowledge/stats")

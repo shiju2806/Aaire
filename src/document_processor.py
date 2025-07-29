@@ -618,3 +618,36 @@ Analysis Status: Ready for multi-modal processing"""
                 if job['status'] in ['queued', 'processing']
             ]
         }
+    
+    async def cleanup_job(self, job_id: str, user_id: str) -> Dict[str, Any]:
+        """Clean up all traces of a job from document processor"""
+        try:
+            cleanup_results = {}
+            
+            # Remove from processing jobs if exists
+            if job_id in self.processing_jobs:
+                job_data = self.processing_jobs.pop(job_id)
+                cleanup_results["processing_job"] = {"removed": job_data.get("filename", "unknown")}
+                
+                # Try to clean up associated files if path is stored
+                if "file_path" in job_data:
+                    try:
+                        file_path = Path(job_data["file_path"])
+                        if file_path.exists():
+                            file_path.unlink()
+                            cleanup_results["file_cleanup"] = {"removed": str(file_path)}
+                    except Exception as e:
+                        cleanup_results["file_cleanup"] = {"error": str(e)}
+            
+            return {
+                "status": "success",
+                "job_id": job_id,
+                "cleanup_results": cleanup_results
+            }
+            
+        except Exception as e:
+            return {
+                "status": "error", 
+                "job_id": job_id,
+                "error": str(e)
+            }

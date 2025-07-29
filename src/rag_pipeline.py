@@ -1259,7 +1259,7 @@ Follow-up Questions:"""
             
             # Clear cache entries related to this document
             if self.cache:
-                # Clear all cache entries (simple approach)
+                # Clear all cache entries (simple approach for now)
                 pattern = "query_cache:*"
                 for key in self.cache.scan_iter(match=pattern):
                     self.cache.delete(key)
@@ -1279,6 +1279,31 @@ Follow-up Questions:"""
                 "error": str(e),
                 "job_id": job_id
             }
+    
+    async def _clear_cache_pattern(self, pattern: str) -> int:
+        """Clear cache entries matching a specific pattern"""
+        try:
+            if not self.cache:
+                return 0
+            
+            cleared_count = 0
+            cache_pattern = f"query_cache:*{pattern}*"
+            
+            # Use scan_iter to find matching keys
+            matching_keys = []
+            for key in self.cache.scan_iter(match=cache_pattern):
+                matching_keys.append(key)
+            
+            # Delete matching keys
+            if matching_keys:
+                cleared_count = self.cache.delete(*matching_keys)
+                logger.info(f"Cleared {cleared_count} cache entries matching pattern: {pattern}")
+            
+            return cleared_count
+            
+        except Exception as e:
+            logger.error(f"Failed to clear cache pattern {pattern}: {str(e)}")
+            return 0
     
     async def cleanup_orphaned_chunks(self) -> Dict[str, Any]:
         """Clean up chunks that don't have valid job_ids (legacy data)"""
