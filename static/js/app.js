@@ -1382,6 +1382,25 @@ class AAIREApp {
         console.log('✅ Bill Johnson chat history cleared');
     }
     
+    // Clear current user's chat history permanently
+    clearCurrentUserChat() {
+        if (!this.currentUser) return;
+        
+        console.log(`🗑️ Clearing chat history for ${this.currentUser.name}`);
+        
+        // Clear in-memory messages
+        this.messages = [];
+        
+        // Clear from localStorage
+        const storageKey = `aaire_chat_history_${this.currentUser.name.replace(' ', '_')}`;
+        localStorage.removeItem(storageKey);
+        
+        // Reset UI to welcome message
+        this.initializeEmptyChat(this.currentUser);
+        
+        console.log(`✅ Chat history cleared for ${this.currentUser.name}`);
+    }
+    
     createWelcomeMessage() {
         if (!this.currentUser) return;
         
@@ -1812,25 +1831,157 @@ class AAIREApp {
 
 // Global functions
 function clearChat() {
-    if (confirm('Are you sure you want to clear the chat history?')) {
-        const messagesContainer = document.getElementById('chat-messages');
-        messagesContainer.innerHTML = `
-            <div class="message">
-                <div class="message-content">
-                    <strong>Chat cleared.</strong><br>
-                    How can I assist you today?
-                </div>
-            </div>
-        `;
+    if (confirm('Are you sure you want to clear the current chat history? This cannot be undone.')) {
+        if (window.app && window.app.currentUser) {
+            // Clear current user's specific chat history
+            window.app.clearCurrentUserChat();
+        } else {
+            // Fallback for old system
+            const messagesContainer = document.getElementById('chat-messages');
+            messagesContainer.innerHTML = '';
+            localStorage.removeItem('aaire_chat_history');
+        }
+    }
+}
+
+// Chat History Management Functions
+function toggleChatHistoryPanel() {
+    const panel = document.getElementById('chat-history-panel');
+    if (panel.style.display === 'none' || panel.style.display === '') {
+        panel.style.display = 'block';
+        updateChatHistoryPanel();
+    } else {
+        panel.style.display = 'none';
+    }
+}
+
+function updateChatHistoryPanel() {
+    if (!window.app || !window.app.currentUser) return;
+    
+    // Update current user info
+    document.getElementById('history-current-user').textContent = window.app.currentUser.name;
+    
+    // Get current user's chat stats
+    const messageCount = window.app.messages.length;
+    const storageKey = `aaire_chat_history_${window.app.currentUser.name.replace(' ', '_')}`;
+    const storageSize = localStorage.getItem(storageKey)?.length || 0;
+    
+    document.getElementById('current-user-message-count').textContent = `${messageCount} messages`;
+    document.getElementById('current-user-storage-size').textContent = `${Math.round(storageSize / 1024)} KB`;
+    
+    // Update all users list
+    updateAllUsersHistoryList();
+}
+
+function updateAllUsersHistoryList() {
+    const listContainer = document.getElementById('all-users-history-list');
+    const users = ['Court_Williams', 'Bill_Smith', 'Sarah_Chen', 'Bob_Johnson', 'Bill_Johnson'];
+    
+    listContainer.innerHTML = '';
+    
+    users.forEach(username => {
+        const storageKey = `aaire_chat_history_${username}`;
+        const historyData = localStorage.getItem(storageKey);
         
+        if (historyData) {
+            const data = JSON.parse(historyData);
+            const messageCount = data.messages?.length || 0;
+            const storageSize = historyData.length;
+            
+            const userItem = document.createElement('div');
+            userItem.className = 'user-history-item';
+            userItem.innerHTML = `
+                <div class="user-history-info">
+                    <div class="user-history-name">${username.replace('_', ' ')}</div>
+                    <div class="user-history-stats">${messageCount} messages | ${Math.round(storageSize / 1024)} KB</div>
+                </div>
+                <div class="user-history-actions">
+                    <button class="btn btn-sm btn-primary" onclick="exportUserChat('${username}')">
+                        <i class="fas fa-download"></i>
+                    </button>
+                    <button class="btn btn-sm btn-danger" onclick="clearUserChat('${username}')">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                </div>
+            `;
+            listContainer.appendChild(userItem);
+        }
+    });
+    
+    if (listContainer.innerHTML === '') {
+        listContainer.innerHTML = '<div class="text-muted">No chat history found</div>';
+    }
+}
+
+function clearCurrentUserChatHistory() {
+    if (window.app && window.app.currentUser) {
+        if (confirm(`Clear all chat history for ${window.app.currentUser.name}? This cannot be undone.`)) {
+            window.app.clearCurrentUserChat();
+            updateChatHistoryPanel();
+        }
+    }
+}
+
+function clearUserChat(username) {
+    if (confirm(`Clear all chat history for ${username.replace('_', ' ')}? This cannot be undone.`)) {
+        const storageKey = `aaire_chat_history_${username}`;
+        localStorage.removeItem(storageKey);
+        updateChatHistoryPanel();
+        console.log(`✅ Cleared chat history for ${username}`);
+    }
+}
+
+function clearAllChatHistory() {
+    if (confirm('Clear ALL chat history for ALL users? This cannot be undone!')) {
+        const users = ['Court_Williams', 'Bill_Smith', 'Sarah_Chen', 'Bob_Johnson', 'Bill_Johnson'];
+        users.forEach(username => {
+            const storageKey = `aaire_chat_history_${username}`;
+            localStorage.removeItem(storageKey);
+        });
+        
+        // Clear current user's in-memory messages too
         if (window.app) {
-            app.messages = [];
-            app.saveChatHistory();
+            window.app.messages = [];
+            window.app.initializeEmptyChat(window.app.currentUser);
         }
         
-        // Also clear localStorage directly
-        localStorage.removeItem('aaire_chat_history');
+        updateChatHistoryPanel();
+        console.log('✅ Cleared all chat history');
     }
+}
+
+function exportCurrentUserChat() {
+    if (window.app && window.app.currentUser) {
+        exportUserChat(window.app.currentUser.name.replace(' ', '_'));
+    }
+}
+
+function exportUserChat(username) {
+    const storageKey = `aaire_chat_history_${username}`;
+    const historyData = localStorage.getItem(storageKey);
+    
+    if (!historyData) {
+        alert('No chat history found for this user');
+        return;
+    }
+    
+    const data = JSON.parse(historyData);
+    const exportData = {
+        user: username.replace('_', ' '),
+        exported_at: new Date().toISOString(),
+        message_count: data.messages?.length || 0,
+        messages: data.messages || []
+    };
+    
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `aaire_chat_${username}_${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
 }
 
 function exportChat() {

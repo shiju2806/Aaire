@@ -1026,6 +1026,121 @@
             color: #7f8c8d;
         }
 
+        /* Chat History Panel Styles */
+        .chat-history-panel {
+            position: fixed;
+            top: 0;
+            right: 0;
+            width: 400px;
+            height: 100vh;
+            background: white;
+            border-left: 1px solid #ddd;
+            box-shadow: -2px 0 10px rgba(0,0,0,0.1);
+            z-index: 1000;
+            overflow-y: auto;
+        }
+        
+        .panel-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px;
+            border-bottom: 1px solid #eee;
+            background: #f8f9fa;
+        }
+        
+        .panel-header h3 {
+            margin: 0;
+            color: #2c3e50;
+            font-size: 18px;
+        }
+        
+        .close-panel {
+            background: none;
+            border: none;
+            font-size: 18px;
+            cursor: pointer;
+            color: #7f8c8d;
+            padding: 5px;
+            border-radius: 3px;
+        }
+        
+        .close-panel:hover {
+            background: #e9ecef;
+            color: #495057;
+        }
+        
+        .panel-content {
+            padding: 20px;
+        }
+        
+        .current-user-section, .all-users-section {
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid #eee;
+        }
+        
+        .current-user-section h4, .all-users-section h4 {
+            margin: 0 0 15px 0;
+            color: #2c3e50;
+            font-size: 16px;
+        }
+        
+        .chat-stats {
+            font-size: 14px;
+            color: #7f8c8d;
+            margin-bottom: 15px;
+        }
+        
+        .history-actions, .global-actions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        
+        .history-actions .btn, .global-actions .btn {
+            flex: 1;
+            min-width: 120px;
+            font-size: 13px;
+            padding: 8px 12px;
+        }
+        
+        .user-history-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px;
+            margin-bottom: 8px;
+            background: #f8f9fa;
+            border-radius: 6px;
+            border: 1px solid #e9ecef;
+        }
+        
+        .user-history-info {
+            flex: 1;
+        }
+        
+        .user-history-name {
+            font-weight: 500;
+            color: #2c3e50;
+        }
+        
+        .user-history-stats {
+            font-size: 12px;
+            color: #7f8c8d;
+        }
+        
+        .user-history-actions {
+            display: flex;
+            gap: 5px;
+        }
+        
+        .user-history-actions .btn {
+            padding: 4px 8px;
+            font-size: 12px;
+            min-width: auto;
+        }
+
         /* Dashboard Section */
         .dashboard-section {
             display: none;
@@ -1209,6 +1324,9 @@
             <div class="header">
                 <h1 id="section-title">Welcome to AAIRE</h1>
                 <div class="header-actions">
+                    <button class="btn btn-secondary" onclick="toggleChatHistoryPanel()">
+                        <i class="fas fa-history"></i> Chat History
+                    </button>
                     <button class="btn btn-secondary" onclick="clearChat()">
                         <i class="fas fa-trash"></i> Clear Chat
                     </button>
@@ -1230,6 +1348,45 @@
                     <option value="sarah-actuarial">Sarah Davis (Actuarial)</option>
                     <option value="bob-actuarial">Bob Miller (Actuarial)</option>
                 </select>
+            </div>
+
+            <!-- Chat History Management Panel -->
+            <div id="chat-history-panel" class="chat-history-panel" style="display: none;">
+                <div class="panel-header">
+                    <h3><i class="fas fa-history"></i> Chat History Management</h3>
+                    <button class="close-panel" onclick="toggleChatHistoryPanel()">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                <div class="panel-content">
+                    <div class="current-user-section">
+                        <h4>Current User: <span id="history-current-user">-</span></h4>
+                        <div class="chat-stats">
+                            <span id="current-user-message-count">0 messages</span> |
+                            <span id="current-user-storage-size">0 KB</span>
+                        </div>
+                        <div class="history-actions">
+                            <button class="btn btn-danger" onclick="clearCurrentUserChatHistory()">
+                                <i class="fas fa-trash"></i> Clear Current User Chat
+                            </button>
+                            <button class="btn btn-primary" onclick="exportCurrentUserChat()">
+                                <i class="fas fa-download"></i> Export Current User Chat
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div class="all-users-section">
+                        <h4>All Users Chat History</h4>
+                        <div id="all-users-history-list">
+                            <!-- Populated by JavaScript -->
+                        </div>
+                        <div class="global-actions">
+                            <button class="btn btn-warning" onclick="clearAllChatHistory()">
+                                <i class="fas fa-trash-alt"></i> Clear All Chat History
+                            </button>
+                        </div>
+                    </div>
+                </div>
             </div>
 
             <!-- Chat Section -->
