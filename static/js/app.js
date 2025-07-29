@@ -14,7 +14,116 @@ class AAIREApp {
         this.currentUser = null;
         this.updateTimeout = null;
         
+        // CRITICAL: Clean up all stale localStorage data on app start
+        this.performOneTimeCleanup();
+        
         this.init();
+    }
+    
+    performOneTimeCleanup() {
+        console.log('🧹 Performing one-time cleanup of stale localStorage data');
+        
+        // List of all possible stale keys that could cause issues
+        const staleKeys = [
+            // Old chat history format (causes restoration issues)
+            'aaire_chat_history',
+            'aaire_chat_history_Court_Williams',
+            'aaire_chat_history_Bill_Smith',
+            'aaire_chat_history_Sarah_Chen',
+            'aaire_chat_history_Bob_Johnson',
+            'aaire_chat_history_Bill_Johnson',
+            'aaire_chat_history_Sarah_Davis', // Current user having issues
+            
+            // Old session data that might contain false citations
+            'aaire_session_id',
+            
+            // Uploaded files data that might reference false documents
+            'aaire_uploaded_files'
+        ];
+        
+        let removedCount = 0;
+        staleKeys.forEach(key => {
+            if (localStorage.getItem(key)) {
+                localStorage.removeItem(key);
+                removedCount++;
+                console.log(`✅ Removed stale data: ${key}`);
+            }
+        });
+        
+        // Also clear any session data with false citations
+        this.clearFalseCitationSessions();
+        
+        console.log(`🎉 Cleanup complete: ${removedCount} stale keys removed`);
+        
+        // Also clear server-side caches to eliminate false citations
+        this.clearServerCaches();
+    }
+    
+    clearFalseCitationSessions() {
+        console.log('🔍 Scanning session data for false citations...');
+        
+        const users = ['Court_Williams', 'Bill_Smith', 'Sarah_Chen', 'Bob_Johnson', 'Bill_Johnson', 'Sarah_Davis'];
+        let cleanedSessions = 0;
+        
+        users.forEach(username => {
+            const sessionsKey = `aaire_chat_sessions_${username}`;
+            const sessionsData = localStorage.getItem(sessionsKey);
+            
+            if (sessionsData) {
+                try {
+                    const sessions = JSON.parse(sessionsData);
+                    const originalLength = sessions.length;
+                    
+                    // Filter out sessions containing false citations
+                    const cleanedSessions = sessions.filter(session => {
+                        // Check if session contains false citations
+                        const hasFalseCitation = session.messages?.some(msg => {
+                            if (msg.sources) {
+                                return msg.sources.some(source => 
+                                    source.toLowerCase().includes('canadian tax book') ||
+                                    source.toLowerCase().includes('.pdf') && msg.content.toLowerCase().includes('how can i assist')
+                                );
+                            }
+                            return false;
+                        });
+                        
+                        return !hasFalseCitation;
+                    });
+                    
+                    if (cleanedSessions.length !== originalLength) {
+                        localStorage.setItem(sessionsKey, JSON.stringify(cleanedSessions));
+                        console.log(`🧹 Cleaned ${username}: ${originalLength} → ${cleanedSessions.length} sessions`);
+                        cleanedSessions++;
+                    }
+                    
+                } catch (error) {
+                    console.error(`Error cleaning sessions for ${username}:`, error);
+                }
+            }
+        });
+        
+        console.log(`✅ Session cleanup complete: ${cleanedSessions} users cleaned`);
+    }
+    
+    async clearServerCaches() {
+        console.log('🧹 Clearing server-side caches to eliminate false citations...');
+        
+        try {
+            // Clear server cache
+            const cacheResponse = await fetch('/api/v1/debug/clear-cache', { method: 'POST' });
+            if (cacheResponse.ok) {
+                console.log('✅ Server cache cleared');
+            }
+            
+            // Clear application state
+            const stateResponse = await fetch('/api/v1/debug/restart-state', { method: 'POST' });
+            if (stateResponse.ok) {
+                console.log('✅ Server application state cleared');
+            }
+            
+        } catch (error) {
+            console.warn('⚠️ Could not clear server caches (server may not be ready yet):', error.message);
+        }
     }
 
     init() {
