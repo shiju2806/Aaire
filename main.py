@@ -952,6 +952,14 @@ async def debug_cleanup_orphaned():
             logger.error("Fallback cleanup also failed", error=str(e2))
             return {"status": "error", "error": str(e2)}
 
+@app.post("/api/v1/debug/clear-all-documents")
+async def debug_clear_all_documents():
+    """Debug endpoint to clear ALL documents from vector database - use with extreme caution"""
+    if not rag_pipeline:
+        raise HTTPException(status_code=503, detail="RAG pipeline not available")
+    
+    return await rag_pipeline.clear_all_documents()
+
 @app.post("/api/v1/debug/clear-cache")
 async def debug_clear_cache():
     """Debug endpoint to clear all cached responses"""
