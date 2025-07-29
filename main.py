@@ -1053,10 +1053,17 @@ async def refresh_external_data():
 async def get_document_summary(job_id: str):
     """Get AI-generated executive summary for uploaded document"""
     try:
+        logger.info(f"📄 Requesting summary for job_id: {job_id}")
+        
         # Check fallback jobs first
         fallback_jobs = getattr(app.state, 'fallback_jobs', {})
+        logger.info(f"🔍 Fallback jobs available: {list(fallback_jobs.keys())}")
+        
         if job_id in fallback_jobs:
             job_data = fallback_jobs[job_id]
+            logger.info(f"✅ Found job in fallback_jobs: {job_data.get('filename')}")
+            logger.info(f"📋 Summary available: {'summary' in job_data and bool(job_data.get('summary'))}")
+            
             return {
                 "job_id": job_id,
                 "document_info": {
@@ -1067,14 +1074,19 @@ async def get_document_summary(job_id: str):
                 "summary": job_data.get('summary', {})
             }
         
+        logger.info(f"🔍 Job not in fallback_jobs, checking document_processor")
+        
         if not document_processor:
+            logger.error(f"❌ Document processor not available for job_id: {job_id}")
             raise HTTPException(status_code=404, detail="Document not found")
         
         # For MVP, use demo user
         user_id = "demo-user"
+        logger.info(f"👤 Using user_id: {user_id} for document processor")
         
         # Get document status which includes summary
         status = await document_processor.get_status(job_id, user_id)
+        logger.info(f"📊 Document processor status: {status}")
         
         if 'summary' not in status:
             raise HTTPException(status_code=404, detail="Document summary not available")
@@ -1092,7 +1104,7 @@ async def get_document_summary(job_id: str):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("Error retrieving document summary", job_id=job_id, error=str(e))
+        logger.error(f"❌ Error retrieving document summary for job_id {job_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to retrieve summary: {str(e)}")
 
 # Workflow API Endpoints
