@@ -960,6 +960,31 @@ async def debug_clear_all_documents():
     
     return await rag_pipeline.clear_all_documents()
 
+@app.post("/api/v1/debug/restart-state")
+async def debug_restart_state():
+    """Debug endpoint to clear all in-memory application state"""
+    try:
+        logger.info("🔄 Debug: Clearing application state")
+        
+        # Clear fallback jobs state
+        if hasattr(app.state, 'fallback_jobs'):
+            app.state.fallback_jobs.clear()
+            logger.info("✅ Cleared fallback_jobs state")
+        
+        # Clear any other application state
+        for attr in dir(app.state):
+            if not attr.startswith('_') and attr != 'fallback_jobs':
+                try:
+                    delattr(app.state, attr)
+                    logger.info(f"✅ Cleared state: {attr}")
+                except:
+                    pass
+        
+        return {"status": "success", "message": "Application state cleared"}
+    except Exception as e:
+        logger.error(f"❌ Error clearing application state: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/api/v1/debug/clear-cache")
 async def debug_clear_cache():
     """Debug endpoint to clear all cached responses"""
