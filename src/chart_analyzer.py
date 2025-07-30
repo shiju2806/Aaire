@@ -353,19 +353,19 @@ class ChartAnalyzer:
                 x, y, w, h = cv2.boundingRect(contour)
                 area = cv2.contourArea(contour)
                 
-                # More relaxed filtering for bar-like shapes
-                # Check if it's reasonably tall and not too wide
+                # Very relaxed filtering to catch all potential bars
                 aspect_ratio = h / w if w > 0 else 0
-                min_height = chart_height * 0.05  # Reduced from 0.1
-                min_width = chart_width * 0.01   # Reduced from 0.02
-                min_area = 50  # Minimum area
+                min_height = chart_height * 0.02  # Much more relaxed - 2% instead of 5%
+                min_width = chart_width * 0.005  # Much more relaxed - 0.5% instead of 1%
+                min_area = 25  # Lower minimum area
                 
-                if (aspect_ratio > 0.5 and  # Allow wider bars
-                    h > min_height and 
+                # Accept a wide range of shapes that could be bars
+                if (h > min_height and 
                     w > min_width and 
                     area > min_area and
-                    x > chart_width * 0.1 and  # Not too far left (avoid Y-axis)
-                    x < chart_width * 0.9):    # Not too far right
+                    x > chart_width * 0.05 and  # Allow closer to Y-axis
+                    x < chart_width * 0.95 and  # Allow closer to right edge
+                    aspect_ratio > 0.2):        # Very relaxed aspect ratio
                     
                     # Calculate relative position and height
                     bar_info = {
@@ -380,7 +380,12 @@ class ChartAnalyzer:
                         'aspect_ratio': aspect_ratio
                     }
                     bars.append(bar_info)
-                    print(f"[ChartAnalyzer] Found bar: x={x}, y={y}, w={w}, h={h}, aspect={aspect_ratio:.2f}")
+                    print(f"[ChartAnalyzer] Found bar: x={x}, y={y}, w={w}, h={h}, aspect={aspect_ratio:.2f}, x_rel={((x + w/2) / chart_width):.2f}")
+                    
+                    # Add debug info about what this bar might represent
+                    height_rel = h / chart_height
+                    estimated_height_value = 20 + (height_rel * 70)  # Quick estimate for debugging
+                    print(f"[ChartAnalyzer]   -> Estimated value: ~{estimated_height_value:.0f}B, height_rel={height_rel:.2f}")
             
             # Remove duplicates (bars found by multiple methods)
             # Sort by x position and remove bars that are too close to each other
@@ -433,8 +438,12 @@ class ChartAnalyzer:
             scale_unit_name = {"B": "billion", "M": "million", "K": "thousand", "T": "trillion"}.get(scale_unit, "")
             print(f"[ChartAnalyzer] Detected scale unit: {scale_unit} ({scale_unit_name})")
             
-            # Group bars by fiscal year (assuming 2 bars per year: Revenue + Operating Expense)
-            bars_per_year = max(1, len(bars) // len(fiscal_years)) if fiscal_years else 1
+            # Sort bars by x position to match with fiscal years chronologically
+            bars = sorted(bars, key=lambda b: b['x_center'])
+            
+            # Try to map bars to fiscal years based on their X position
+            # Divide chart width into fiscal year sections
+            chart_width_per_year = 1.0 / len(fiscal_years) if fiscal_years else 1.0
             
             for i, bar in enumerate(bars):
                 # Estimate value based on relative height (from bottom of chart)
@@ -443,14 +452,28 @@ class ChartAnalyzer:
                 height_from_bottom = 1 - (bar['bottom_relative'] - bar['height_relative'])
                 estimated_value = scale_min + (height_from_bottom * (scale_max - scale_min))
                 
-                # Match with fiscal year - if multiple bars per year, cycle through years
-                year_index = i // bars_per_year if bars_per_year > 0 else i
+                # Map bar to fiscal year based on X position
+                year_index = int(bar['x_relative'] / chart_width_per_year)
+                year_index = min(year_index, len(fiscal_years) - 1)  # Clamp to valid range
+                
                 if year_index < len(fiscal_years):
                     fiscal_year = fiscal_years[year_index]
-                    bar_type = "Revenue" if (i % bars_per_year) == 0 else "Operating Expense"
+                    
+                    # Try to determine if this is Revenue, Operating Expense, etc. based on height
+                    if estimated_value > (scale_min + scale_max) * 0.7:  # High values = Revenue
+                        bar_type = "Revenue"
+                    elif estimated_value > (scale_min + scale_max) * 0.4:  # Medium values = Operating Expense  
+                        bar_type = "Operating Expense"
+                    else:  # Lower values might be margins (in %)
+                        bar_type = "Gross Margin"
+                        # For gross margin, convert to percentage if it looks like a percentage value
+                        if estimated_value < 50:  # Likely already a percentage
+                            estimated_value = estimated_value  # Keep as-is
+                            scale_unit = "%"  # Override unit for margins
+                    
                     fiscal_year_display = f"{fiscal_year} {bar_type}"
                 else:
-                    fiscal_year_display = f"Bar_{i+1}"
+                    fiscal_year_display = f"Bar_{i+1}_x{bar['x_relative']:.2f}"
                 
                 estimate = {
                     'fiscal_year': fiscal_year_display,
