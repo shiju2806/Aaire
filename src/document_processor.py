@@ -514,7 +514,9 @@ class DocumentProcessor:
             # Use advanced OCR if available
             if self.ocr_processor and self.ocr_processor.is_available():
                 logger.info(f"Processing image file with advanced OCR: {file_path.name}")
+                print(f"[OCR] Processing image: {file_path.name}")  # Direct print for debugging
                 ocr_result = self.ocr_processor.process_chart_image(image_data)
+                print(f"[OCR] Result: {len(ocr_result.get('extracted_text', ''))} chars extracted")
                 
                 if ocr_result.get('extracted_text'):
                     content_parts.append("[OCR EXTRACTED CONTENT]")
