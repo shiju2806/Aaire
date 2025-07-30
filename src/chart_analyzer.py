@@ -37,6 +37,7 @@ class ChartAnalyzer:
             # Analyze based on chart type
             if chart_type == 'bar':
                 chart_analysis = self._detect_bar_elements(image, metadata)
+                chart_analysis['ocr_text'] = ocr_text  # Pass OCR text for scale unit detection
                 estimates = self._estimate_bar_values(chart_analysis, metadata)
             elif chart_type == 'line':
                 chart_analysis = self._detect_line_elements(image, metadata)
@@ -122,6 +123,52 @@ class ChartAnalyzer:
         
         return metadata
     
+    def _detect_scale_unit(self, ocr_text: str, scale_max: int) -> str:
+        """Dynamically detect scale unit from OCR text"""
+        import re
+        
+        # Look for explicit unit indicators in text
+        text_lower = ocr_text.lower()
+        
+        # Check for explicit mentions of units
+        if re.search(r'\d+\.?\d*\s*trillion|\d+\.?\d*t\b', text_lower):
+            return "T"
+        elif re.search(r'\d+\.?\d*\s*billion|\d+\.?\d*b\b', text_lower):
+            return "B"  
+        elif re.search(r'\d+\.?\d*\s*million|\d+\.?\d*m\b', text_lower):
+            return "M"
+        elif re.search(r'\d+\.?\d*\s*thousand|\d+\.?\d*k\b', text_lower):
+            return "K"
+        
+        # Look for currency symbols with large numbers
+        large_numbers = re.findall(r'\$[\d,]+\.?\d*', ocr_text)
+        if large_numbers:
+            # Extract the largest number
+            max_num = 0
+            for num_str in large_numbers:
+                try:
+                    num = float(num_str.replace('$', '').replace(',', ''))
+                    max_num = max(max_num, num)
+                except:
+                    continue
+            
+            if max_num >= 1000000000:
+                return "B"
+            elif max_num >= 1000000:
+                return "M" 
+            elif max_num >= 1000:
+                return "K"
+        
+        # Fallback based on scale magnitude
+        if scale_max >= 1000:
+            return "B"  # Large scales likely billions
+        elif scale_max >= 100:
+            return "M"  # Medium scales likely millions
+        elif scale_max >= 10:
+            return "K"  # Small scales likely thousands
+        else:
+            return ""   # No unit
+    
     def _detect_chart_type(self, image: np.ndarray, ocr_text: str) -> str:
         """Detect the type of chart from image analysis and OCR text"""
         try:
@@ -183,16 +230,29 @@ class ChartAnalyzer:
                 if avg_area > gray.shape[0] * gray.shape[1] * 0.05:  # Large filled areas
                     return 'area'
             
-            # Default fallback based on common patterns
-            if 'revenue' in text_lower and 'expense' in text_lower:
-                print("[ChartAnalyzer] Revenue/expense chart detected, using bar chart analysis")
-                return 'bar'  # Revenue/expense charts are usually bar charts
+            # Enhanced pattern-based detection
+            chart_indicators = {
+                'bar': ['revenue', 'expense', 'profit', 'income', 'quarterly', 'annual', 'fy', 'fiscal year'],
+                'line': ['trend', 'over time', 'growth', 'change', 'progression'],
+                'pie': ['distribution', 'breakdown', 'composition', 'share', 'percentage of total'],
+                'area': ['cumulative', 'stacked', 'total over time'],
+                'scatter': ['correlation', 'relationship', 'vs', 'compared to']
+            }
             
-            # If we have fiscal years and a Y-axis scale, likely a bar chart
-            if 'fy' in text_lower and any(str(i) in text_lower for i in range(10, 100)):
-                print("[ChartAnalyzer] Fiscal year chart with scale detected, using bar chart analysis")
-                return 'bar'
+            # Score each chart type based on keyword matches
+            scores = {}
+            for chart_type, keywords in chart_indicators.items():
+                score = sum(1 for keyword in keywords if keyword in text_lower)
+                if score > 0:
+                    scores[chart_type] = score
             
+            # Return the highest scoring type, with bar as fallback
+            if scores:
+                best_type = max(scores.items(), key=lambda x: x[1])[0]
+                print(f"[ChartAnalyzer] Chart type '{best_type}' detected based on keywords (scores: {scores})")
+                return best_type
+            
+            print("[ChartAnalyzer] No specific indicators found, defaulting to bar chart")
             return 'bar'  # Default assumption
             
         except Exception as e:
@@ -270,9 +330,13 @@ class ChartAnalyzer:
             # Combine all contours and filter
             all_contours = contours1 + contours2 + contours3 + contours4
             
-            # We expect multiple bars per fiscal year (Revenue + Operating Expense)
-            expected_bars = 12  # 2 bars per fiscal year * 6 years
-            fiscal_years = 6
+            # Dynamically calculate expected bars based on detected fiscal years and data series
+            num_fiscal_years = len(metadata.get('fiscal_years', []))
+            num_data_series = len([label for label in metadata.get('labels', []) 
+                                 if any(keyword in label.lower() for keyword in ['revenue', 'expense', 'margin', 'profit'])])
+            expected_bars = max(num_fiscal_years * max(1, num_data_series), num_fiscal_years)
+            
+            print(f"[ChartAnalyzer] Expected bars: {expected_bars} ({num_fiscal_years} years × {max(1, num_data_series)} series)")
             
             for contour in all_contours:
                 # Get bounding rectangle
@@ -348,9 +412,16 @@ class ChartAnalyzer:
             
             print(f"[ChartAnalyzer] Processing {len(bars)} bars with scale {scale_min}-{scale_max}")
             
-            # Estimate scale unit (billions if scale goes to 90)
-            scale_unit = "B" if scale_max >= 50 else "M" if scale_max >= 5 else ""
-            scale_unit_name = "billion" if scale_unit == "B" else "million" if scale_unit == "M" else ""
+            # Get OCR text from metadata for dynamic scale unit detection
+            ocr_text = chart_analysis.get('ocr_text', '')
+            if not ocr_text:
+                # Reconstruct from metadata if not available
+                ocr_text = ' '.join(metadata.get('labels', []))
+            
+            # Dynamically detect scale unit from OCR text
+            scale_unit = self._detect_scale_unit(ocr_text, scale_max)
+            scale_unit_name = {"B": "billion", "M": "million", "K": "thousand", "T": "trillion"}.get(scale_unit, "")
+            print(f"[ChartAnalyzer] Detected scale unit: {scale_unit} ({scale_unit_name})")
             
             # Group bars by fiscal year (assuming 2 bars per year: Revenue + Operating Expense)
             bars_per_year = max(1, len(bars) // len(fiscal_years)) if fiscal_years else 1
