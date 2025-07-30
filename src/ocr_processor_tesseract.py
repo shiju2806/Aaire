@@ -62,11 +62,33 @@ class TesseractOCRProcessor:
             else:
                 processed = image
             
-            # Configure Tesseract for better results
-            custom_config = r'--oem 3 --psm 11'  # PSM 11: Sparse text
+            # Configure Tesseract specifically for financial charts
+            # PSM 6: Uniform block of text (good for charts)
+            # OEM 3: Default engine mode
+            # Whitelist digits, currency symbols, and common chart text
+            custom_config = r'--oem 3 --psm 6 -c tessedit_char_whitelist=0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz$%.,FYfy '
             
-            # Extract text
-            text = pytesseract.image_to_string(processed, config=custom_config)
+            # Try multiple PSM modes for better results
+            configs_to_try = [
+                r'--oem 3 --psm 6 -c tessedit_char_whitelist=0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz$%.,FYfy ',  # Uniform text
+                r'--oem 3 --psm 11 -c tessedit_char_whitelist=0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz$%.,FYfy ',  # Sparse text
+                r'--oem 3 --psm 8 -c tessedit_char_whitelist=0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz$%.,FYfy '   # Single word
+            ]
+            
+            best_text = ""
+            max_length = 0
+            
+            for config in configs_to_try:
+                try:
+                    text = pytesseract.image_to_string(processed, config=config)
+                    if len(text) > max_length:
+                        max_length = len(text)
+                        best_text = text
+                        custom_config = config
+                except:
+                    continue
+            
+            text = best_text if best_text else pytesseract.image_to_string(processed, config=custom_config)
             
             print(f"[Tesseract] Raw extraction: {len(text)} chars")
             print(f"[Tesseract] Raw text:\n{text}")

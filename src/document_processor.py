@@ -26,21 +26,29 @@ from .rag_pipeline import RAGPipeline
 logger = structlog.get_logger()
 
 try:
-    # Try EasyOCR first (best for financial charts with numbers)
-    from .ocr_processor import AdvancedOCRProcessor
-    logger.info("Using EasyOCR processor (recommended for financial charts)")
+    # Try Google Cloud Vision first (premium, highest accuracy)
+    from .ocr_processor_google import GoogleVisionOCRProcessor
+    if GoogleVisionOCRProcessor().is_available():
+        AdvancedOCRProcessor = GoogleVisionOCRProcessor
+        logger.info("Using Google Cloud Vision OCR (premium, highest accuracy)")
+    else:
+        raise ImportError("Google Vision not configured")
 except ImportError:
     try:
-        # Fallback to Tesseract (newly installed)
+        # Fallback to Tesseract (currently working well)
         from .ocr_processor_tesseract import TesseractOCRProcessor as AdvancedOCRProcessor
-        logger.info("Using Tesseract OCR processor")
+        logger.info("Using Enhanced Tesseract OCR processor")
     except ImportError:
         try:
             from .ocr_processor_doctr import DocTROCRProcessor as AdvancedOCRProcessor
             logger.info("Using docTR OCR processor")
         except ImportError:
-            logger.warning("No OCR processor available")
-            AdvancedOCRProcessor = None
+            try:
+                from .ocr_processor import AdvancedOCRProcessor
+                logger.info("Using EasyOCR processor (fallback)")
+            except ImportError:
+                logger.warning("No OCR processor available")
+                AdvancedOCRProcessor = None
 
 class DocumentProcessor:
     def __init__(self, rag_pipeline: RAGPipeline = None):

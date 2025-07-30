@@ -1,0 +1,9 @@
+# Premium OCR Features (Optional)
+# Install with: pip install -r requirements-premium.txt
+
+# Google Cloud Vision API - Best accuracy for financial charts
+google-cloud-vision==3.4.4
+
+# Alternative premium OCR options
+# azure-cognitiveservices-vision-computervision==0.9.0  # Azure Computer Vision
+# boto3==1.34.0  # AWS Textract (requires additional setup)

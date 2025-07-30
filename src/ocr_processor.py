@@ -131,8 +131,12 @@ class AdvancedOCRProcessor:
                         'y_pos': center_y
                     })
                 
-                # Detect financial values with units
-                if re.search(r'\$[\d,]+\.?\d*[BMK]?|\d+\.?\d*[BMK]?\s*(?:billion|million|thousand)?|\d+\.?\d*%', text_clean):
+                # Detect financial values with units - expanded patterns
+                # Matches: $47.4B, 47.4B, 47B, $47 billion, 47 billion, 47.4, 10B, 20B, etc.
+                if re.search(r'\$?[\d,]+\.?\d*\s*[BMK](?![a-zA-Z])|\$[\d,]+\.?\d*|\d+\.?\d*\s*(?:billion|million|thousand)|\d+\.?\d*%|^\d+B$|^\d+\.?\d*$', text_clean):
+                    # Check if it's likely an axis label (typically on far left)
+                    is_axis_label = min_x < 100 and re.search(r'^\d+B?$|^\d+\.?\d*$', text_clean)
+                    
                     elements['numbers'].append({
                         'text': text_clean,
                         'bbox': bbox,
@@ -140,7 +144,9 @@ class AdvancedOCRProcessor:
                         'x_pos': center_x,
                         'y_pos': center_y,
                         'is_percentage': '%' in text_clean,
-                        'is_currency': '$' in text_clean
+                        'is_currency': '$' in text_clean,
+                        'is_billions': 'B' in text_clean.upper() or 'billion' in text_clean.lower(),
+                        'is_axis_label': is_axis_label
                     })
                 
                 # General text blocks
@@ -246,12 +252,26 @@ class AdvancedOCRProcessor:
                             if abs(v.get('x_pos', 0) - x_pos) < 50  # Values within 50 pixels
                         ]
                         for value in nearby_values:
-                            if value.get('is_currency'):
-                                chart_text.append(f"  Revenue/Expense: {value['text']}")
+                            if value.get('is_currency') or value.get('is_billions'):
+                                # Try to identify if it's revenue or expense based on legend proximity
+                                value_type = "Revenue/Expense"
+                                if legends:
+                                    # Find closest legend by y-position
+                                    closest_legend = min(legends, key=lambda l: abs(l.get('y_pos', 0) - value.get('y_pos', 0)), default=None)
+                                    if closest_legend:
+                                        value_type = closest_legend['text']
+                                chart_text.append(f"  {value_type}: {value['text']}")
                             elif value.get('is_percentage'):
-                                chart_text.append(f"  Percentage: {value['text']}")
+                                chart_text.append(f"  Gross Margin: {value['text']}")
                             else:
                                 chart_text.append(f"  Value: {value['text']}")
+            
+            # Also show axis scale if detected
+            axis_values = [v for v in values if v.get('is_axis_label')]
+            if axis_values:
+                chart_text.append("\n[Y-AXIS SCALE]")
+                for av in sorted(axis_values, key=lambda x: x.get('y_pos', 0)):
+                    chart_text.append(f"- {av['text']}")
             
             return "\n".join(chart_text) if chart_text else ""
             
