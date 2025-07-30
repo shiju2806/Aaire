@@ -664,12 +664,18 @@ class RAGPipeline:
         # Build conversation context if available
         conversation_context = ""
         if conversation_history and len(conversation_history) > 0:
-            conversation_context = "\n\nConversation History (last 3 exchanges):\n"
-            # Get last 3 exchanges (6 messages total - 3 user + 3 assistant)
-            recent_history = conversation_history[-6:] if len(conversation_history) > 6 else conversation_history
+            # Use config settings for better memory retention
+            max_history = self.config.get('conversation_config', {}).get('max_history_messages', 20)
+            max_msg_length = self.config.get('conversation_config', {}).get('max_message_length', 500)
+            
+            conversation_context = f"\n\nConversation History (last {max_history//2} exchanges):\n"
+            
+            # Get recent history based on config
+            recent_history = conversation_history[-max_history:] if len(conversation_history) > max_history else conversation_history
+            
             for msg in recent_history:
                 role = "User" if msg.get('sender') == 'user' else "Assistant"
-                content = msg.get('content', '')[:200]  # Truncate for context
+                content = msg.get('content', '')[:max_msg_length]  # Use configurable truncation
                 conversation_context += f"{role}: {content}\n"
         
         # Check if we have relevant documents

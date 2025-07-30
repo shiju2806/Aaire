@@ -17,6 +17,14 @@ compliance_rules:
   - pattern: "investment.*advice|buy.*sell|trading"
     response: "I provide accounting guidance only, not investment advice."
     log_level: "warning"
+    
+  - pattern: "dinner|food|eat|recipe|cooking|restaurant|meal|lunch|breakfast|hungry|diet|nutrition"
+    response: "I'm AAIRE, your insurance and accounting assistant. I can help you with insurance accounting standards (US GAAP, IFRS), actuarial analysis, regulatory compliance, and financial reporting questions. Please ask me about topics related to insurance, accounting, or actuarial matters."
+    log_level: "info"
+    
+  - pattern: "weather|sports|entertainment|movie|music|game|vacation|travel|personal|relationship|health|medical|politics"
+    response: "I specialize in insurance accounting and actuarial topics. I can assist you with questions about insurance reserves, LICAT ratios, IFRS 17, US GAAP standards, regulatory compliance, actuarial calculations, and financial reporting. How can I help you with your insurance or accounting needs?"
+    log_level: "info"
 
 # Chunking Strategies - Hierarchical per MVP requirements
 chunking_strategies:
@@ -50,7 +58,13 @@ llm_config:
   model: "gpt-4o-mini"  # Default model (override with OPENAI_MODEL env var)
   fallback: "gpt-4o-mini"  # Fallback model - same as primary for consistency
   temperature: 0.1  # Low temperature for consistent responses
-  max_tokens: 4000  # Increased for GPT-4o-mini's better context handling
+  max_tokens: 6000  # Increased for better context and conversation history
+  
+# Conversation History Settings
+conversation_config:
+  max_history_messages: 20  # Keep last 20 messages (10 exchanges)
+  max_message_length: 500   # Allow longer message context
+  context_window_tokens: 8000  # GPT-4o-mini supports 128k context
   
 # Embedding Configuration
 embedding_config:

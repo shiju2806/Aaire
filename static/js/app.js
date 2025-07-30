@@ -1297,10 +1297,11 @@ class AAIREApp {
         // Save to localStorage
         localStorage.setItem('aaire_current_user', userId);
         
-        // Auto-save disabled - users manage sessions manually via Clear Chat
-        // if (previousUser && this.messages.length > 0) {
-        //     this.saveUserChatHistory(previousUser);
-        // }
+        // Auto-save current chat as session when switching users
+        if (previousUser && this.messages.length > 0) {
+            console.log(`💾 Auto-saving current chat session for ${previousUser}`);
+            this.saveCurrentChatAsSession();
+        }
         
         // Always start with empty chat for new sessions
         // Users can load previous sessions from Chat History if needed
@@ -1710,8 +1711,8 @@ class AAIREApp {
     }
 
     getConversationHistory() {
-        // Return last 6 messages (3 exchanges) for context
-        const recentMessages = this.messages.slice(-6);
+        // Return last 20 messages (10 exchanges) for better memory retention
+        const recentMessages = this.messages.slice(-20);
         return recentMessages.map(msg => ({
             sender: msg.sender,
             content: msg.content,
