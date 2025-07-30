@@ -230,22 +230,61 @@ class ChartAnalyzer:
     def _detect_bars(self, chart_area: np.ndarray, chart_region: Dict) -> List[Dict]:
         """Detect individual bars in the chart"""
         try:
-            # Apply threshold to highlight bars
-            _, thresh = cv2.threshold(chart_area, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-            
-            # Find contours
-            contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            print(f"[ChartAnalyzer] Chart area dimensions: {chart_area.shape}")
             
             bars = []
             chart_height = chart_area.shape[0]
             chart_width = chart_area.shape[1]
             
-            for contour in contours:
+            # Try multiple detection methods
+            
+            # Method 1: OTSU thresholding
+            _, thresh1 = cv2.threshold(chart_area, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+            contours1, _ = cv2.findContours(thresh1, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            print(f"[ChartAnalyzer] Method 1 (OTSU): Found {len(contours1)} contours")
+            
+            # Method 2: Fixed threshold (for light bars on white background)
+            _, thresh2 = cv2.threshold(chart_area, 200, 255, cv2.THRESH_BINARY_INV)
+            contours2, _ = cv2.findContours(thresh2, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            print(f"[ChartAnalyzer] Method 2 (Fixed 200): Found {len(contours2)} contours")
+            
+            # Method 3: Adaptive threshold
+            thresh3 = cv2.adaptiveThreshold(chart_area, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, 11, 2)
+            contours3, _ = cv2.findContours(thresh3, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            print(f"[ChartAnalyzer] Method 3 (Adaptive): Found {len(contours3)} contours")
+            
+            # Method 4: Edge detection + morphology
+            edges = cv2.Canny(chart_area, 50, 150)
+            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+            edges_closed = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
+            contours4, _ = cv2.findContours(edges_closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            print(f"[ChartAnalyzer] Method 4 (Edges): Found {len(contours4)} contours")
+            
+            # Combine all contours and filter
+            all_contours = contours1 + contours2 + contours3 + contours4
+            
+            # If we have fiscal years, we expect approximately that many bars
+            expected_bars = 6  # FY19, FY20, FY21, FY22, FY23, FY24
+            
+            for contour in all_contours:
                 # Get bounding rectangle
                 x, y, w, h = cv2.boundingRect(contour)
+                area = cv2.contourArea(contour)
                 
-                # Filter for bar-like shapes (taller than wide, reasonable size)
-                if h > w and h > chart_height * 0.1 and w > chart_width * 0.02:
+                # More relaxed filtering for bar-like shapes
+                # Check if it's reasonably tall and not too wide
+                aspect_ratio = h / w if w > 0 else 0
+                min_height = chart_height * 0.05  # Reduced from 0.1
+                min_width = chart_width * 0.01   # Reduced from 0.02
+                min_area = 50  # Minimum area
+                
+                if (aspect_ratio > 0.5 and  # Allow wider bars
+                    h > min_height and 
+                    w > min_width and 
+                    area > min_area and
+                    x > chart_width * 0.1 and  # Not too far left (avoid Y-axis)
+                    x < chart_width * 0.9):    # Not too far right
+                    
                     # Calculate relative position and height
                     bar_info = {
                         'x_center': x + w/2,
@@ -253,15 +292,37 @@ class ChartAnalyzer:
                         'height_pixels': h,
                         'height_relative': h / chart_height,    # 0-1 height
                         'bottom_y': y + h,
-                        'bottom_relative': (y + h) / chart_height
+                        'bottom_relative': (y + h) / chart_height,
+                        'width': w,
+                        'area': area,
+                        'aspect_ratio': aspect_ratio
                     }
                     bars.append(bar_info)
+                    print(f"[ChartAnalyzer] Found bar: x={x}, y={y}, w={w}, h={h}, aspect={aspect_ratio:.2f}")
             
-            # Sort bars by x position (left to right)
+            # Remove duplicates (bars found by multiple methods)
+            # Sort by x position and remove bars that are too close to each other
             bars = sorted(bars, key=lambda b: b['x_center'])
+            unique_bars = []
+            for bar in bars:
+                # Check if this bar is too close to an existing one
+                is_duplicate = False
+                for existing in unique_bars:
+                    if abs(bar['x_center'] - existing['x_center']) < chart_width * 0.05:  # 5% of width
+                        is_duplicate = True
+                        # Keep the one with larger area
+                        if bar['area'] > existing['area']:
+                            unique_bars.remove(existing)
+                            unique_bars.append(bar)
+                        break
+                if not is_duplicate:
+                    unique_bars.append(bar)
             
-            print(f"[ChartAnalyzer] Detected {len(bars)} potential bars")
-            return bars
+            # Sort final bars by x position
+            unique_bars = sorted(unique_bars, key=lambda b: b['x_center'])
+            
+            print(f"[ChartAnalyzer] Detected {len(unique_bars)} unique bars after deduplication")
+            return unique_bars
             
         except Exception as e:
             logger.error(f"Bar detection failed: {e}")
