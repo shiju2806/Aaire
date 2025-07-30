@@ -108,7 +108,14 @@ class ChartAnalyzer:
             metadata['y_axis_scale'] = sorted(set(metadata['y_axis_scale']))
             metadata['has_y_axis_scale'] = True
             metadata['scale_max'] = max(metadata['y_axis_scale'])
-            metadata['scale_min'] = min(metadata['y_axis_scale'])
+            # If we have 0 and other values, use the next smallest as min (0 is often baseline)
+            scale_values = [v for v in metadata['y_axis_scale'] if v > 0]
+            if scale_values:
+                metadata['scale_min'] = min(scale_values)
+            else:
+                metadata['scale_min'] = min(metadata['y_axis_scale'])
+            
+            print(f"[ChartAnalyzer] Scale range: {metadata['scale_min']} to {metadata['scale_max']} billion")
         
         # Remove duplicates and sort fiscal years
         metadata['fiscal_years'] = sorted(set(metadata['fiscal_years']))
@@ -263,8 +270,9 @@ class ChartAnalyzer:
             # Combine all contours and filter
             all_contours = contours1 + contours2 + contours3 + contours4
             
-            # If we have fiscal years, we expect approximately that many bars
-            expected_bars = 6  # FY19, FY20, FY21, FY22, FY23, FY24
+            # We expect multiple bars per fiscal year (Revenue + Operating Expense)
+            expected_bars = 12  # 2 bars per fiscal year * 6 years
+            fiscal_years = 6
             
             for contour in all_contours:
                 # Get bounding rectangle
@@ -344,23 +352,35 @@ class ChartAnalyzer:
             scale_unit = "B" if scale_max >= 50 else "M" if scale_max >= 5 else ""
             scale_unit_name = "billion" if scale_unit == "B" else "million" if scale_unit == "M" else ""
             
+            # Group bars by fiscal year (assuming 2 bars per year: Revenue + Operating Expense)
+            bars_per_year = max(1, len(bars) // len(fiscal_years)) if fiscal_years else 1
+            
             for i, bar in enumerate(bars):
-                # Estimate value based on relative height
-                estimated_value = scale_min + (bar['height_relative'] * (scale_max - scale_min))
+                # Estimate value based on relative height (from bottom of chart)
+                # bar['height_relative'] is 0-1, where 1 = full chart height
+                # Need to invert because chart coordinates are top-down
+                height_from_bottom = 1 - (bar['bottom_relative'] - bar['height_relative'])
+                estimated_value = scale_min + (height_from_bottom * (scale_max - scale_min))
                 
-                # Match with fiscal year if available
-                fiscal_year = fiscal_years[i] if i < len(fiscal_years) else f"Period_{i+1}"
+                # Match with fiscal year - if multiple bars per year, cycle through years
+                year_index = i // bars_per_year if bars_per_year > 0 else i
+                if year_index < len(fiscal_years):
+                    fiscal_year = fiscal_years[year_index]
+                    bar_type = "Revenue" if (i % bars_per_year) == 0 else "Operating Expense"
+                    fiscal_year_display = f"{fiscal_year} {bar_type}"
+                else:
+                    fiscal_year_display = f"Bar_{i+1}"
                 
                 estimate = {
-                    'fiscal_year': fiscal_year,
+                    'fiscal_year': fiscal_year_display,
                     'estimated_value': round(estimated_value, 1),
                     'display_value': f"${estimated_value:.1f}{scale_unit}",
                     'confidence': 'estimated_from_bar_height',
-                    'method': f'bar_height_relative_to_scale_0_{scale_max}'
+                    'method': f'bar_height_relative_to_scale_{scale_min}_{scale_max}'
                 }
                 estimates.append(estimate)
                 
-                print(f"[ChartAnalyzer] {fiscal_year}: ~${estimated_value:.1f}{scale_unit}")
+                print(f"[ChartAnalyzer] {fiscal_year_display}: ~${estimated_value:.1f}{scale_unit} (height_from_bottom={height_from_bottom:.2f})")
             
             return estimates
             
