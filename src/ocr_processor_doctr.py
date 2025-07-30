@@ -24,13 +24,15 @@ class DocTROCRProcessor:
             from doctr.io import DocumentFile
             from doctr.models import ocr_predictor
             
-            # Initialize docTR with pretrained models
+            # Initialize docTR with pretrained models - optimized for numbers
             self.ocr_engine = ocr_predictor(
-                det_arch='db_resnet50',  # Detection architecture
-                reco_arch='crnn_vgg16_bn',  # Recognition architecture
+                det_arch='db_resnet50',  # Good detection model
+                reco_arch='crnn_mobilenet_v3_small',  # Better for numbers/mixed content
                 pretrained=True,
                 assume_straight_pages=True,  # Charts are usually straight
-                export_as_straight_boxes=True  # Better for structured data
+                export_as_straight_boxes=True,  # Better for structured data
+                detect_orientation=False,  # Speed up for charts
+                straighten_pages=False  # Charts don't need straightening
             )
             
             logger.info("docTR OCR processor initialized successfully")
@@ -124,6 +126,7 @@ class DocTROCRProcessor:
                     for line in block.lines:
                         line_text = " ".join([word.value for word in line.words])
                         if line_text.strip():
+                            print(f"[docTR-Debug] Found text: '{line_text}'")
                             # Get bounding box center for spatial analysis
                             bbox = line.geometry
                             center_y = (bbox[0][1] + bbox[1][1]) / 2

@@ -29,6 +29,7 @@ pycryptodome==3.23.0  # For encrypted PDF handling
 
 # Advanced OCR and Image Processing
 python-doctr[torch]>=0.8.0  # Document Text Recognition - optimized for charts/tables
+pytesseract==0.3.10  # Tesseract OCR wrapper - simple but effective
 opencv-python-headless==4.10.0.84  # Image preprocessing (headless for servers)
 Pillow==9.5.0  # Image handling
 torch==2.0.1  # Required for docTR
