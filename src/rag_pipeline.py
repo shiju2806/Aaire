@@ -400,6 +400,9 @@ class RAGPipeline:
             # Get adaptive similarity threshold
             similarity_threshold = self._get_similarity_threshold(query)
             
+            # Store current query for citation filtering
+            self._current_query = query
+            
             # Retrieve relevant documents using expanded query and adaptive threshold
             retrieved_docs = await self._retrieve_documents(expanded_query, doc_type_filter, similarity_threshold)
             
@@ -1069,7 +1072,11 @@ Follow-up Questions:"""
             r'\banalyze\b',
             r'\bspecific\b.*\bmentioned\b',
             r'\bpolicy\b',
-            r'\bprocedure\b'
+            r'\bprocedure\b',
+            r'\bin the.*image\b',  # "in the chatgpt image"
+            r'\bfrom the.*image\b',  # "from the image"
+            r'\bthe.*chart\b',  # "the revenue chart"
+            r'\buploaded.*image\b'  # "uploaded image"
         ]
         
         import re
@@ -1096,12 +1103,13 @@ Follow-up Questions:"""
         """Extract citation information from retrieved documents"""
         citations = []
         
-        # Use adaptive citation threshold based on retrieved document scores
-        # Take the minimum score from top 3 docs, but no lower than 0.6
+        # Use strict citation threshold to prevent irrelevant citations
+        # Only show citations for highly relevant documents
         if retrieved_docs:
             top_scores = [doc['score'] for doc in retrieved_docs[:3]]
             min_top_score = min(top_scores) if top_scores else 0.75
-            CITATION_THRESHOLD = max(0.6, min_top_score - 0.05)  # Slightly lower than retrieval to ensure citations
+            # More strict threshold - only show citations for truly relevant docs
+            CITATION_THRESHOLD = max(0.75, min_top_score - 0.02)  # Much stricter
         else:
             CITATION_THRESHOLD = 0.75  # Fallback to original threshold
         
@@ -1119,6 +1127,9 @@ Follow-up Questions:"""
             # Additional filter: Skip documents that seem to be general/irrelevant responses
             # This helps prevent old cached documents from appearing as citations
             content_lower = doc['content'].lower()
+            filename_lower = doc['metadata'].get('filename', '').lower()
+            
+            # Skip generic responses
             if any(phrase in content_lower for phrase in [
                 'how can i assist you today',
                 'feel free to share',
@@ -1128,6 +1139,14 @@ Follow-up Questions:"""
             ]):
                 logger.info(f"SKIPPING citation for generic response document: {doc['metadata'].get('filename', 'Unknown')}")
                 continue
+            
+            # Skip completely unrelated document types for image-specific queries
+            query_lower = getattr(self, '_current_query', '').lower()
+            if any(term in query_lower for term in ['image', 'chart', 'graph', 'figure']):
+                # If asking about images but document is about taxes/personal matters, skip it
+                if any(term in filename_lower for term in ['tax', 'personal', 'canada', 'ey-managing']) and not any(term in content_lower for term in ['revenue', 'fy23', 'financial', 'earnings']):
+                    logger.info(f"SKIPPING citation for unrelated document in image query: {filename_lower}")
+                    continue
                 
             # Get filename for source
             filename = doc['metadata'].get('filename', 'Unknown')
