@@ -22,9 +22,19 @@ import pandas as pd
 
 from llama_index.core import Document
 from .rag_pipeline import RAGPipeline
-from .ocr_processor import AdvancedOCRProcessor
 
 logger = structlog.get_logger()
+
+try:
+    from .ocr_processor_doctr import DocTROCRProcessor as AdvancedOCRProcessor
+    logger.info("Using docTR OCR processor")
+except ImportError:
+    try:
+        from .ocr_processor import AdvancedOCRProcessor
+        logger.info("Falling back to EasyOCR processor")
+    except ImportError:
+        logger.warning("No OCR processor available")
+        AdvancedOCRProcessor = None
 
 class DocumentProcessor:
     def __init__(self, rag_pipeline: RAGPipeline = None):
@@ -34,8 +44,12 @@ class DocumentProcessor:
         self.upload_dir.mkdir(parents=True, exist_ok=True)
         
         # Initialize advanced OCR processor
-        self.ocr_processor = AdvancedOCRProcessor()
-        logger.info(f"OCR processor available: {self.ocr_processor.is_available()}")
+        if AdvancedOCRProcessor:
+            self.ocr_processor = AdvancedOCRProcessor()
+            logger.info(f"OCR processor available: {self.ocr_processor.is_available()}")
+        else:
+            self.ocr_processor = None
+            logger.warning("No OCR processor available - image text extraction disabled")
         
         # Document processing status tracking
         self.processing_jobs = {}
@@ -443,7 +457,7 @@ class DocumentProcessor:
                     # NEW: Extract images and charts using OCR
                     elif shape.shape_type == 13:  # Picture
                         try:
-                            if self.ocr_processor.is_available():
+                            if self.ocr_processor and self.ocr_processor.is_available():
                                 # Extract image data
                                 image_data = shape.image.blob
                                 logger.info(f"Processing chart/image in slide {slide_num}")
@@ -496,7 +510,7 @@ class DocumentProcessor:
             content_parts.append("")
             
             # Use advanced OCR if available
-            if self.ocr_processor.is_available():
+            if self.ocr_processor and self.ocr_processor.is_available():
                 logger.info(f"Processing image file with advanced OCR: {file_path.name}")
                 ocr_result = self.ocr_processor.process_chart_image(image_data)
                 
