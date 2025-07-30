@@ -479,26 +479,29 @@ class AAIREApp {
             messageContent += content;
         }
         
-        // Add sources if available
+        // Add sources if available and not empty
         if (sources && sources.length > 0) {
             // Handle both string array (WebSocket) and object array (HTTP) formats
             const sourceList = sources.map(source => {
                 if (typeof source === 'string') {
-                    return source;
+                    return source.trim();
                 } else if (source && source.source) {
-                    return source.source;
+                    return source.source.trim();
                 } else {
-                    return 'Unknown Source';
+                    return '';
                 }
-            });
+            }).filter(source => source && source !== '' && source !== 'Unknown Source');
             
-            // Deduplicate sources
-            const uniqueSources = [...new Set(sourceList)];
-            messageContent += '<br><br><small><strong>Source:</strong><br>';
-            uniqueSources.forEach(source => {
-                messageContent += `• ${source}<br>`;
-            });
-            messageContent += '</small>';
+            // Only show sources if we have valid ones
+            if (sourceList.length > 0) {
+                // Deduplicate sources
+                const uniqueSources = [...new Set(sourceList)];
+                messageContent += '<br><br><small><strong>Source:</strong><br>';
+                uniqueSources.forEach(source => {
+                    messageContent += `• ${source}<br>`;
+                });
+                messageContent += '</small>';
+            }
         }
         
         // Add follow-up questions for assistant messages

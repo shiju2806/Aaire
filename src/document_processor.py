@@ -372,9 +372,11 @@ class DocumentProcessor:
     async def _extract_from_powerpoint(self, file_path: Path) -> str:
         """Extract text from PowerPoint files (.ppt/.pptx)"""
         try:
+            logger.info(f"Starting PowerPoint extraction for: {file_path}")
             prs = Presentation(file_path)
             text_content = []
             
+            logger.info(f"PowerPoint loaded successfully - {len(prs.slides)} slides found")
             text_content.append(f"[POWERPOINT PRESENTATION - {len(prs.slides)} slides]")
             
             for slide_num, slide in enumerate(prs.slides, 1):
@@ -407,7 +409,9 @@ class DocumentProcessor:
                 if len(slide_text) > 1:
                     text_content.extend(slide_text)
             
-            return "\n\n".join(text_content)
+            extracted_text = "\n\n".join(text_content)
+            logger.info(f"PowerPoint extraction completed - {len(extracted_text)} characters extracted")
+            return extracted_text
             
         except Exception as e:
             logger.error("PowerPoint extraction failed", 
