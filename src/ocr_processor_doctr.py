@@ -45,15 +45,31 @@ class DocTROCRProcessor:
             self.ocr_engine = None
     
     def preprocess_image(self, image: np.ndarray) -> np.ndarray:
-        """Light preprocessing for docTR"""
+        """Enhanced preprocessing to find numbers on charts"""
         try:
-            # docTR handles most preprocessing internally
-            # Just ensure proper format
+            # Ensure RGB format
             if len(image.shape) == 2:
-                # Convert grayscale to RGB
                 image = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
             
-            return image
+            # Enhance contrast to make faint text more visible
+            lab = cv2.cvtColor(image, cv2.COLOR_RGB2LAB)
+            l, a, b = cv2.split(lab)
+            
+            # Apply CLAHE (Contrast Limited Adaptive Histogram Equalization)
+            clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
+            l = clahe.apply(l)
+            
+            # Merge channels
+            enhanced = cv2.merge([l, a, b])
+            enhanced = cv2.cvtColor(enhanced, cv2.COLOR_LAB2RGB)
+            
+            # Sharpen to make text clearer
+            kernel = np.array([[-1,-1,-1],
+                              [-1, 9,-1],
+                              [-1,-1,-1]])
+            sharpened = cv2.filter2D(enhanced, -1, kernel)
+            
+            return sharpened
             
         except Exception as e:
             logger.warning(f"Image preprocessing failed: {e}")

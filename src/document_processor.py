@@ -26,15 +26,20 @@ from .rag_pipeline import RAGPipeline
 logger = structlog.get_logger()
 
 try:
-    from .ocr_processor_doctr import DocTROCRProcessor as AdvancedOCRProcessor
-    logger.info("Using docTR OCR processor")
+    # Try Tesseract first (better for charts with numbers)
+    from .ocr_processor_tesseract import TesseractOCRProcessor as AdvancedOCRProcessor
+    logger.info("Using Tesseract OCR processor")
 except ImportError:
     try:
-        from .ocr_processor import AdvancedOCRProcessor
-        logger.info("Falling back to EasyOCR processor")
+        from .ocr_processor_doctr import DocTROCRProcessor as AdvancedOCRProcessor
+        logger.info("Using docTR OCR processor")
     except ImportError:
-        logger.warning("No OCR processor available")
-        AdvancedOCRProcessor = None
+        try:
+            from .ocr_processor import AdvancedOCRProcessor
+            logger.info("Falling back to EasyOCR processor")
+        except ImportError:
+            logger.warning("No OCR processor available")
+            AdvancedOCRProcessor = None
 
 class DocumentProcessor:
     def __init__(self, rag_pipeline: RAGPipeline = None):
