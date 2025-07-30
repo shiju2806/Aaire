@@ -159,13 +159,23 @@ class ChartAnalyzer:
             elif max_num >= 1000:
                 return "K"
         
-        # Fallback based on scale magnitude
+        # Fallback based on scale magnitude and context
+        # For financial charts, if we see numbers like 20, 30, 40... 90
+        # and the context mentions "Revenue", it's likely billions
+        if any(word in text_lower for word in ['revenue', 'expense', 'income', 'profit']):
+            # Financial context - likely larger units
+            if scale_max >= 20:
+                return "B"  # Revenue charts with 20-90 scale = billions
+            elif scale_max >= 5:
+                return "M"  # Medium revenue = millions
+        
+        # Non-financial context fallbacks
         if scale_max >= 1000:
-            return "B"  # Large scales likely billions
+            return "B"  # Very large scales
         elif scale_max >= 100:
-            return "M"  # Medium scales likely millions
+            return "M"  # Medium scales  
         elif scale_max >= 10:
-            return "K"  # Small scales likely thousands
+            return "K"  # Small scales
         else:
             return ""   # No unit
     
@@ -282,7 +292,7 @@ class ChartAnalyzer:
                             chart_region['left']:chart_region['right']]
             
             # Detect vertical bars using edge detection
-            bars = self._detect_bars(chart_area, chart_region)
+            bars = self._detect_bars(chart_area, chart_region, metadata)
             
             return {
                 'chart_region': chart_region,
@@ -294,7 +304,7 @@ class ChartAnalyzer:
             logger.error(f"Chart element detection failed: {e}")
             return {'bars': [], 'chart_region': {}}
     
-    def _detect_bars(self, chart_area: np.ndarray, chart_region: Dict) -> List[Dict]:
+    def _detect_bars(self, chart_area: np.ndarray, chart_region: Dict, metadata: Dict) -> List[Dict]:
         """Detect individual bars in the chart"""
         try:
             print(f"[ChartAnalyzer] Chart area dimensions: {chart_area.shape}")
