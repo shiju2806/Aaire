@@ -17,6 +17,7 @@ import structlog
 from fastapi import UploadFile, HTTPException
 import PyPDF2
 from docx import Document as DocxDocument
+from pptx import Presentation
 import pandas as pd
 
 from llama_index.core import Document
@@ -39,6 +40,12 @@ class DocumentProcessor:
             'application/pdf': {'extension': '.pdf', 'max_size_mb': 100, 'category': 'document'},
             'application/vnd.openxmlformats-officedocument.wordprocessingml.document': {
                 'extension': '.docx', 'max_size_mb': 50, 'category': 'document'
+            },
+            'application/vnd.openxmlformats-officedocument.presentationml.presentation': {
+                'extension': '.pptx', 'max_size_mb': 50, 'category': 'presentation'
+            },
+            'application/vnd.ms-powerpoint': {
+                'extension': '.ppt', 'max_size_mb': 50, 'category': 'presentation'
             },
             'text/plain': {'extension': '.txt', 'max_size_mb': 10, 'category': 'document'},
             'text/csv': {'extension': '.csv', 'max_size_mb': 25, 'category': 'data'},
@@ -248,6 +255,8 @@ class DocumentProcessor:
                 return await self._extract_from_csv(file_path)
             elif file_extension == '.xlsx':
                 return await self._extract_from_xlsx(file_path)
+            elif file_extension in ['.ppt', '.pptx']:
+                return await self._extract_from_powerpoint(file_path)
             elif file_extension in ['.png', '.jpg', '.jpeg', '.gif', '.webp']:
                 return await self._extract_from_image(file_path)
             else:
@@ -358,6 +367,52 @@ class DocumentProcessor:
             
         except Exception as e:
             logger.error("Excel extraction failed", error=str(e))
+            raise
+    
+    async def _extract_from_powerpoint(self, file_path: Path) -> str:
+        """Extract text from PowerPoint files (.ppt/.pptx)"""
+        try:
+            prs = Presentation(file_path)
+            text_content = []
+            
+            text_content.append(f"[POWERPOINT PRESENTATION - {len(prs.slides)} slides]")
+            
+            for slide_num, slide in enumerate(prs.slides, 1):
+                slide_text = [f"\n[SLIDE {slide_num}]"]
+                
+                # Extract text from all shapes in the slide
+                for shape in slide.shapes:
+                    if hasattr(shape, "text") and shape.text.strip():
+                        # Identify the type of content
+                        if shape.shape_type == 1:  # Title placeholder
+                            slide_text.append(f"TITLE: {shape.text}")
+                        elif shape.shape_type == 2:  # Body/content placeholder
+                            slide_text.append(f"CONTENT: {shape.text}")
+                        else:
+                            slide_text.append(shape.text)
+                    
+                    # Extract table content if present
+                    if shape.shape_type == 19:  # Table
+                        try:
+                            table_text = ["[TABLE]"]
+                            table = shape.table
+                            for row in table.rows:
+                                row_text = " | ".join(cell.text for cell in row.cells)
+                                table_text.append(row_text)
+                            slide_text.append("\n".join(table_text))
+                        except:
+                            pass
+                
+                # Only add slide if it has content
+                if len(slide_text) > 1:
+                    text_content.extend(slide_text)
+            
+            return "\n\n".join(text_content)
+            
+        except Exception as e:
+            logger.error("PowerPoint extraction failed", 
+                        file_path=str(file_path), 
+                        error=str(e))
             raise
     
     async def _extract_from_image(self, file_path: Path) -> str:
