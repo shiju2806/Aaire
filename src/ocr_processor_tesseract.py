@@ -10,6 +10,7 @@ import pytesseract
 from typing import Dict, List, Optional, Any
 import structlog
 import re
+from .chart_analyzer import ChartAnalyzer
 
 logger = structlog.get_logger()
 
@@ -17,6 +18,7 @@ class TesseractOCRProcessor:
     def __init__(self):
         """Initialize Tesseract OCR processor"""
         self.ocr_available = self._check_tesseract()
+        self.chart_analyzer = ChartAnalyzer()
     
     def _check_tesseract(self) -> bool:
         """Check if Tesseract is available"""
@@ -71,6 +73,14 @@ class TesseractOCRProcessor:
             
             # Parse and structure the text
             structured = self._structure_chart_text(text)
+            
+            # If no explicit values found, try to estimate from bar heights
+            if not re.search(r'\$?[\d,]+\.?\d*[BMK]', structured):
+                print("[Tesseract] No explicit values found, analyzing bar heights...")
+                analysis = self.chart_analyzer.analyze_bar_chart(processed, text)
+                estimates = self.chart_analyzer.format_estimates_as_text(analysis)
+                if estimates:
+                    structured += "\n\n" + estimates
             
             return structured
             
