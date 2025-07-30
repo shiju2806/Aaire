@@ -74,10 +74,10 @@ class TesseractOCRProcessor:
             # Parse and structure the text
             structured = self._structure_chart_text(text)
             
-            # If no explicit values found, try to estimate from bar heights
+            # If no explicit values found, try to estimate from chart analysis
             if not re.search(r'\$?[\d,]+\.?\d*[BMK]', structured):
-                print("[Tesseract] No explicit values found, analyzing bar heights...")
-                analysis = self.chart_analyzer.analyze_bar_chart(processed, text)
+                print("[Tesseract] No explicit values found, analyzing chart...")
+                analysis = self.chart_analyzer.analyze_chart(processed, text)
                 estimates = self.chart_analyzer.format_estimates_as_text(analysis)
                 if estimates:
                     structured += "\n\n" + estimates

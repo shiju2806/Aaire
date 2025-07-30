@@ -16,24 +16,44 @@ class ChartAnalyzer:
         """Initialize chart analyzer"""
         pass
     
-    def analyze_bar_chart(self, image: np.ndarray, ocr_text: str) -> Dict:
-        """Analyze bar chart to estimate values from heights"""
+    def analyze_chart(self, image: np.ndarray, ocr_text: str) -> Dict:
+        """Analyze any chart type to estimate values"""
         try:
-            print("[ChartAnalyzer] Starting bar chart analysis")
+            print("[ChartAnalyzer] Starting chart analysis")
             
             # Extract chart metadata from OCR
             metadata = self._extract_chart_metadata(ocr_text)
             print(f"[ChartAnalyzer] Metadata: {metadata}")
             
-            if not metadata['has_y_axis_scale']:
+            # Detect chart type
+            chart_type = self._detect_chart_type(image, ocr_text)
+            metadata['chart_type'] = chart_type
+            print(f"[ChartAnalyzer] Detected chart type: {chart_type}")
+            
+            if not metadata['has_y_axis_scale'] and chart_type != 'pie':
                 print("[ChartAnalyzer] No Y-axis scale found, cannot estimate values")
                 return {'estimates': [], 'metadata': metadata}
             
-            # Detect chart region and bars
-            chart_analysis = self._detect_chart_elements(image, metadata)
-            
-            # Estimate values based on bar heights
-            estimates = self._estimate_bar_values(chart_analysis, metadata)
+            # Analyze based on chart type
+            if chart_type == 'bar':
+                chart_analysis = self._detect_bar_elements(image, metadata)
+                estimates = self._estimate_bar_values(chart_analysis, metadata)
+            elif chart_type == 'line':
+                chart_analysis = self._detect_line_elements(image, metadata)
+                estimates = self._estimate_line_values(chart_analysis, metadata)
+            elif chart_type == 'pie':
+                chart_analysis = self._detect_pie_elements(image, metadata)
+                estimates = self._estimate_pie_values(chart_analysis, metadata)
+            elif chart_type == 'area':
+                chart_analysis = self._detect_area_elements(image, metadata)
+                estimates = self._estimate_area_values(chart_analysis, metadata)
+            elif chart_type == 'scatter':
+                chart_analysis = self._detect_scatter_elements(image, metadata)
+                estimates = self._estimate_scatter_values(chart_analysis, metadata)
+            else:
+                # Default to bar chart analysis
+                chart_analysis = self._detect_bar_elements(image, metadata)
+                estimates = self._estimate_bar_values(chart_analysis, metadata)
             
             print(f"[ChartAnalyzer] Generated {len(estimates)} value estimates")
             return {
@@ -95,11 +115,85 @@ class ChartAnalyzer:
         
         return metadata
     
-    def _detect_chart_elements(self, image: np.ndarray, metadata: Dict) -> Dict:
+    def _detect_chart_type(self, image: np.ndarray, ocr_text: str) -> str:
+        """Detect the type of chart from image analysis and OCR text"""
+        try:
+            # Convert to grayscale for analysis
+            if len(image.shape) == 3:
+                gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+            else:
+                gray = image
+            
+            # Look for textual indicators first
+            text_lower = ocr_text.lower()
+            
+            # Check for pie chart indicators
+            if any(word in text_lower for word in ['pie', 'slice', '%', 'percent']):
+                # Look for circular shapes
+                circles = cv2.HoughCircles(gray, cv2.HOUGH_GRADIENT, 1, 20, param1=50, param2=30, minRadius=10, maxRadius=200)
+                if circles is not None:
+                    print("[ChartAnalyzer] Found circular shapes, likely pie chart")
+                    return 'pie'
+            
+            # Detect edges for structural analysis
+            edges = cv2.Canny(gray, 50, 150, apertureSize=3)
+            
+            # Detect lines using Hough transform
+            lines = cv2.HoughLinesP(edges, 1, np.pi/180, threshold=50, minLineLength=30, maxLineGap=10)
+            
+            if lines is not None:
+                horizontal_lines = 0
+                vertical_lines = 0
+                diagonal_lines = 0
+                
+                for line in lines:
+                    x1, y1, x2, y2 = line[0]
+                    angle = np.arctan2(y2-y1, x2-x1) * 180 / np.pi
+                    
+                    if abs(angle) < 15 or abs(angle) > 165:
+                        horizontal_lines += 1
+                    elif abs(angle - 90) < 15 or abs(angle + 90) < 15:
+                        vertical_lines += 1
+                    else:
+                        diagonal_lines += 1
+                
+                print(f"[ChartAnalyzer] Lines detected - H:{horizontal_lines}, V:{vertical_lines}, D:{diagonal_lines}")
+                
+                # Line chart: more diagonal lines (trend lines)
+                if diagonal_lines > max(horizontal_lines, vertical_lines) * 0.3:
+                    return 'line'
+                
+                # Bar chart: many vertical lines (bars) + grid lines
+                if vertical_lines > horizontal_lines * 1.5:
+                    return 'bar'
+            
+            # Check for area chart indicators (filled regions)
+            contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            filled_areas = [cv2.contourArea(c) for c in contours if cv2.contourArea(c) > 100]
+            
+            if len(filled_areas) > 0:
+                avg_area = np.mean(filled_areas)
+                if avg_area > gray.shape[0] * gray.shape[1] * 0.05:  # Large filled areas
+                    return 'area'
+            
+            # Default fallback based on common patterns
+            if 'revenue' in text_lower and 'expense' in text_lower:
+                return 'bar'  # Revenue/expense charts often bar charts
+            
+            return 'bar'  # Default assumption
+            
+        except Exception as e:
+            logger.error(f"Chart type detection failed: {e}")
+            return 'bar'
+    
+    def _detect_bar_elements(self, image: np.ndarray, metadata: Dict) -> Dict:
         """Detect chart elements like bars and axes"""
         try:
             # Convert to grayscale for analysis
-            gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+            if len(image.shape) == 3:
+                gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+            else:
+                gray = image
             height, width = gray.shape
             
             # Detect potential chart area (usually central region)
@@ -207,32 +301,456 @@ class ChartAnalyzer:
             logger.error(f"Value estimation failed: {e}")
             return []
     
+    def _detect_line_elements(self, image: np.ndarray, metadata: Dict) -> Dict:
+        """Detect line chart elements like data points and trend lines"""
+        try:
+            if len(image.shape) == 3:
+                gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+            else:
+                gray = image
+            height, width = gray.shape
+            
+            chart_region = {
+                'left': int(width * 0.15),
+                'right': int(width * 0.85),
+                'top': int(height * 0.15),
+                'bottom': int(height * 0.85)
+            }
+            
+            chart_area = gray[chart_region['top']:chart_region['bottom'], 
+                            chart_region['left']:chart_region['right']]
+            
+            # Detect edges to find trend lines
+            edges = cv2.Canny(chart_area, 50, 150)
+            
+            # Find lines using Hough transform
+            lines = cv2.HoughLinesP(edges, 1, np.pi/180, threshold=30, minLineLength=20, maxLineGap=5)
+            
+            trend_lines = []
+            data_points = []
+            
+            if lines is not None:
+                for line in lines:
+                    x1, y1, x2, y2 = line[0]
+                    # Filter for diagonal lines that could be trends
+                    angle = np.arctan2(y2-y1, x2-x1) * 180 / np.pi
+                    if 15 < abs(angle) < 165:  # Diagonal lines
+                        trend_lines.append({
+                            'start': (x1, y1),
+                            'end': (x2, y2),
+                            'angle': angle,
+                            'length': np.sqrt((x2-x1)**2 + (y2-y1)**2)
+                        })
+            
+            # Detect potential data points using contour detection
+            contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            for contour in contours:
+                area = cv2.contourArea(contour)
+                if 10 < area < 200:  # Small circular areas could be data points
+                    x, y, w, h = cv2.boundingRect(contour)
+                    if abs(w - h) < 5:  # Nearly square (circular)
+                        data_points.append({
+                            'x': x + w/2,
+                            'y': y + h/2,
+                            'x_relative': (x + w/2) / chart_area.shape[1],
+                            'y_relative': (y + h/2) / chart_area.shape[0]
+                        })
+            
+            return {
+                'chart_region': chart_region,
+                'trend_lines': trend_lines,
+                'data_points': data_points,
+                'image_dimensions': (width, height)
+            }
+            
+        except Exception as e:
+            logger.error(f"Line chart element detection failed: {e}")
+            return {'trend_lines': [], 'data_points': [], 'chart_region': {}}
+    
+    def _detect_pie_elements(self, image: np.ndarray, metadata: Dict) -> Dict:
+        """Detect pie chart elements like slices and labels"""
+        try:
+            if len(image.shape) == 3:
+                gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+            else:
+                gray = image
+            height, width = gray.shape
+            
+            # Find circles (pie chart outline)
+            circles = cv2.HoughCircles(gray, cv2.HOUGH_GRADIENT, 1, 20,
+                                     param1=50, param2=30, minRadius=50, maxRadius=300)
+            
+            pie_slices = []
+            center = None
+            radius = 0
+            
+            if circles is not None:
+                circles = np.uint16(np.around(circles))
+                # Use the largest circle as the pie chart
+                largest_circle = max(circles[0, :], key=lambda c: c[2])
+                center = (largest_circle[0], largest_circle[1])
+                radius = largest_circle[2]
+                
+                # Detect edges within the circle to find slice boundaries
+                edges = cv2.Canny(gray, 50, 150)
+                
+                # Find lines emanating from center (slice dividers)
+                lines = cv2.HoughLinesP(edges, 1, np.pi/180, threshold=20, minLineLength=radius//2, maxLineGap=10)
+                
+                slice_angles = []
+                if lines is not None:
+                    for line in lines:
+                        x1, y1, x2, y2 = line[0]
+                        # Check if line passes near center
+                        dist_to_center = min(
+                            np.sqrt((x1-center[0])**2 + (y1-center[1])**2),
+                            np.sqrt((x2-center[0])**2 + (y2-center[1])**2)
+                        )
+                        if dist_to_center < radius * 0.3:
+                            angle = np.arctan2(y2-y1, x2-x1) * 180 / np.pi
+                            slice_angles.append(angle)
+                
+                # Estimate number of slices
+                slice_angles = sorted(set([round(a/10)*10 for a in slice_angles]))  # Round to 10 degrees
+                num_slices = len(slice_angles) if slice_angles else 4  # Default to 4 slices
+                
+                for i in range(num_slices):
+                    pie_slices.append({
+                        'slice_id': i,
+                        'estimated_percentage': 100 / num_slices,  # Equal slices assumption
+                        'angle_start': i * (360 / num_slices),
+                        'angle_end': (i + 1) * (360 / num_slices)
+                    })
+            
+            return {
+                'center': center,
+                'radius': radius,
+                'pie_slices': pie_slices,
+                'image_dimensions': (width, height)
+            }
+            
+        except Exception as e:
+            logger.error(f"Pie chart element detection failed: {e}")
+            return {'pie_slices': [], 'center': None, 'radius': 0}
+    
+    def _detect_area_elements(self, image: np.ndarray, metadata: Dict) -> Dict:
+        """Detect area chart elements like filled regions and boundaries"""
+        try:
+            if len(image.shape) == 3:
+                gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+            else:
+                gray = image
+            height, width = gray.shape
+            
+            chart_region = {
+                'left': int(width * 0.15),
+                'right': int(width * 0.85),
+                'top': int(height * 0.15),
+                'bottom': int(height * 0.85)
+            }
+            
+            chart_area = gray[chart_region['top']:chart_region['bottom'], 
+                            chart_region['left']:chart_region['right']]
+            
+            # Find contours to detect filled areas
+            contours, _ = cv2.findContours(chart_area, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            filled_regions = []
+            for contour in contours:
+                area = cv2.contourArea(contour)
+                # Look for large filled regions
+                if area > chart_area.shape[0] * chart_area.shape[1] * 0.05:
+                    x, y, w, h = cv2.boundingRect(contour)
+                    filled_regions.append({
+                        'area': area,
+                        'bounds': (x, y, w, h),
+                        'area_relative': area / (chart_area.shape[0] * chart_area.shape[1]),
+                        'height_relative': h / chart_area.shape[0]
+                    })
+            
+            # Sort by area size
+            filled_regions = sorted(filled_regions, key=lambda r: r['area'], reverse=True)
+            
+            return {
+                'chart_region': chart_region,
+                'filled_regions': filled_regions,
+                'image_dimensions': (width, height)
+            }
+            
+        except Exception as e:
+            logger.error(f"Area chart element detection failed: {e}")
+            return {'filled_regions': [], 'chart_region': {}}
+    
+    def _detect_scatter_elements(self, image: np.ndarray, metadata: Dict) -> Dict:
+        """Detect scatter plot elements like data points"""
+        try:
+            if len(image.shape) == 3:
+                gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+            else:
+                gray = image
+            height, width = gray.shape
+            
+            chart_region = {
+                'left': int(width * 0.15),
+                'right': int(width * 0.85),
+                'top': int(height * 0.15),
+                'bottom': int(height * 0.85)
+            }
+            
+            chart_area = gray[chart_region['top']:chart_region['bottom'], 
+                            chart_region['left']:chart_region['right']]
+            
+            # Detect small circular shapes (scatter points)
+            circles = cv2.HoughCircles(chart_area, cv2.HOUGH_GRADIENT, 1, 10,
+                                     param1=50, param2=15, minRadius=2, maxRadius=20)
+            
+            scatter_points = []
+            if circles is not None:
+                circles = np.uint16(np.around(circles))
+                for circle in circles[0, :]:
+                    x, y, r = circle
+                    scatter_points.append({
+                        'x': x,
+                        'y': y,
+                        'radius': r,
+                        'x_relative': x / chart_area.shape[1],
+                        'y_relative': y / chart_area.shape[0]
+                    })
+            
+            # Also try contour detection for non-circular points
+            edges = cv2.Canny(chart_area, 50, 150)
+            contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            for contour in contours:
+                area = cv2.contourArea(contour)
+                if 5 < area < 100:  # Small points
+                    x, y, w, h = cv2.boundingRect(contour)
+                    if w < 20 and h < 20:  # Small bounding box
+                        scatter_points.append({
+                            'x': x + w/2,
+                            'y': y + h/2,
+                            'radius': max(w, h) / 2,
+                            'x_relative': (x + w/2) / chart_area.shape[1],
+                            'y_relative': (y + h/2) / chart_area.shape[0]
+                        })
+            
+            return {
+                'chart_region': chart_region,
+                'scatter_points': scatter_points,
+                'image_dimensions': (width, height)
+            }
+            
+        except Exception as e:
+            logger.error(f"Scatter plot element detection failed: {e}")
+            return {'scatter_points': [], 'chart_region': {}}
+    
+    def _estimate_line_values(self, chart_analysis: Dict, metadata: Dict) -> List[Dict]:
+        """Estimate values from line chart trend lines and data points"""
+        estimates = []
+        
+        try:
+            data_points = chart_analysis.get('data_points', [])
+            fiscal_years = metadata.get('fiscal_years', [])
+            scale_max = metadata.get('scale_max', 0)
+            scale_min = metadata.get('scale_min', 0)
+            
+            if not data_points or not scale_max:
+                return estimates
+            
+            # Sort points by x position
+            sorted_points = sorted(data_points, key=lambda p: p['x_relative'])
+            
+            scale_unit = "B" if scale_max >= 50 else "M" if scale_max >= 5 else ""
+            
+            for i, point in enumerate(sorted_points):
+                # Convert y position to value (inverted because y=0 is top)
+                estimated_value = scale_min + ((1 - point['y_relative']) * (scale_max - scale_min))
+                fiscal_year = fiscal_years[i] if i < len(fiscal_years) else f"Point_{i+1}"
+                
+                estimate = {
+                    'fiscal_year': fiscal_year,
+                    'estimated_value': round(estimated_value, 1),
+                    'display_value': f"${estimated_value:.1f}{scale_unit}",
+                    'confidence': 'estimated_from_line_chart',
+                    'method': f'data_point_position_relative_to_scale_0_{scale_max}'
+                }
+                estimates.append(estimate)
+                
+                print(f"[ChartAnalyzer] Line chart {fiscal_year}: ~${estimated_value:.1f}{scale_unit}")
+            
+            return estimates
+            
+        except Exception as e:
+            logger.error(f"Line chart value estimation failed: {e}")
+            return []
+    
+    def _estimate_pie_values(self, chart_analysis: Dict, metadata: Dict) -> List[Dict]:
+        """Estimate values from pie chart slices"""
+        estimates = []
+        
+        try:
+            pie_slices = chart_analysis.get('pie_slices', [])
+            labels = metadata.get('labels', [])
+            
+            if not pie_slices:
+                return estimates
+            
+            for i, slice_info in enumerate(pie_slices):
+                label = labels[i] if i < len(labels) else f"Slice_{i+1}"
+                percentage = slice_info['estimated_percentage']
+                
+                estimate = {
+                    'category': label,
+                    'estimated_percentage': round(percentage, 1),
+                    'display_value': f"{percentage:.1f}%",
+                    'confidence': 'estimated_from_pie_slice',
+                    'method': 'pie_slice_angle_analysis'
+                }
+                estimates.append(estimate)
+                
+                print(f"[ChartAnalyzer] Pie slice {label}: ~{percentage:.1f}%")
+            
+            return estimates
+            
+        except Exception as e:
+            logger.error(f"Pie chart value estimation failed: {e}")
+            return []
+    
+    def _estimate_area_values(self, chart_analysis: Dict, metadata: Dict) -> List[Dict]:
+        """Estimate values from area chart filled regions"""
+        estimates = []
+        
+        try:
+            filled_regions = chart_analysis.get('filled_regions', [])
+            fiscal_years = metadata.get('fiscal_years', [])
+            scale_max = metadata.get('scale_max', 0)
+            scale_min = metadata.get('scale_min', 0)
+            
+            if not filled_regions or not scale_max:
+                return estimates
+            
+            scale_unit = "B" if scale_max >= 50 else "M" if scale_max >= 5 else ""
+            
+            for i, region in enumerate(filled_regions[:len(fiscal_years)]):
+                # Estimate value based on filled area height
+                estimated_value = scale_min + (region['height_relative'] * (scale_max - scale_min))
+                fiscal_year = fiscal_years[i] if i < len(fiscal_years) else f"Region_{i+1}"
+                
+                estimate = {
+                    'fiscal_year': fiscal_year,
+                    'estimated_value': round(estimated_value, 1),
+                    'display_value': f"${estimated_value:.1f}{scale_unit}",
+                    'confidence': 'estimated_from_area_height',
+                    'method': f'filled_area_height_relative_to_scale_0_{scale_max}'
+                }
+                estimates.append(estimate)
+                
+                print(f"[ChartAnalyzer] Area chart {fiscal_year}: ~${estimated_value:.1f}{scale_unit}")
+            
+            return estimates
+            
+        except Exception as e:
+            logger.error(f"Area chart value estimation failed: {e}")
+            return []
+    
+    def _estimate_scatter_values(self, chart_analysis: Dict, metadata: Dict) -> List[Dict]:
+        """Estimate values from scatter plot data points"""
+        estimates = []
+        
+        try:
+            scatter_points = chart_analysis.get('scatter_points', [])
+            scale_max = metadata.get('scale_max', 0)
+            scale_min = metadata.get('scale_min', 0)
+            
+            if not scatter_points or not scale_max:
+                return estimates
+            
+            scale_unit = "B" if scale_max >= 50 else "M" if scale_max >= 5 else ""
+            
+            # Group points by similar x positions (time periods)
+            x_groups = {}
+            for point in scatter_points:
+                x_bucket = round(point['x_relative'] * 10)  # Group into 10 buckets
+                if x_bucket not in x_groups:
+                    x_groups[x_bucket] = []
+                x_groups[x_bucket].append(point)
+            
+            for i, (x_bucket, points) in enumerate(sorted(x_groups.items())):
+                # Average y position for points in this time period
+                avg_y = sum(p['y_relative'] for p in points) / len(points)
+                estimated_value = scale_min + ((1 - avg_y) * (scale_max - scale_min))
+                
+                estimate = {
+                    'time_period': f"Period_{i+1}",
+                    'point_count': len(points),
+                    'estimated_value': round(estimated_value, 1),
+                    'display_value': f"${estimated_value:.1f}{scale_unit}",
+                    'confidence': 'estimated_from_scatter_points',
+                    'method': f'scatter_point_average_relative_to_scale_0_{scale_max}'
+                }
+                estimates.append(estimate)
+                
+                print(f"[ChartAnalyzer] Scatter Period_{i+1} ({len(points)} points): ~${estimated_value:.1f}{scale_unit}")
+            
+            return estimates
+            
+        except Exception as e:
+            logger.error(f"Scatter plot value estimation failed: {e}")
+            return []
+
     def format_estimates_as_text(self, analysis_result: Dict) -> str:
         """Format analysis results as readable text"""
         try:
             estimates = analysis_result.get('estimates', [])
             metadata = analysis_result.get('metadata', {})
+            chart_type = metadata.get('chart_type', 'bar')
             
             if not estimates:
                 return ""
             
-            output = ["[ESTIMATED VALUES FROM BAR HEIGHTS]"]
-            output.append("Note: These are approximate values based on visual bar heights relative to the Y-axis scale")
+            # Dynamic header based on chart type
+            chart_type_names = {
+                'bar': 'BAR CHART',
+                'line': 'LINE CHART', 
+                'pie': 'PIE CHART',
+                'area': 'AREA CHART',
+                'scatter': 'SCATTER PLOT'
+            }
+            
+            output = [f"[ESTIMATED VALUES FROM {chart_type_names.get(chart_type, 'CHART').upper()}]"]
+            output.append(f"Note: These are approximate values based on visual {chart_type} analysis")
             output.append("")
             
-            # Add scale info
-            if metadata.get('has_y_axis_scale'):
+            # Add scale info for charts with scales
+            if metadata.get('has_y_axis_scale') and chart_type != 'pie':
                 scale_min = metadata.get('scale_min', 0)
                 scale_max = metadata.get('scale_max', 0)
                 output.append(f"Y-axis scale: {scale_min} to {scale_max} (likely billions)")
                 output.append("")
             
-            # Add estimates
+            # Add estimates with chart-specific formatting
             for estimate in estimates:
-                output.append(f"{estimate['fiscal_year']}: {estimate['display_value']} (estimated)")
+                if chart_type == 'pie':
+                    output.append(f"{estimate.get('category', 'Unknown')}: {estimate['display_value']} (estimated)")
+                elif chart_type == 'scatter':
+                    output.append(f"{estimate.get('time_period', 'Unknown')} ({estimate.get('point_count', 0)} points): {estimate['display_value']} (estimated)")
+                else:
+                    fiscal_year = estimate.get('fiscal_year', estimate.get('time_period', 'Unknown'))
+                    output.append(f"{fiscal_year}: {estimate['display_value']} (estimated)")
             
             output.append("")
-            output.append("Methodology: Bar heights measured relative to Y-axis scale")
+            
+            # Chart-specific methodology
+            methodologies = {
+                'bar': 'Bar heights measured relative to Y-axis scale',
+                'line': 'Data point positions analyzed relative to trend lines and scale',
+                'pie': 'Slice angles measured to estimate percentages',
+                'area': 'Filled area heights measured relative to Y-axis scale', 
+                'scatter': 'Data point positions grouped and averaged by time periods'
+            }
+            
+            output.append(f"Methodology: {methodologies.get(chart_type, 'Visual analysis relative to chart axes')}")
             
             return "\n".join(output)
             
