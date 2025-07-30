@@ -127,8 +127,8 @@ class ChartAnalyzer:
             # Look for textual indicators first
             text_lower = ocr_text.lower()
             
-            # Check for pie chart indicators
-            if any(word in text_lower for word in ['pie', 'slice', '%', 'percent']):
+            # Check for pie chart indicators (but be more specific)
+            if 'pie' in text_lower or 'slice' in text_lower:
                 # Look for circular shapes
                 circles = cv2.HoughCircles(gray, cv2.HOUGH_GRADIENT, 1, 20, param1=50, param2=30, minRadius=10, maxRadius=200)
                 if circles is not None:
@@ -178,7 +178,13 @@ class ChartAnalyzer:
             
             # Default fallback based on common patterns
             if 'revenue' in text_lower and 'expense' in text_lower:
-                return 'bar'  # Revenue/expense charts often bar charts
+                print("[ChartAnalyzer] Revenue/expense chart detected, using bar chart analysis")
+                return 'bar'  # Revenue/expense charts are usually bar charts
+            
+            # If we have fiscal years and a Y-axis scale, likely a bar chart
+            if 'fy' in text_lower and any(str(i) in text_lower for i in range(10, 100)):
+                print("[ChartAnalyzer] Fiscal year chart with scale detected, using bar chart analysis")
+                return 'bar'
             
             return 'bar'  # Default assumption
             
