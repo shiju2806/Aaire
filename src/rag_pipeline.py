@@ -681,12 +681,18 @@ class RAGPipeline:
         # Check if we have relevant documents
         if not retrieved_docs:
             # No relevant documents found - provide general knowledge response
+            # Check if this is a calculation request
+            calc_config = self.config.get('calculation_config', {})
+            calc_enhancement = ""
+            if calc_config.get('enable_structured_calculations') and any(kw in query.lower() for kw in ['calculate', 'amortization', 'schedule', 'table', 'payment', 'journal']):
+                calc_enhancement = f"\n\nCalculation Instructions:\n{calc_config.get('calculation_instructions', '')}"
+            
             prompt = f"""You are AAIRE, an expert in insurance accounting and actuarial matters.
 You provide accurate information based on US GAAP, IFRS, and general accounting principles.
 {conversation_context}
 Current User Question: {query}
 
-This appears to be a general accounting question. I will provide a standard accounting explanation.
+This appears to be a general accounting question. I will provide a standard accounting explanation.{calc_enhancement}
 
 Instructions:
 - Consider the conversation history to provide contextual answers

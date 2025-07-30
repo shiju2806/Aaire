@@ -58,7 +58,22 @@ llm_config:
   model: "gpt-4o-mini"  # Default model (override with OPENAI_MODEL env var)
   fallback: "gpt-4o-mini"  # Fallback model - same as primary for consistency
   temperature: 0.1  # Low temperature for consistent responses
-  max_tokens: 6000  # Increased for better context and conversation history
+  max_tokens: 8000  # Increased for complex calculations and tables
+  
+# Calculation Enhancement Settings
+calculation_config:
+  enable_structured_calculations: true
+  financial_precision: 2  # Decimal places for financial calculations
+  table_formatting: true  # Enable markdown table formatting
+  include_formulas: true  # Show calculation formulas
+  calculation_instructions: |
+    For financial calculations:
+    1. Show all numerical inputs clearly
+    2. Perform step-by-step calculations with actual numbers
+    3. Format results in professional tables
+    4. Include relevant journal entries
+    5. Provide month-by-month or period-by-period breakdowns
+    6. Round financial amounts appropriately
   
 # Conversation History Settings
 conversation_config:
