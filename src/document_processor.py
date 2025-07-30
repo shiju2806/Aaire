@@ -124,6 +124,21 @@ class DocumentProcessor:
         
         # Detect mime type
         mime_type, _ = mimetypes.guess_type(file.filename)
+        
+        # Handle cases where mimetypes.guess_type fails for common formats
+        if not mime_type and file.filename:
+            file_ext = file.filename.lower().split('.')[-1]
+            mime_type_map = {
+                'pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+                'ppt': 'application/vnd.ms-powerpoint',
+                'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                'pdf': 'application/pdf',
+                'csv': 'text/csv',
+                'txt': 'text/plain'
+            }
+            mime_type = mime_type_map.get(file_ext)
+        
         if not mime_type or mime_type not in self.supported_formats:
             raise ValueError(f"Unsupported file type: {mime_type}")
         
