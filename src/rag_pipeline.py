@@ -410,6 +410,8 @@ class RAGPipeline:
             if is_general_query:
                 logger.info(f"General knowledge query detected: '{query}' - using general knowledge response")
                 response = await self._generate_response(query, [], user_context, conversation_history)  # Empty docs list
+                # Force remove any citations from general knowledge response
+                response = self._remove_citations_from_response(response)
                 citations = []
                 confidence = 0.3  # Low confidence for general knowledge responses
             else:
@@ -1199,6 +1201,15 @@ Follow-up Questions:"""
             follow_up_questions=data.get('follow_up_questions', []),
             quality_metrics=data.get('quality_metrics', {})
         )
+    
+    def _remove_citations_from_response(self, response: str) -> str:
+        """Remove any citation numbers [1], [2], etc. from response text"""
+        import re
+        # Remove citation patterns like [1], [2], [1][2][3], etc.
+        cleaned_response = re.sub(r'\[[\d\s,]+\]', '', response)
+        # Clean up any double spaces left behind
+        cleaned_response = re.sub(r'\s+', ' ', cleaned_response)
+        return cleaned_response.strip()
     
     async def clear_all_documents(self) -> Dict[str, Any]:
         """Clear all documents from the vector store - use with caution"""
