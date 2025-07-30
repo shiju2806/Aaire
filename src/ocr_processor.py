@@ -6,6 +6,11 @@ Combines PaddleOCR + OpenCV + Document Structure Analysis
 import cv2
 import numpy as np
 from PIL import Image
+# Handle Pillow version compatibility
+try:
+    ANTIALIAS = Image.ANTIALIAS
+except AttributeError:
+    ANTIALIAS = Image.LANCZOS
 import io
 import base64
 from typing import Dict, List, Tuple, Optional, Any
