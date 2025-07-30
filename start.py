@@ -32,7 +32,7 @@ def check_dependencies():
     """Check if all required dependencies are available"""
     required_modules = [
         'llama_index',
-        'pinecone',
+        'qdrant_client',
         'openai',
         'redis',
         'sqlalchemy'
@@ -48,7 +48,7 @@ def check_dependencies():
 def check_environment():
     """Check if required environment variables are set"""
     required_env = ['OPENAI_API_KEY']
-    optional_env = ['PINECONE_API_KEY', 'FRED_API_KEY']
+    optional_env = ['FRED_API_KEY']
     
     missing_required = []
     missing_optional = []
