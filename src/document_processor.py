@@ -46,7 +46,9 @@ class DocumentProcessor:
         # Initialize advanced OCR processor
         if AdvancedOCRProcessor:
             self.ocr_processor = AdvancedOCRProcessor()
-            logger.info(f"OCR processor available: {self.ocr_processor.is_available()}")
+            ocr_available = self.ocr_processor.is_available()
+            logger.info(f"OCR processor initialized: {self.ocr_processor.__class__.__name__}")
+            logger.info(f"OCR processor available: {ocr_available}")
         else:
             self.ocr_processor = None
             logger.warning("No OCR processor available - image text extraction disabled")

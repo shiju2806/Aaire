@@ -87,6 +87,19 @@ class DocTROCRProcessor:
             extracted_text = self._parse_doctr_results(result)
             
             logger.info(f"docTR extraction completed: {len(extracted_text)} characters extracted")
+            
+            # Log what was found for debugging
+            if extracted_text:
+                logger.info(f"docTR extracted preview: {extracted_text[:300]}...")
+                # Log if fiscal years were found
+                if "FY" in extracted_text:
+                    logger.info("docTR found fiscal year data in chart")
+                # Log if dollar amounts were found
+                import re
+                dollar_amounts = re.findall(r'\$?[\d,]+\.?\d*[BMK]', extracted_text)
+                if dollar_amounts:
+                    logger.info(f"docTR found dollar amounts: {dollar_amounts[:5]}")
+            
             return extracted_text
             
         except Exception as e:
