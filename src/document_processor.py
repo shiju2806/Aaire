@@ -26,17 +26,18 @@ from .rag_pipeline import RAGPipeline
 logger = structlog.get_logger()
 
 try:
-    # Try Tesseract first (better for charts with numbers)
-    from .ocr_processor_tesseract import TesseractOCRProcessor as AdvancedOCRProcessor
-    logger.info("Using Tesseract OCR processor")
+    # Try EasyOCR first (best for financial charts with numbers)
+    from .ocr_processor import AdvancedOCRProcessor
+    logger.info("Using EasyOCR processor (recommended for financial charts)")
 except ImportError:
     try:
-        from .ocr_processor_doctr import DocTROCRProcessor as AdvancedOCRProcessor
-        logger.info("Using docTR OCR processor")
+        # Fallback to Tesseract (newly installed)
+        from .ocr_processor_tesseract import TesseractOCRProcessor as AdvancedOCRProcessor
+        logger.info("Using Tesseract OCR processor")
     except ImportError:
         try:
-            from .ocr_processor import AdvancedOCRProcessor
-            logger.info("Falling back to EasyOCR processor")
+            from .ocr_processor_doctr import DocTROCRProcessor as AdvancedOCRProcessor
+            logger.info("Using docTR OCR processor")
         except ImportError:
             logger.warning("No OCR processor available")
             AdvancedOCRProcessor = None
