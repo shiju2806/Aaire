@@ -700,6 +700,8 @@ Instructions:
 - This is general accounting knowledge, not from any specific company documents
 - Mention relevant accounting standards (US GAAP, IFRS) where applicable
 - Never provide tax or legal advice
+- CRITICAL: If performing ANY calculations, double-check ALL arithmetic (25×19,399×45=21,823,875 NOT 21,074,875)
+- Show step-by-step calculations with accurate intermediate results
 - Do NOT include any citation numbers like [1], [2], etc.
 - Do NOT reference any specific documents or sources
 - Make it clear this is general knowledge, not company-specific information

@@ -67,13 +67,21 @@ calculation_config:
   table_formatting: true  # Enable markdown table formatting
   include_formulas: true  # Show calculation formulas
   calculation_instructions: |
-    For financial calculations:
-    1. Show all numerical inputs clearly
-    2. Perform step-by-step calculations with actual numbers
-    3. Format results in professional tables
-    4. Include relevant journal entries
-    5. Provide month-by-month or period-by-period breakdowns
-    6. Round financial amounts appropriately
+    CRITICAL: For ANY calculations involving numbers:
+    1. ALWAYS double-check basic arithmetic (multiplication, addition, etc.)
+    2. Show calculations step-by-step: "25 × 19,399 × 45 = 21,823,875"
+    3. Break complex calculations into smaller verified steps
+    4. Use parentheses to clarify order of operations
+    5. Verify totals by checking individual components
+    6. Round only final results, not intermediate calculations
+    7. Format results in professional tables
+    8. Include relevant journal entries with accurate amounts
+    
+    EXAMPLE: For "25 months × 19,399 sq ft × $45/sq ft":
+    Step 1: 19,399 × 45 = 872,955 per month
+    Step 2: 872,955 × 25 months = 21,823,875 total
+    
+    Always verify calculations before presenting final numbers.
   
 # Conversation History Settings
 conversation_config:
