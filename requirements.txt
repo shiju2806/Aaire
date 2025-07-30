@@ -30,7 +30,7 @@ pycryptodome==3.23.0  # For encrypted PDF handling
 # Advanced OCR and Image Processing
 paddlepaddle==2.6.0  # PaddleOCR backend
 paddleocr==2.8.1  # Advanced OCR engine
-opencv-python==4.10.0.84  # Image preprocessing
+opencv-python-headless==4.10.0.84  # Image preprocessing (headless for servers)
 Pillow==11.3.0  # Image handling (already included but explicit version)
 
 # Basic utilities
