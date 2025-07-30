@@ -80,7 +80,9 @@ class AdvancedOCRProcessor:
                 'tables': [],
                 'charts': [],
                 'text_blocks': [],
-                'numbers': []
+                'numbers': [],
+                'x_axis': [],  # For chart x-axis labels (FY19, FY20, etc.)
+                'legends': []  # For chart legends (Revenue, Operating Expenses, etc.)
             }
             
             for result in ocr_results:
@@ -95,21 +97,50 @@ class AdvancedOCRProcessor:
                 if not text_clean:
                     continue
                 
-                # Detect titles (usually larger, centered, short)
-                if len(text_clean) < 50 and confidence > 0.8:
-                    if any(word in text_clean.upper() for word in ['REVENUE', 'PROFIT', 'QUARTER', 'YEAR', 'TOTAL']):
-                        elements['titles'].append({
-                            'text': text_clean,
-                            'bbox': bbox,
-                            'confidence': confidence
-                        })
+                # Get bounding box coordinates for spatial analysis
+                if isinstance(bbox, list) and len(bbox) >= 4:
+                    # bbox is typically [[x1,y1], [x2,y2], [x3,y3], [x4,y4]]
+                    min_x = min(point[0] for point in bbox)
+                    max_x = max(point[0] for point in bbox)
+                    min_y = min(point[1] for point in bbox)
+                    max_y = max(point[1] for point in bbox)
+                    center_x = (min_x + max_x) / 2
+                    center_y = (min_y + max_y) / 2
+                else:
+                    center_x = center_y = min_x = max_x = min_y = max_y = 0
                 
-                # Detect numbers (financial data)
-                if any(char in text_clean for char in ['$', '%', ',']) or text_clean.replace('.', '').replace(',', '').isdigit():
+                # Detect fiscal year patterns (FY19, FY20, etc.)
+                import re
+                if re.search(r'FY\d{2,4}|fy\d{2,4}|20\d{2}', text_clean):
+                    elements['x_axis'].append({
+                        'text': text_clean,
+                        'bbox': bbox,
+                        'confidence': confidence,
+                        'x_pos': center_x,
+                        'y_pos': center_y
+                    })
+                
+                # Detect chart legends (Revenue, Operating Expenses, Gross Margin, etc.)
+                legend_keywords = ['revenue', 'expense', 'margin', 'profit', 'loss', 'income', 'cost', 'gross', 'operating', 'net']
+                if any(keyword in text_clean.lower() for keyword in legend_keywords) and len(text_clean) < 50:
+                    elements['legends'].append({
+                        'text': text_clean,
+                        'bbox': bbox,
+                        'confidence': confidence,
+                        'x_pos': center_x,
+                        'y_pos': center_y
+                    })
+                
+                # Detect financial values with units
+                if re.search(r'\$[\d,]+\.?\d*[BMK]?|\d+\.?\d*[BMK]?\s*(?:billion|million|thousand)?|\d+\.?\d*%', text_clean):
                     elements['numbers'].append({
                         'text': text_clean,
                         'bbox': bbox,
-                        'confidence': confidence
+                        'confidence': confidence,
+                        'x_pos': center_x,
+                        'y_pos': center_y,
+                        'is_percentage': '%' in text_clean,
+                        'is_currency': '$' in text_clean
                     })
                 
                 # General text blocks
@@ -120,11 +151,12 @@ class AdvancedOCRProcessor:
                 })
             
             logger.debug(f"Document structure detected: {len(elements['titles'])} titles, {len(elements['numbers'])} numbers")
+            logger.debug(f"Chart elements: {len(elements['x_axis'])} x-axis labels, {len(elements['legends'])} legends")
             return elements
             
         except Exception as e:
             logger.error(f"Document structure analysis failed: {e}")
-            return {'titles': [], 'tables': [], 'charts': [], 'text_blocks': [], 'numbers': []}
+            return {'titles': [], 'tables': [], 'charts': [], 'text_blocks': [], 'numbers': [], 'x_axis': [], 'legends': []}
     
     def extract_table_structure(self, image: np.ndarray) -> List[List[str]]:
         """Detect and extract table structure from image"""
@@ -165,6 +197,68 @@ class AdvancedOCRProcessor:
             logger.warning(f"Table structure extraction failed: {e}")
             return []
     
+    def reconstruct_chart_data(self, structure: Dict[str, Any]) -> str:
+        """Reconstruct chart data by matching x-axis labels with values"""
+        try:
+            chart_text = []
+            
+            # Sort x-axis labels by position (left to right)
+            x_labels = sorted(structure.get('x_axis', []), key=lambda x: x.get('x_pos', 0))
+            
+            # Sort legends and values by position
+            legends = structure.get('legends', [])
+            values = structure.get('numbers', [])
+            
+            # Group values by their vertical position (same row = same metric)
+            value_rows = {}
+            for value in values:
+                y_pos = value.get('y_pos', 0)
+                # Round y position to group nearby values
+                y_bucket = round(y_pos / 20) * 20
+                if y_bucket not in value_rows:
+                    value_rows[y_bucket] = []
+                value_rows[y_bucket].append(value)
+            
+            # Build structured output
+            if x_labels:
+                chart_text.append("[CHART DATA STRUCTURE]")
+                chart_text.append(f"X-Axis (Fiscal Years): {', '.join([x['text'] for x in x_labels])}")
+                chart_text.append("")
+            
+            if legends:
+                chart_text.append("Chart Metrics:")
+                for legend in legends:
+                    chart_text.append(f"- {legend['text']}")
+                chart_text.append("")
+            
+            # Try to match values with x-axis labels
+            if x_labels and value_rows:
+                chart_text.append("[EXTRACTED DATA BY YEAR]")
+                for x_label in x_labels:
+                    x_pos = x_label.get('x_pos', 0)
+                    year_text = x_label['text']
+                    chart_text.append(f"\n{year_text}:")
+                    
+                    # Find values near this x position
+                    for y_bucket, row_values in value_rows.items():
+                        nearby_values = [
+                            v for v in row_values 
+                            if abs(v.get('x_pos', 0) - x_pos) < 50  # Values within 50 pixels
+                        ]
+                        for value in nearby_values:
+                            if value.get('is_currency'):
+                                chart_text.append(f"  Revenue/Expense: {value['text']}")
+                            elif value.get('is_percentage'):
+                                chart_text.append(f"  Percentage: {value['text']}")
+                            else:
+                                chart_text.append(f"  Value: {value['text']}")
+            
+            return "\n".join(chart_text) if chart_text else ""
+            
+        except Exception as e:
+            logger.error(f"Chart reconstruction failed: {e}")
+            return ""
+    
     def extract_text_from_image(self, image: np.ndarray, preprocess: bool = True) -> str:
         """Extract text from image using advanced OCR"""
         try:
@@ -193,29 +287,27 @@ class AdvancedOCRProcessor:
             # Build structured text output
             extracted_text = []
             
-            # Add titles first
+            # Add reconstructed chart data first if available
+            if structure.get('x_axis') or structure.get('legends'):
+                chart_reconstruction = self.reconstruct_chart_data(structure)
+                if chart_reconstruction:
+                    extracted_text.append(chart_reconstruction)
+                    extracted_text.append("")
+            
+            # Add titles
             if structure['titles']:
-                extracted_text.append("[CHART TITLES]")
+                extracted_text.append("[ADDITIONAL TITLES]")
                 for title in structure['titles']:
                     extracted_text.append(f"TITLE: {title['text']}")
                 extracted_text.append("")
             
-            # Add financial numbers
-            if structure['numbers']:
-                extracted_text.append("[FINANCIAL DATA]")
+            # Add any remaining unstructured data
+            if structure['numbers'] and not structure.get('x_axis'):
+                # Only show raw numbers if we couldn't structure them
+                extracted_text.append("[UNSTRUCTURED FINANCIAL DATA]")
                 for num in structure['numbers']:
                     extracted_text.append(f"VALUE: {num['text']}")
                 extracted_text.append("")
-            
-            # Add other text
-            remaining_text = []
-            for block in structure['text_blocks']:
-                if block not in structure['titles'] and block not in structure['numbers']:
-                    remaining_text.append(block['text'])
-            
-            if remaining_text:
-                extracted_text.append("[CHART TEXT]")
-                extracted_text.extend(remaining_text)
             
             result = "\n".join(extracted_text)
             logger.info(f"OCR extraction completed: {len(result)} characters extracted")
