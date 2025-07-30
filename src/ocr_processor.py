@@ -21,24 +21,16 @@ class AdvancedOCRProcessor:
         self._initialize_ocr()
     
     def _initialize_ocr(self):
-        """Initialize PaddleOCR engine with optimal settings"""
+        """Initialize EasyOCR engine with optimal settings"""
         try:
-            from paddleocr import PaddleOCR
+            import easyocr
             
-            # Initialize with optimal settings for financial documents
-            self.ocr_engine = PaddleOCR(
-                use_angle_cls=True,  # Detect text angle
-                lang='en',  # English language
-                use_gpu=False,  # CPU mode (compatible everywhere)
-                show_log=False,  # Reduce logging noise
-                det_model_dir=None,  # Use default detection model
-                rec_model_dir=None,  # Use default recognition model
-                cls_model_dir=None,  # Use default classification model
-            )
-            logger.info("Advanced OCR processor initialized successfully")
+            # Initialize EasyOCR with English language support
+            self.ocr_engine = easyocr.Reader(['en'], gpu=False)
+            logger.info("EasyOCR processor initialized successfully")
             
         except ImportError as e:
-            logger.warning(f"PaddleOCR not available, falling back to basic mode: {e}")
+            logger.warning(f"EasyOCR not available, falling back to basic mode: {e}")
             self.ocr_engine = None
         except Exception as e:
             logger.error(f"Failed to initialize OCR engine: {e}")
@@ -181,14 +173,16 @@ class AdvancedOCRProcessor:
             else:
                 processed_image = image
             
-            # Run OCR
-            results = self.ocr_engine.ocr(processed_image, cls=True)
+            # Run EasyOCR
+            results = self.ocr_engine.readtext(processed_image)
             
-            if not results or not results[0]:
+            if not results:
                 return ""
             
-            # Extract text and analyze structure
-            ocr_results = results[0]
+            # Convert EasyOCR format to our format
+            ocr_results = []
+            for (bbox, text, confidence) in results:
+                ocr_results.append([bbox, (text, confidence)])
             structure = self.detect_document_structure(ocr_results)
             
             # Build structured text output

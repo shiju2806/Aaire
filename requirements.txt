@@ -28,10 +28,11 @@ python-pptx==0.6.23  # PowerPoint support
 pycryptodome==3.23.0  # For encrypted PDF handling
 
 # Advanced OCR and Image Processing
-paddlepaddle==2.6.0  # PaddleOCR backend
-paddleocr==2.8.1  # Advanced OCR engine
+easyocr==1.7.0  # Lightweight OCR engine (more stable than PaddleOCR)
 opencv-python-headless==4.10.0.84  # Image preprocessing (headless for servers)
 Pillow==11.3.0  # Image handling (already included but explicit version)
+torch==2.0.1  # Required for EasyOCR
+torchvision==0.15.2  # Required for EasyOCR
 
 # Basic utilities
 redis==5.0.1
