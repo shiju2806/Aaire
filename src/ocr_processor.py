@@ -219,6 +219,14 @@ class AdvancedOCRProcessor:
             
             result = "\n".join(extracted_text)
             logger.info(f"OCR extraction completed: {len(result)} characters extracted")
+            
+            # Log detailed extraction for debugging
+            if result:
+                logger.info(f"OCR extracted text preview: {result[:500]}...")
+                # Log financial data specifically
+                if structure['numbers']:
+                    logger.info(f"Financial values found: {[num['text'] for num in structure['numbers'][:10]]}")
+            
             return result
             
         except Exception as e:

@@ -512,7 +512,12 @@ class DocumentProcessor:
                     content_parts.append("")
                 
                 content_parts.append(f"Processing Status: {ocr_result['processing_status']}")
+                
+                # Log what was extracted for debugging
                 logger.info(f"Advanced OCR processing completed for {file_path.name}")
+                logger.info(f"Extracted text length: {len(ocr_result.get('extracted_text', ''))}")
+                if ocr_result.get('extracted_text'):
+                    logger.info(f"Extracted content preview: {ocr_result['extracted_text'][:200]}...")
                 
             else:
                 content_parts.append("[OCR NOT AVAILABLE]")
