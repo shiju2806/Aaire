@@ -465,11 +465,11 @@ class DocumentProcessor:
                                 # Process with advanced OCR
                                 ocr_result = self.ocr_processor.process_chart_image(image_data)
                                 
-                                if ocr_result['extracted_text']:
+                                if ocr_result.get('extracted_text'):
                                     slide_text.append(f"[CHART/IMAGE ANALYSIS]")
                                     slide_text.append(ocr_result['extracted_text'])
                                     
-                                if ocr_result['table_data']:
+                                if ocr_result.get('table_data'):
                                     slide_text.append(f"[EXTRACTED TABLE DATA]")
                                     for row in ocr_result['table_data']:
                                         slide_text.append(" | ".join(row))
@@ -514,12 +514,13 @@ class DocumentProcessor:
                 logger.info(f"Processing image file with advanced OCR: {file_path.name}")
                 ocr_result = self.ocr_processor.process_chart_image(image_data)
                 
-                if ocr_result['extracted_text']:
+                if ocr_result.get('extracted_text'):
                     content_parts.append("[OCR EXTRACTED CONTENT]")
                     content_parts.append(ocr_result['extracted_text'])
                     content_parts.append("")
                 
-                if ocr_result['table_data']:
+                # Check if table_data exists (only in old OCR processor)
+                if ocr_result.get('table_data'):
                     content_parts.append("[EXTRACTED TABLE DATA]")
                     for row in ocr_result['table_data']:
                         content_parts.append(" | ".join(row))
