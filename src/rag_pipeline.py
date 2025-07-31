@@ -383,9 +383,13 @@ class RAGPipeline:
             session_id = str(uuid.uuid4())
         
         try:
-            # Check cache first
+            # Check cache first (but skip cache for debugging if needed)
             cache_key = self._get_cache_key(query, filters)
-            if self.cache and self.config['retrieval_config']['use_cache']:
+            use_cache = (self.cache and 
+                        self.config['retrieval_config']['use_cache'] and
+                        not os.getenv('DISABLE_CACHE', '').lower() in ('true', '1', 'yes'))
+            
+            if use_cache:
                 cached_response = self.cache.get(cache_key)
                 if cached_response:
                     logger.info("Returning cached response", query_hash=cache_key[:8])
@@ -1195,12 +1199,40 @@ Follow-up Questions:"""
         return round(confidence, 3)
     
     def _get_cache_key(self, query: str, filters: Optional[Dict]) -> str:
-        """Generate cache key for query"""
+        """Generate cache key for query that includes document state"""
         import hashlib
-        cache_data = {
-            'query': query,
-            'filters': filters or {}
-        }
+        
+        # Include document state in cache key so it invalidates when documents change
+        try:
+            # Get document count and last modification from vector store
+            doc_count = 0
+            last_modified = "unknown"
+            
+            if hasattr(self, 'vector_store') and self.vector_store:
+                try:
+                    # Try to get basic stats from vector store
+                    if hasattr(self.vector_store, 'client'):
+                        collection_info = self.vector_store.client.get_collection(self.index_name)
+                        if collection_info:
+                            doc_count = collection_info.vectors_count or 0
+                except:
+                    # Fallback to zero if we can't get collection info
+                    doc_count = 0
+            
+            cache_data = {
+                'query': query,
+                'filters': filters or {},
+                'doc_count': doc_count,  # Cache invalidates when document count changes
+                'version': '2.0'  # Manual version bump to invalidate old cache entries
+            }
+        except Exception as e:
+            # Fallback cache key if we can't get document state
+            cache_data = {
+                'query': query,
+                'filters': filters or {},
+                'version': '2.0'  # This will invalidate all old cache entries
+            }
+        
         return hashlib.md5(str(cache_data).encode()).hexdigest()
     
     def _serialize_response(self, response: RAGResponse) -> str:
