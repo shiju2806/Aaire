@@ -1302,6 +1302,14 @@ Follow-up Questions:"""
             logger.info(f"✅ ADDED citation from: {filename} (relevance: {relevance_score:.3f})")
         
         logger.info(f"🎯 FINAL RESULT: Generated {len(citations)} citations from {len(retrieved_docs)} retrieved documents")
+        
+        # DEBUG: Print citation details for troubleshooting
+        if citations:
+            for i, citation in enumerate(citations):
+                logger.info(f"Citation {i+1}: source={citation.get('source')}, confidence={citation.get('confidence')}")
+        else:
+            logger.warning("❌ NO CITATIONS GENERATED - this explains missing citation display")
+        
         return citations
     
     def _calculate_confidence(self, retrieved_docs: List[Dict], response: str) -> float:
