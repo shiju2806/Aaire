@@ -245,7 +245,7 @@ Return only the domain name (e.g., "accounting"):"""
             # Simple classification using OpenAI (fallback to keyword matching if unavailable)
             if hasattr(self, 'openai_client') and self.openai_client:
                 response = self.openai_client.chat.completions.create(
-                    model="gpt-3.5-turbo",
+                    model="gpt-4o-mini",
                     messages=[{"role": "user", "content": domain_prompt}],
                     temperature=0.1,
                     max_tokens=10
