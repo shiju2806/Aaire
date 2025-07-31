@@ -1212,7 +1212,11 @@ Follow-up Questions:"""
         for i, doc in enumerate(retrieved_docs):
             filename = doc['metadata'].get('filename', 'Unknown')
             relevance_score = doc.get('relevance_score', doc.get('score', 0.0))
-            logger.info(f"  Doc {i+1}: {filename} - relevance: {relevance_score:.3f}")
+            doc_domain = self._infer_document_domain(filename.lower(), doc.get('content', ''))
+            logger.info(f"  Doc {i+1}: {filename} - relevance: {relevance_score:.3f}, domain: {doc_domain}")
+        
+        logger.info(f"🔍 Query domain detected as: {query_analysis.domain}")
+        logger.info(f"🔍 Query specificity score: {query_analysis.specificity_score:.3f}")
         
         # Use relevance score (not just vector score) for citation filtering
         for i, doc in enumerate(retrieved_docs[:max_citations]):
@@ -1237,9 +1241,9 @@ Follow-up Questions:"""
                     entity_coverage = relevance_breakdown.get('entity_coverage', 0.0)
                     exact_match_score = relevance_breakdown.get('exact_match', 0.0)
                     
-                    # Dynamic thresholds based on query specificity
-                    min_entity_coverage = 0.15 if query_analysis.specificity_score > 0.8 else 0.1
-                    min_exact_match = 0.08 if query_analysis.specificity_score > 0.8 else 0.05
+                    # Dynamic thresholds based on query specificity - temporarily more permissive
+                    min_entity_coverage = 0.1 if query_analysis.specificity_score > 0.8 else 0.05
+                    min_exact_match = 0.05 if query_analysis.specificity_score > 0.8 else 0.02
                     
                     # Require meaningful entity coverage
                     if entity_coverage < min_entity_coverage:
@@ -1259,9 +1263,13 @@ Follow-up Questions:"""
             
             # Check for domain mismatch using relevance engine
             domain_compatibility = self._check_domain_compatibility(query_analysis.domain, doc_domain, doc_filename)
+            logger.info(f"🔍 Domain check: query='{query_analysis.domain}', doc='{doc_domain}', compatible={domain_compatibility['compatible']}")
+            
             if not domain_compatibility['compatible']:
                 logger.info(f"❌ SKIPPING - Domain mismatch: {domain_compatibility['reason']}")
                 continue
+            else:
+                logger.info(f"✅ Domain compatibility passed")
             
             # Filter out generic/assistant response documents
             content_lower = doc['content'].lower()
@@ -1340,13 +1348,15 @@ Follow-up Questions:"""
     def _check_domain_compatibility(self, query_domain: str, doc_domain: str, doc_filename: str) -> Dict[str, Any]:
         """Check if query domain is compatible with document domain"""
         
-        # Define domain compatibility matrix
+        # Define domain compatibility matrix - make more permissive for debugging
         compatibility_matrix = {
-            'accounting_standards': ['accounting_standards', 'foreign_currency', 'general'],
-            'foreign_currency': ['foreign_currency', 'accounting_standards', 'general'],
+            'accounting_standards': ['accounting_standards', 'foreign_currency', 'general', 'accounting'],
+            'foreign_currency': ['foreign_currency', 'accounting_standards', 'general', 'accounting'],
             'insurance': ['insurance', 'actuarial', 'general'],
             'actuarial': ['actuarial', 'insurance', 'general'],
-            'general': ['general', 'accounting_standards', 'foreign_currency', 'insurance', 'actuarial']
+            'accounting': ['accounting', 'accounting_standards', 'foreign_currency', 'general'],
+            'general': ['general', 'accounting_standards', 'foreign_currency', 'insurance', 'actuarial', 'accounting'],
+            None: ['general', 'accounting_standards', 'foreign_currency', 'insurance', 'actuarial', 'accounting']  # Handle None domain
         }
         
         # Get compatible domains for query
