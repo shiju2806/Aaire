@@ -1192,12 +1192,18 @@ Follow-up Questions:"""
         # Use relevance engine for intelligent citation selection
         query_analysis = self.relevance_engine.analyze_query(query)
         
-        # TEMPORARY SIMPLE FIX: Use very permissive citation settings to isolate the issue
-        max_citations = 5
-        score_threshold = 0.1  # Very low threshold to allow almost any document
+        # Smart citation settings based on query analysis and document quality
+        max_citations = 3
         
-        logger.info(f"🔧 TEMPORARY FIX: Using permissive citation settings - threshold: {score_threshold}, max: {max_citations}")
-        logger.info(f"Query type: {query_analysis.query_type.value}, Retrieved docs: {len(retrieved_docs)}")
+        # Dynamic threshold based on top document quality
+        top_scores = [doc.get('relevance_score', doc.get('score', 0)) for doc in retrieved_docs[:3]]
+        if top_scores and max(top_scores) > 0.7:
+            score_threshold = 0.5  # High-quality match found - be selective
+        else:
+            score_threshold = 0.3  # No high-quality matches - be more inclusive
+        
+        logger.info(f"🎯 SMART CITATIONS: threshold={score_threshold}, max={max_citations}, query_type={query_analysis.query_type.value}")
+        logger.info(f"Retrieved docs: {len(retrieved_docs)}, top_scores: {top_scores[:3]}")
         
         logger.info(f"🔍 CITATION EXTRACTION: Processing {len(retrieved_docs)} documents with threshold {score_threshold}")
         
@@ -1224,31 +1230,53 @@ Follow-up Questions:"""
             else:
                 logger.info(f"✅ PASSED threshold check: {relevance_score:.3f} >= {score_threshold}")
             
-            # TEMPORARY: Skip all entity coverage filters to isolate citation issue
-            logger.info(f"🔧 TEMPORARY: Skipping entity coverage filters for debugging")
-            
-            # Log relevance breakdown if available for debugging
+            # Entity coverage filter for specific reference queries
             if query_analysis.query_type.value == "specific_reference":
                 relevance_breakdown = doc.get('relevance_breakdown', {})
                 if relevance_breakdown:
                     entity_coverage = relevance_breakdown.get('entity_coverage', 0.0)
                     exact_match_score = relevance_breakdown.get('exact_match', 0.0)
-                    logger.info(f"📊 Relevance breakdown - entity_coverage: {entity_coverage:.3f}, exact_match: {exact_match_score:.3f}")
-                else:
-                    logger.info(f"📊 No relevance breakdown available for {filename}")
+                    
+                    # Require meaningful entity coverage
+                    if entity_coverage < 0.2:
+                        logger.info(f"❌ SKIPPING - Low entity coverage: {entity_coverage:.3f} < 0.2")
+                        continue
+                    
+                    # Require some exact matches for highly specific queries
+                    if len(query_analysis.entities) > 0 and exact_match_score < 0.1:
+                        logger.info(f"❌ SKIPPING - Poor exact matches: {exact_match_score:.3f} < 0.1")
+                        continue
+                        
+                    logger.info(f"✅ Entity filters passed - coverage: {entity_coverage:.3f}, exact: {exact_match_score:.3f}")
             
-            # TEMPORARY: Skip domain mismatch filters to isolate citation issue
+            # Domain filtering to prevent irrelevant document contamination
             doc_filename = doc['metadata'].get('filename', '').lower()
-            logger.info(f"🔧 TEMPORARY: Skipping domain mismatch filters for debugging - document: {doc_filename}, query domain: {query_analysis.domain}")
             
-            # TEMPORARY: Skip generic response filters to isolate citation issue
+            # Block LICAT for accounting standard queries (ASC, IFRS, etc.)
+            if 'licat' in doc_filename and any(term in query.lower() for term in ['asc ', 'ifrs', 'gaap', 'standard']):
+                logger.info(f"❌ SKIPPING - LICAT document for accounting standard query")
+                continue
+            
+            # Block PWC foreign currency for insurance-specific queries
+            if ('pwc' in doc_filename and 'foreign' in doc_filename and 
+                any(term in query.lower() for term in ['insurance', 'licat', 'capital', 'regulatory'])):
+                logger.info(f"❌ SKIPPING - PWC document for insurance query")
+                continue
+            
+            # Filter out generic/assistant response documents
             content_lower = doc['content'].lower()
             filename_lower = doc['metadata'].get('filename', '').lower()
-            logger.info(f"🔧 TEMPORARY: Skipping generic response filters for debugging")
             
-            # TEMPORARY: Skip image query filters to isolate citation issue
-            query_lower = getattr(self, '_current_query', '').lower()
-            logger.info(f"🔧 TEMPORARY: Skipping image query filters for debugging")
+            # Skip obvious assistant responses
+            if any(phrase in content_lower for phrase in [
+                'how can i assist you today',
+                'feel free to share',
+                'what can i help you with',
+                'how may i help',
+                'hello! how can i assist'
+            ]):
+                logger.info(f"❌ SKIPPING - Generic assistant response document")
+                continue
                 
             # Get filename for source
             filename = doc['metadata'].get('filename', 'Unknown')
