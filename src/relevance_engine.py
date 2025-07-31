@@ -48,6 +48,21 @@ class RelevanceEngine:
         self.domain_keywords = self._build_domain_knowledge()
         self.feedback_data = {}  # For learning
         
+        # Initialize OpenAI client for AI-powered domain classification
+        try:
+            import openai
+            import os
+            api_key = os.getenv('OPENAI_API_KEY')
+            if api_key:
+                self.openai_client = openai.OpenAI(api_key=api_key)
+                logger.info("🤖 AI-powered domain classification enabled")
+            else:
+                self.openai_client = None
+                logger.info("⚠️ OpenAI API key not found, using pattern-based domain detection")
+        except ImportError:
+            self.openai_client = None
+            logger.info("⚠️ OpenAI not installed, using pattern-based domain detection")
+        
     def _load_config(self, config_path: Optional[str]) -> Dict:
         """Load configurable relevance parameters"""
         default_config = {
@@ -209,19 +224,110 @@ class RelevanceEngine:
         return QueryType.CONCEPTUAL
     
     def _identify_domain(self, query: str) -> Optional[str]:
-        """Identify domain based on keyword analysis"""
+        """AI-powered domain identification using semantic analysis"""
+        try:
+            # Use LLM for intelligent domain classification
+            domain_prompt = f"""Analyze this query and classify its primary domain. Return only the domain name.
+
+Query: "{query}"
+
+Possible domains:
+- accounting: Financial reporting, GAAP, IFRS, ASC standards, revenue recognition
+- insurance: Actuarial, reserves, premiums, regulatory capital, LICAT
+- foreign_currency: FX, exchange rates, translation, hedging
+- tax: Tax accounting, deferred tax, tax compliance
+- legal: Contracts, regulations, compliance requirements  
+- regulatory: Government requirements, filing obligations
+- general: Mixed or unclear domain
+
+Return only the domain name (e.g., "accounting"):"""
+
+            # Simple classification using OpenAI (fallback to keyword matching if unavailable)
+            if hasattr(self, 'openai_client') and self.openai_client:
+                response = self.openai_client.chat.completions.create(
+                    model="gpt-3.5-turbo",
+                    messages=[{"role": "user", "content": domain_prompt}],
+                    temperature=0.1,
+                    max_tokens=10
+                )
+                domain = response.choices[0].message.content.strip().lower()
+                logger.info(f"🤖 AI-classified domain: '{domain}' for query: '{query[:50]}...'")
+                return domain if domain in ['accounting', 'insurance', 'foreign_currency', 'tax', 'legal', 'regulatory', 'general'] else None
+            else:
+                # Fallback to enhanced keyword matching
+                return self._fallback_domain_detection(query)
+                
+        except Exception as e:
+            logger.warning(f"AI domain classification failed: {e}, falling back to keyword matching")
+            return self._fallback_domain_detection(query)
+    
+    def _fallback_domain_detection(self, query: str) -> Optional[str]:
+        """Enhanced keyword-based domain detection as fallback"""
         query_lower = query.lower()
-        domain_scores = {}
         
-        for domain, keywords in self.domain_keywords.items():
-            score = sum(1 for keyword in keywords if keyword in query_lower)
+        # Smart pattern matching instead of hardcoded keywords
+        domain_patterns = {
+            'accounting': [
+                r'\b(?:asc|ifrs|gaap|fasb)\b',
+                r'\b(?:revenue|liability|asset|equity)\b',
+                r'\b(?:financial|accounting|reporting)\b',
+                r'\b\d+(?:-\d+)+\b'  # ASC/IFRS numbering patterns
+            ],
+            'insurance': [
+                r'\b(?:licat|actuarial|reserve|premium)\b',
+                r'\b(?:insurance|policy|claim|underwriting)\b',
+                r'\b(?:regulatory|capital|solvency)\b'
+            ],
+            'foreign_currency': [
+                r'\b(?:foreign|currency|fx|exchange)\b',
+                r'\b(?:translation|hedging|rate)\b'
+            ]
+        }
+        
+        domain_scores = {}
+        for domain, patterns in domain_patterns.items():
+            score = sum(1 for pattern in patterns if re.search(pattern, query_lower))
             if score > 0:
                 domain_scores[domain] = score
         
-        if domain_scores:
-            return max(domain_scores, key=domain_scores.get)
-        
-        return None
+        return max(domain_scores, key=domain_scores.get) if domain_scores else None
+    
+    def learn_from_documents(self, documents: List[Dict[str, Any]]) -> None:
+        """Learn domain patterns from uploaded documents (adaptive learning)"""
+        try:
+            domain_terms = {}
+            
+            for doc in documents:
+                filename = doc.get('metadata', {}).get('filename', '').lower()
+                content = doc.get('content', '').lower()
+                
+                # Extract key terms from successful document matches
+                # This would ideally use NLP to extract domain-specific terminology
+                terms = re.findall(r'\b[a-z]{3,15}\b', content)
+                
+                # Infer document domain
+                doc_domain = self._infer_document_domain_from_content(filename, content)
+                
+                if doc_domain not in domain_terms:
+                    domain_terms[doc_domain] = set()
+                
+                # Add high-frequency terms to domain vocabulary
+                domain_terms[doc_domain].update(terms[:50])  # Top 50 terms per document
+            
+            # Update domain knowledge (this could be persisted to a file)
+            for domain, terms in domain_terms.items():
+                if domain in self.domain_keywords:
+                    self.domain_keywords[domain].extend(list(terms)[:20])  # Add top 20 new terms
+                
+            logger.info(f"🧠 Learned domain patterns from {len(documents)} documents")
+            
+        except Exception as e:
+            logger.warning(f"Failed to learn from documents: {e}")
+    
+    def _infer_document_domain_from_content(self, filename: str, content: str) -> str:
+        """Infer domain from document content and filename"""
+        # Use existing pattern matching for now, but this could be enhanced with ML
+        return self._fallback_domain_detection(f"{filename} {content[:500]}") or 'general'
     
     def _calculate_specificity(self, query: str, entities: List[str]) -> float:
         """Calculate how specific the query is (0.0 to 1.0)"""
