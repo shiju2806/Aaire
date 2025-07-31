@@ -403,32 +403,33 @@ class RAGPipeline:
             # Store current query for citation filtering
             self._current_query = query
             
-            # Retrieve relevant documents using expanded query and adaptive threshold
+            # ALWAYS search uploaded documents first
             retrieved_docs = await self._retrieve_documents(expanded_query, doc_type_filter, similarity_threshold)
             
-            # Check if this is a general knowledge query
-            is_general_query = self._is_general_knowledge_query(query)
-            
-            # For general knowledge queries, don't pass any documents to avoid citation generation
-            if is_general_query:
-                logger.info(f"General knowledge query detected: '{query}' - using general knowledge response")
-                response = await self._generate_response(query, [], user_context, conversation_history)  # Empty docs list
-                # Force remove any citations from general knowledge response
-                response = self._remove_citations_from_response(response)
-                citations = []
-                confidence = 0.3  # Low confidence for general knowledge responses
-            else:
-                # Generate response with retrieved documents
+            # Check if we found relevant documents in uploaded content
+            if retrieved_docs and len(retrieved_docs) > 0:
+                # Found relevant documents - use them for response
+                logger.info(f"Found {len(retrieved_docs)} relevant documents for query: '{query[:50]}...'")
                 response = await self._generate_response(query, retrieved_docs, user_context, conversation_history)
+                citations = self._extract_citations(retrieved_docs, query)
+                confidence = self._calculate_confidence(retrieved_docs, response)
+            else:
+                # No relevant documents found - check if this could be general knowledge
+                is_general_query = self._is_general_knowledge_query(query)
                 
-                # Extract citations only if we have relevant documents
-                if retrieved_docs:
-                    citations = self._extract_citations(retrieved_docs, query)
-                    confidence = self._calculate_confidence(retrieved_docs, response)
-                else:
-                    # No relevant documents found - no citations and low confidence
+                if is_general_query:
+                    # Use general knowledge response
+                    logger.info(f"No relevant documents found, using general knowledge for: '{query[:50]}...'")
+                    response = await self._generate_response(query, [], user_context, conversation_history)
+                    response = self._remove_citations_from_response(response)
                     citations = []
                     confidence = 0.3  # Low confidence for general knowledge responses
+                else:
+                    # Specific query but no documents found - indicate this clearly
+                    logger.warning(f"No relevant documents found for specific query: '{query[:50]}...'")
+                    response = f"I couldn't find specific information about this topic in the uploaded documents. This query appears to be asking for specific document content, but no relevant documents were found that contain information about: {query}"
+                    citations = []
+                    confidence = 0.1  # Very low confidence when we can't find specific content
             
             # Generate contextual follow-up questions
             follow_up_questions = await self._generate_follow_up_questions(query, response, retrieved_docs)
