@@ -423,7 +423,7 @@ class RAGPipeline:
                 
                 # Extract citations only if we have relevant documents
                 if retrieved_docs:
-                    citations = self._extract_citations(retrieved_docs)
+                    citations = self._extract_citations(retrieved_docs, query)
                     confidence = self._calculate_confidence(retrieved_docs, response)
                 else:
                     # No relevant documents found - no citations and low confidence
@@ -1099,7 +1099,7 @@ Follow-up Questions:"""
                 
         return False
     
-    def _extract_citations(self, retrieved_docs: List[Dict]) -> List[Dict[str, Any]]:
+    def _extract_citations(self, retrieved_docs: List[Dict], query: str = "") -> List[Dict[str, Any]]:
         """Extract citation information from retrieved documents"""
         citations = []
         
@@ -1108,8 +1108,15 @@ Follow-up Questions:"""
         if retrieved_docs:
             top_scores = [doc['score'] for doc in retrieved_docs[:3]]
             min_top_score = min(top_scores) if top_scores else 0.75
-            # More strict threshold - only show citations for truly relevant docs
-            CITATION_THRESHOLD = max(0.75, min_top_score - 0.02)  # Much stricter
+            
+            # Special handling for specific ASC code queries
+            import re
+            if re.search(r'ASC \d{3}-\d{2}', query):
+                CITATION_THRESHOLD = max(0.5, min_top_score - 0.1)  # More lenient for ASC queries
+                logger.info(f"ASC code query detected, using lower threshold")
+            else:
+                # More strict threshold - only show citations for truly relevant docs
+                CITATION_THRESHOLD = max(0.75, min_top_score - 0.02)  # Much stricter
         else:
             CITATION_THRESHOLD = 0.75  # Fallback to original threshold
         
