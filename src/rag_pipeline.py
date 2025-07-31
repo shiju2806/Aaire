@@ -42,6 +42,7 @@ except ImportError:
 
 import redis
 import structlog
+from .relevance_engine import RelevanceEngine
 
 logger = structlog.get_logger()
 
@@ -143,6 +144,9 @@ class RAGPipeline:
         
         # Initialize hybrid search components
         self._init_hybrid_search()
+        
+        # Initialize advanced relevance engine
+        self.relevance_engine = RelevanceEngine()
         
         logger.info("RAG Pipeline initialized", 
                    model=self.config['llm_config']['model'],
@@ -414,6 +418,16 @@ class RAGPipeline:
             if retrieved_docs and len(retrieved_docs) > 0:
                 # Found relevant documents - use them for response
                 logger.info(f"Found {len(retrieved_docs)} relevant documents for query: '{query[:50]}...'")
+                
+                # Log document sources for transparency
+                doc_sources = [doc['metadata'].get('filename', 'Unknown') for doc in retrieved_docs[:3]]
+                logger.info(f"Top document sources: {doc_sources}")
+                
+                # Check for potential document confusion issues
+                unique_sources = set(doc_sources)
+                if len(unique_sources) > 1:
+                    logger.info(f"Multiple document sources found for query, ensuring comprehensive citation coverage")
+                
                 response = await self._generate_response(query, retrieved_docs, user_context, conversation_history)
                 citations = self._extract_citations(retrieved_docs, query)
                 confidence = self._calculate_confidence(retrieved_docs, response)
@@ -429,9 +443,24 @@ class RAGPipeline:
                     citations = []
                     confidence = 0.3  # Low confidence for general knowledge responses
                 else:
-                    # Specific query but no documents found - indicate this clearly
+                    # Specific query but no documents found - provide detailed feedback
                     logger.warning(f"No relevant documents found for specific query: '{query[:50]}...'")
-                    response = f"I couldn't find specific information about this topic in the uploaded documents. This query appears to be asking for specific document content, but no relevant documents were found that contain information about: {query}"
+                    
+                    # Check what documents we do have available
+                    available_docs = []
+                    try:
+                        if hasattr(self, 'vector_store') and self.vector_store:
+                            # Try to get some info about available documents
+                            sample_docs = await self._vector_search("document", None, 0.1)  # Very low threshold
+                            available_docs = list(set([doc['metadata'].get('filename', 'Unknown') for doc in sample_docs[:5]]))
+                    except:
+                        pass
+                    
+                    if available_docs:
+                        response = f"I couldn't find specific information about '{query}' in the uploaded documents. The available documents include: {', '.join(available_docs)}. Please verify that the document containing this information has been successfully uploaded and processed."
+                    else:
+                        response = f"I couldn't find specific information about '{query}' in the uploaded documents. Please ensure the relevant document has been uploaded and processed successfully."
+                    
                     citations = []
                     confidence = 0.1  # Very low confidence when we can't find specific content
             
@@ -510,8 +539,25 @@ class RAGPipeline:
         vector_results = await self._vector_search(query, doc_type_filter, similarity_threshold)
         keyword_results = await self._keyword_search(query, doc_type_filter)
         
-        # Combine and rerank results
-        combined_results = self._combine_search_results(vector_results, keyword_results, query)
+        # Combine results using advanced relevance engine
+        all_results = vector_results + keyword_results
+        
+        # Remove duplicates while preserving all scoring info
+        unique_results = {}
+        for result in all_results:
+            node_id = result['node_id']
+            if node_id not in unique_results:
+                unique_results[node_id] = result
+            else:
+                # Merge scoring information from both searches
+                existing = unique_results[node_id]
+                existing['search_type'] = 'hybrid'
+                # Keep the higher score
+                if result['score'] > existing['score']:
+                    existing['score'] = result['score']
+        
+        # Use advanced relevance engine for ranking
+        combined_results = self.relevance_engine.rank_documents(query, list(unique_results.values()))
         
         return combined_results
     
@@ -602,11 +648,15 @@ class RAGPipeline:
         return results
     
     def _combine_search_results(self, vector_results: List[Dict], keyword_results: List[Dict], query: str) -> List[Dict]:
-        """Combine and rerank results from vector and keyword search"""
+        """Combine and rerank results from vector and keyword search with exact match boosting"""
         
         try:
             # Create a combined results dictionary to avoid duplicates
             combined_dict = {}
+            
+            # Check for exact matches in query (like ASC codes)
+            exact_match_patterns = re.findall(r'\b(ASC\s+\d{3}-\d{2}-\d{2}-\d{1,2})\b', query, re.IGNORECASE)
+            has_exact_patterns = len(exact_match_patterns) > 0
             
             # Normalize scores and add vector results
             max_vector_score = max([r['score'] for r in vector_results], default=1.0)
@@ -614,10 +664,20 @@ class RAGPipeline:
                 node_id = result['node_id']
                 normalized_score = result['score'] / max_vector_score if max_vector_score > 0 else 0
                 
+                # Check for exact pattern matches in content
+                exact_match_bonus = 0.0
+                if has_exact_patterns:
+                    content = result.get('content', '')
+                    for pattern in exact_match_patterns:
+                        if re.search(re.escape(pattern), content, re.IGNORECASE):
+                            exact_match_bonus += 0.5  # Significant boost for exact matches
+                            logger.info(f"Exact match bonus applied for '{pattern}' in {result['metadata'].get('filename', 'Unknown')}")
+                
                 combined_dict[node_id] = result.copy()
                 combined_dict[node_id]['vector_score'] = normalized_score
                 combined_dict[node_id]['keyword_score'] = 0.0
-                combined_dict[node_id]['combined_score'] = normalized_score * 0.6  # Weight vector search at 60%
+                combined_dict[node_id]['exact_match_bonus'] = exact_match_bonus
+                combined_dict[node_id]['combined_score'] = (normalized_score * 0.6) + exact_match_bonus  # Vector + exact match bonus
             
             # Normalize scores and add/update keyword results
             max_keyword_score = max([r['score'] for r in keyword_results], default=1.0)
@@ -625,11 +685,22 @@ class RAGPipeline:
                 node_id = result['node_id']
                 normalized_score = result['score'] / max_keyword_score if max_keyword_score > 0 else 0
                 
+                # Check for exact matches in keyword results too
+                exact_match_bonus = 0.0
+                if has_exact_patterns:
+                    content = result.get('content', '')
+                    for pattern in exact_match_patterns:
+                        if re.search(re.escape(pattern), content, re.IGNORECASE):
+                            exact_match_bonus += 0.5
+                
                 if node_id in combined_dict:
                     # Update existing result with keyword score
                     combined_dict[node_id]['keyword_score'] = normalized_score
+                    # Recalculate with all components
                     combined_dict[node_id]['combined_score'] = (
-                        combined_dict[node_id]['vector_score'] * 0.6 + normalized_score * 0.4
+                        combined_dict[node_id]['vector_score'] * 0.6 + 
+                        normalized_score * 0.4 + 
+                        combined_dict[node_id]['exact_match_bonus']  # Keep existing bonus
                     )
                     combined_dict[node_id]['search_type'] = 'hybrid'
                 else:
@@ -637,7 +708,8 @@ class RAGPipeline:
                     combined_dict[node_id] = result.copy()
                     combined_dict[node_id]['vector_score'] = 0.0
                     combined_dict[node_id]['keyword_score'] = normalized_score
-                    combined_dict[node_id]['combined_score'] = normalized_score * 0.4  # Weight keyword-only at 40%
+                    combined_dict[node_id]['exact_match_bonus'] = exact_match_bonus
+                    combined_dict[node_id]['combined_score'] = (normalized_score * 0.4) + exact_match_bonus
             
             # Convert back to list and sort by combined score
             final_results = list(combined_dict.values())
@@ -1109,28 +1181,38 @@ Follow-up Questions:"""
         return False
     
     def _extract_citations(self, retrieved_docs: List[Dict], query: str = "") -> List[Dict[str, Any]]:
-        """Extract citation information from retrieved documents"""
+        """Extract citation information using advanced relevance scoring"""
         citations = []
         
-        # Use strict citation threshold to prevent irrelevant citations
-        # Only show citations for highly relevant documents
-        if retrieved_docs:
-            top_scores = [doc['score'] for doc in retrieved_docs[:3]]
-            min_top_score = min(top_scores) if top_scores else 0.75
-            # More strict threshold - only show citations for truly relevant docs
-            CITATION_THRESHOLD = max(0.75, min_top_score - 0.02)  # Much stricter
+        if not retrieved_docs:
+            return citations
+        
+        # Use relevance engine for intelligent citation selection
+        query_analysis = self.relevance_engine.analyze_query(query)
+        
+        # Determine citation parameters based on query analysis
+        if query_analysis.query_type.value == "specific_reference":
+            max_citations = 5  # More citations for specific queries
+            score_threshold = 0.3  # Lower threshold for comprehensive coverage
+            logger.info(f"Specific reference query - including up to {max_citations} citations")
+        elif query_analysis.query_type.value == "contextual":
+            max_citations = 3
+            score_threshold = 0.5  # Medium threshold
         else:
-            CITATION_THRESHOLD = 0.75  # Fallback to original threshold
+            max_citations = 3
+            score_threshold = 0.6  # Higher threshold for general queries
         
-        logger.info(f"Citation threshold calculated: {CITATION_THRESHOLD}")
-        
-        for i, doc in enumerate(retrieved_docs[:5]):
+        # Use relevance score (not just vector score) for citation filtering
+        for i, doc in enumerate(retrieved_docs[:max_citations]):
+            # Use relevance_score if available, otherwise fall back to original score
+            relevance_score = doc.get('relevance_score', doc.get('score', 0.0))
+            
             # Log all document scores for debugging
-            logger.info(f"Document {i+1}: score={doc['score']}, filename={doc['metadata'].get('filename', 'Unknown')}")
+            logger.info(f"Document {i+1}: relevance_score={relevance_score:.3f}, filename={doc['metadata'].get('filename', 'Unknown')}")
             
             # Skip documents with low relevance scores
-            if doc['score'] < CITATION_THRESHOLD:
-                logger.info(f"SKIPPING citation for low-relevance document (score: {doc['score']}) - threshold: {CITATION_THRESHOLD}")
+            if relevance_score < score_threshold:
+                logger.info(f"SKIPPING citation for low-relevance document (score: {relevance_score:.3f}) - threshold: {score_threshold}")
                 continue
             
             # Additional filter: Skip documents that seem to be general/irrelevant responses
