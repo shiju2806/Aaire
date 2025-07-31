@@ -332,18 +332,26 @@ class DocumentProcessor:
                         text_content.append(f"[Page {page_num + 1}]\n{page_text}")
                     
                     # Check for images in PDF and extract with OCR if available
-                    if self.ocr_processor.is_available() and '/XObject' in page.get('/Resources', {}):
-                        try:
-                            x_objects = page['/Resources']['/XObject'].get_object()
-                            for obj_name in x_objects:
-                                obj = x_objects[obj_name]
-                                if obj.get('/Subtype') == '/Image':
-                                    logger.info(f"Processing image in PDF page {page_num + 1}")
-                                    # Extract image data would require more complex PDF processing
-                                    # For now, note that images are present
-                                    text_content.append(f"[IMAGE DETECTED on page {page_num + 1} - Enhanced OCR processing available]")
-                        except Exception as e:
-                            logger.debug(f"Could not process images on page {page_num + 1}: {e}")
+                    try:
+                        resources = page.get('/Resources')
+                        if (self.ocr_processor and self.ocr_processor.is_available() and 
+                            resources and isinstance(resources, dict) and '/XObject' in resources):
+                            
+                            x_objects = resources['/XObject']
+                            if hasattr(x_objects, 'get_object'):
+                                x_objects = x_objects.get_object()
+                            
+                            if isinstance(x_objects, dict):
+                                for obj_name in x_objects:
+                                    try:
+                                        obj = x_objects[obj_name]
+                                        if hasattr(obj, 'get') and obj.get('/Subtype') == '/Image':
+                                            logger.info(f"Processing image in PDF page {page_num + 1}")
+                                            text_content.append(f"[IMAGE DETECTED on page {page_num + 1} - Enhanced OCR processing available]")
+                                    except Exception as e:
+                                        logger.debug(f"Could not process image object on page {page_num + 1}: {e}")
+                    except Exception as e:
+                        logger.debug(f"Could not check for images on page {page_num + 1}: {e}")
                     
                 except Exception as e:
                     logger.warning("Failed to extract page", 
