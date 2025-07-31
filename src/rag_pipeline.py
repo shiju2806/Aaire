@@ -1183,107 +1183,43 @@ Follow-up Questions:"""
         return False
     
     def _extract_citations(self, retrieved_docs: List[Dict], query: str = "") -> List[Dict[str, Any]]:
-        """Extract citation information using advanced relevance scoring"""
+        """Extract citation information - if document was used for response, it should be cited"""
         citations = []
         
         if not retrieved_docs:
+            logger.warning("❌ NO CITATIONS GENERATED - no retrieved documents")
             return citations
         
-        # Use relevance engine for intelligent citation selection
-        query_analysis = self.relevance_engine.analyze_query(query)
-        
-        # Smart citation settings based on query analysis and document quality
-        max_citations = 3
-        
-        # Dynamic threshold based on top document quality
-        top_scores = [doc.get('relevance_score', doc.get('score', 0)) for doc in retrieved_docs[:3]]
-        if top_scores and max(top_scores) > 0.7:
-            score_threshold = 0.5  # High-quality match found - be selective
-        else:
-            score_threshold = 0.3  # No high-quality matches - be more inclusive
-        
-        logger.info(f"🎯 SMART CITATIONS: threshold={score_threshold}, max={max_citations}, query_type={query_analysis.query_type.value}")
-        logger.info(f"Retrieved docs: {len(retrieved_docs)}, top_scores: {top_scores[:3]}")
-        
-        logger.info(f"🔍 CITATION EXTRACTION: Processing {len(retrieved_docs)} documents with threshold {score_threshold}")
-        
-        # DEBUG: Log all retrieved documents before filtering
-        logger.info("📋 DEBUGGING - All retrieved documents:")
+        logger.info(f"🎯 CITATION EXTRACTION: Processing {len(retrieved_docs)} documents")
+        logger.info("📋 All retrieved documents:")
         for i, doc in enumerate(retrieved_docs):
             filename = doc['metadata'].get('filename', 'Unknown')
             relevance_score = doc.get('relevance_score', doc.get('score', 0.0))
-            doc_domain = self._infer_document_domain(filename.lower(), doc.get('content', ''))
-            logger.info(f"  Doc {i+1}: {filename} - relevance: {relevance_score:.3f}, domain: {doc_domain}")
+            logger.info(f"  Doc {i+1}: {filename} - relevance: {relevance_score:.3f}")
         
-        logger.info(f"🔍 Query domain detected as: {query_analysis.domain}")
-        logger.info(f"🔍 Query specificity score: {query_analysis.specificity_score:.3f}")
+        # CORE PRINCIPLE: If a document contributed to the response, it deserves citation
+        # Use the top documents that were actually used for response generation
+        max_citations = 3
         
-        # Use relevance score (not just vector score) for citation filtering
         for i, doc in enumerate(retrieved_docs[:max_citations]):
-            # Use relevance_score if available, otherwise fall back to original score
             relevance_score = doc.get('relevance_score', doc.get('score', 0.0))
             filename = doc['metadata'].get('filename', 'Unknown')
             
-            # Log all document scores for debugging
-            logger.info(f"📄 Document {i+1}: {filename}, relevance_score={relevance_score:.3f}, threshold={score_threshold}")
+            logger.info(f"📄 Processing citation {i+1}: {filename}, relevance_score={relevance_score:.3f}")
             
-            # Skip documents with low relevance scores
-            if relevance_score < score_threshold:
-                logger.info(f"❌ SKIPPING - Low relevance: {relevance_score:.3f} < {score_threshold}")
+            # Simple quality filter - only skip obviously bad documents
+            if relevance_score < 0.1:  # Very permissive threshold
+                logger.info(f"❌ SKIPPING - Extremely low relevance: {relevance_score:.3f}")
                 continue
-            else:
-                logger.info(f"✅ PASSED threshold check: {relevance_score:.3f} >= {score_threshold}")
             
-            # Entity coverage filter for specific reference queries
-            if query_analysis.query_type.value == "specific_reference":
-                relevance_breakdown = doc.get('relevance_breakdown', {})
-                if relevance_breakdown:
-                    entity_coverage = relevance_breakdown.get('entity_coverage', 0.0)
-                    exact_match_score = relevance_breakdown.get('exact_match', 0.0)
-                    
-                    # Dynamic thresholds based on query specificity - temporarily more permissive
-                    min_entity_coverage = 0.1 if query_analysis.specificity_score > 0.8 else 0.05
-                    min_exact_match = 0.05 if query_analysis.specificity_score > 0.8 else 0.02
-                    
-                    # Require meaningful entity coverage
-                    if entity_coverage < min_entity_coverage:
-                        logger.info(f"❌ SKIPPING - Low entity coverage: {entity_coverage:.3f} < {min_entity_coverage}")
-                        continue
-                    
-                    # Require some exact matches for highly specific queries
-                    if len(query_analysis.entities) > 0 and exact_match_score < min_exact_match:
-                        logger.info(f"❌ SKIPPING - Poor exact matches: {exact_match_score:.3f} < {min_exact_match}")
-                        continue
-                        
-                    logger.info(f"✅ Entity filters passed - coverage: {entity_coverage:.3f}, exact: {exact_match_score:.3f}")
-            
-            # Dynamic domain filtering using relevance engine domain detection
-            doc_filename = doc['metadata'].get('filename', '').lower()
-            doc_domain = self._infer_document_domain(doc_filename, doc.get('content', ''))
-            
-            # Check for domain mismatch using relevance engine
-            domain_compatibility = self._check_domain_compatibility(query_analysis.domain, doc_domain, doc_filename)
-            logger.info(f"🔍 Domain check: query='{query_analysis.domain}', doc='{doc_domain}', compatible={domain_compatibility['compatible']}")
-            
-            if not domain_compatibility['compatible']:
-                logger.info(f"❌ SKIPPING - Domain mismatch: {domain_compatibility['reason']}")
-                continue
-            else:
-                logger.info(f"✅ Domain compatibility passed")
-            
-            # Filter out generic/assistant response documents
-            content_lower = doc['content'].lower()
-            filename_lower = doc['metadata'].get('filename', '').lower()
-            
-            # Skip obvious assistant responses
+            # Skip obvious generic responses only
+            content_lower = doc.get('content', '').lower()
             if any(phrase in content_lower for phrase in [
                 'how can i assist you today',
                 'feel free to share',
-                'what can i help you with',
-                'how may i help',
-                'hello! how can i assist'
+                'what can i help you with'
             ]):
-                logger.info(f"❌ SKIPPING - Generic assistant response document")
+                logger.info(f"❌ SKIPPING - Generic assistant response")
                 continue
                 
             # Get filename for source
