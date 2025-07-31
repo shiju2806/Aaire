@@ -1237,30 +1237,30 @@ Follow-up Questions:"""
                     entity_coverage = relevance_breakdown.get('entity_coverage', 0.0)
                     exact_match_score = relevance_breakdown.get('exact_match', 0.0)
                     
+                    # Dynamic thresholds based on query specificity
+                    min_entity_coverage = 0.15 if query_analysis.specificity_score > 0.8 else 0.1
+                    min_exact_match = 0.08 if query_analysis.specificity_score > 0.8 else 0.05
+                    
                     # Require meaningful entity coverage
-                    if entity_coverage < 0.2:
-                        logger.info(f"❌ SKIPPING - Low entity coverage: {entity_coverage:.3f} < 0.2")
+                    if entity_coverage < min_entity_coverage:
+                        logger.info(f"❌ SKIPPING - Low entity coverage: {entity_coverage:.3f} < {min_entity_coverage}")
                         continue
                     
                     # Require some exact matches for highly specific queries
-                    if len(query_analysis.entities) > 0 and exact_match_score < 0.1:
-                        logger.info(f"❌ SKIPPING - Poor exact matches: {exact_match_score:.3f} < 0.1")
+                    if len(query_analysis.entities) > 0 and exact_match_score < min_exact_match:
+                        logger.info(f"❌ SKIPPING - Poor exact matches: {exact_match_score:.3f} < {min_exact_match}")
                         continue
                         
                     logger.info(f"✅ Entity filters passed - coverage: {entity_coverage:.3f}, exact: {exact_match_score:.3f}")
             
-            # Domain filtering to prevent irrelevant document contamination
+            # Dynamic domain filtering using relevance engine domain detection
             doc_filename = doc['metadata'].get('filename', '').lower()
+            doc_domain = self._infer_document_domain(doc_filename, doc.get('content', ''))
             
-            # Block LICAT for accounting standard queries (ASC, IFRS, etc.)
-            if 'licat' in doc_filename and any(term in query.lower() for term in ['asc ', 'ifrs', 'gaap', 'standard']):
-                logger.info(f"❌ SKIPPING - LICAT document for accounting standard query")
-                continue
-            
-            # Block PWC foreign currency for insurance-specific queries
-            if ('pwc' in doc_filename and 'foreign' in doc_filename and 
-                any(term in query.lower() for term in ['insurance', 'licat', 'capital', 'regulatory'])):
-                logger.info(f"❌ SKIPPING - PWC document for insurance query")
+            # Check for domain mismatch using relevance engine
+            domain_compatibility = self._check_domain_compatibility(query_analysis.domain, doc_domain, doc_filename)
+            if not domain_compatibility['compatible']:
+                logger.info(f"❌ SKIPPING - Domain mismatch: {domain_compatibility['reason']}")
                 continue
             
             # Filter out generic/assistant response documents
@@ -1310,6 +1310,59 @@ Follow-up Questions:"""
             logger.warning("❌ NO CITATIONS GENERATED - this explains missing citation display")
         
         return citations
+    
+    def _infer_document_domain(self, filename: str, content: str) -> str:
+        """Dynamically infer document domain from filename and content"""
+        filename_lower = filename.lower()
+        content_lower = content.lower()
+        
+        # Insurance/Regulatory domain
+        if any(term in filename_lower for term in ['licat', 'insurance', 'regulatory', 'capital']):
+            return 'insurance'
+        
+        # Accounting standards domain
+        if any(term in filename_lower for term in ['pwc', 'asc', 'ifrs', 'gaap']) or \
+           any(term in content_lower for term in ['asc ', 'ifrs', 'accounting standard']):
+            return 'accounting_standards'
+        
+        # Foreign currency domain
+        if any(term in filename_lower for term in ['foreign', 'currency', 'fx']) or \
+           any(term in content_lower for term in ['foreign currency', 'exchange rate']):
+            return 'foreign_currency'
+        
+        # Actuarial domain
+        if any(term in filename_lower for term in ['actuarial', 'valuation', 'reserves']) or \
+           any(term in content_lower for term in ['actuarial', 'present value', 'discount rate']):
+            return 'actuarial'
+        
+        return 'general'
+    
+    def _check_domain_compatibility(self, query_domain: str, doc_domain: str, doc_filename: str) -> Dict[str, Any]:
+        """Check if query domain is compatible with document domain"""
+        
+        # Define domain compatibility matrix
+        compatibility_matrix = {
+            'accounting_standards': ['accounting_standards', 'foreign_currency', 'general'],
+            'foreign_currency': ['foreign_currency', 'accounting_standards', 'general'],
+            'insurance': ['insurance', 'actuarial', 'general'],
+            'actuarial': ['actuarial', 'insurance', 'general'],
+            'general': ['general', 'accounting_standards', 'foreign_currency', 'insurance', 'actuarial']
+        }
+        
+        # Get compatible domains for query
+        compatible_domains = compatibility_matrix.get(query_domain, ['general'])
+        
+        # Check compatibility
+        if doc_domain in compatible_domains:
+            return {
+                'compatible': True,
+                'reason': f"Query domain '{query_domain}' compatible with document domain '{doc_domain}'"
+            }
+        else:
+            return {
+                'compatible': False,
+                'reason': f"Query domain '{query_domain}' incompatible with document domain '{doc_domain}' (file: {doc_filename})"
+            }
     
     def _calculate_confidence(self, retrieved_docs: List[Dict], response: str) -> float:
         """Calculate confidence score for the response"""
