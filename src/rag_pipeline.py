@@ -1192,29 +1192,21 @@ Follow-up Questions:"""
         # Use relevance engine for intelligent citation selection
         query_analysis = self.relevance_engine.analyze_query(query)
         
-        # Determine citation parameters based on query analysis
-        if query_analysis.query_type.value == "specific_reference":
-            max_citations = 5  # More citations for specific queries
-            
-            # Dynamic threshold based on top result quality
-            top_scores = [doc.get('relevance_score', doc.get('score', 0)) for doc in retrieved_docs[:3]]
-            if top_scores and max(top_scores) > 0.7:
-                # High-quality match found - be more selective
-                score_threshold = 0.5  # Higher threshold when we have good matches
-                logger.info(f"High-quality specific reference match found - using selective threshold: {score_threshold}")
-            else:
-                # No high-quality matches - be more inclusive
-                score_threshold = 0.3
-                logger.info(f"No high-quality matches - using inclusive threshold: {score_threshold}")
-            
-        elif query_analysis.query_type.value == "contextual":
-            max_citations = 3
-            score_threshold = 0.5  # Medium threshold
-        else:
-            max_citations = 3
-            score_threshold = 0.6  # Higher threshold for general queries
+        # TEMPORARY SIMPLE FIX: Use very permissive citation settings to isolate the issue
+        max_citations = 5
+        score_threshold = 0.1  # Very low threshold to allow almost any document
+        
+        logger.info(f"🔧 TEMPORARY FIX: Using permissive citation settings - threshold: {score_threshold}, max: {max_citations}")
+        logger.info(f"Query type: {query_analysis.query_type.value}, Retrieved docs: {len(retrieved_docs)}")
         
         logger.info(f"🔍 CITATION EXTRACTION: Processing {len(retrieved_docs)} documents with threshold {score_threshold}")
+        
+        # DEBUG: Log all retrieved documents before filtering
+        logger.info("📋 DEBUGGING - All retrieved documents:")
+        for i, doc in enumerate(retrieved_docs):
+            filename = doc['metadata'].get('filename', 'Unknown')
+            relevance_score = doc.get('relevance_score', doc.get('score', 0.0))
+            logger.info(f"  Doc {i+1}: {filename} - relevance: {relevance_score:.3f}")
         
         # Use relevance score (not just vector score) for citation filtering
         for i, doc in enumerate(retrieved_docs[:max_citations]):
@@ -1232,77 +1224,31 @@ Follow-up Questions:"""
             else:
                 logger.info(f"✅ PASSED threshold check: {relevance_score:.3f} >= {score_threshold}")
             
-            # Additional filter for specific reference queries: require entity coverage
+            # TEMPORARY: Skip all entity coverage filters to isolate citation issue
+            logger.info(f"🔧 TEMPORARY: Skipping entity coverage filters for debugging")
+            
+            # Log relevance breakdown if available for debugging
             if query_analysis.query_type.value == "specific_reference":
-                # Check if relevance breakdown exists (might be missing)
                 relevance_breakdown = doc.get('relevance_breakdown', {})
-                
                 if relevance_breakdown:
                     entity_coverage = relevance_breakdown.get('entity_coverage', 0.0)
                     exact_match_score = relevance_breakdown.get('exact_match', 0.0)
-                    
-                    if entity_coverage < 0.1:  # Must cover at least 10% of query entities
-                        logger.info(f"SKIPPING citation for specific query - no entity coverage (coverage: {entity_coverage:.3f})")
-                        continue
-                    
-                    # Additional check: require some exact match score for highly specific queries
-                    if len(query_analysis.entities) > 0 and exact_match_score < 0.05:
-                        logger.info(f"SKIPPING citation for specific query - no exact matches (exact_score: {exact_match_score:.3f})")
-                        continue
+                    logger.info(f"📊 Relevance breakdown - entity_coverage: {entity_coverage:.3f}, exact_match: {exact_match_score:.3f}")
                 else:
-                    # No relevance breakdown - fallback to basic content check
-                    logger.warning(f"No relevance breakdown for document {doc['metadata'].get('filename', 'Unknown')} - using fallback content check")
-                    content_lower = doc.get('content', '').lower()
-                    
-                    # Simple entity presence check
-                    entity_found = False
-                    for entity in query_analysis.entities:
-                        if entity.lower() in content_lower:
-                            entity_found = True
-                            break
-                    
-                    if not entity_found:
-                        logger.info(f"SKIPPING citation - no entities found in content using fallback check")
-                        continue
+                    logger.info(f"📊 No relevance breakdown available for {filename}")
             
-            # Domain mismatch check: Only block obvious mismatches
+            # TEMPORARY: Skip domain mismatch filters to isolate citation issue
             doc_filename = doc['metadata'].get('filename', '').lower()
+            logger.info(f"🔧 TEMPORARY: Skipping domain mismatch filters for debugging - document: {doc_filename}, query domain: {query_analysis.domain}")
             
-            # Only block LICAT for non-insurance queries, and only if query domain is clearly different
-            if 'licat' in doc_filename and query_analysis.domain not in ['insurance', 'accounting', None]:
-                logger.info(f"SKIPPING citation due to domain mismatch - {query_analysis.domain} query but LICAT document")
-                continue
-            
-            # More specific: only block if we're sure about the mismatch
-            elif (query_analysis.domain == 'insurance' and 
-                  any(term in doc_filename for term in ['pwc']) and 
-                  'foreign' in doc_filename and 'currency' in doc_filename):
-                logger.info(f"SKIPPING citation due to domain mismatch - insurance query but foreign currency document")
-                continue
-            
-            # Additional filter: Skip documents that seem to be general/irrelevant responses
-            # This helps prevent old cached documents from appearing as citations
+            # TEMPORARY: Skip generic response filters to isolate citation issue
             content_lower = doc['content'].lower()
             filename_lower = doc['metadata'].get('filename', '').lower()
+            logger.info(f"🔧 TEMPORARY: Skipping generic response filters for debugging")
             
-            # Skip generic responses
-            if any(phrase in content_lower for phrase in [
-                'how can i assist you today',
-                'feel free to share',
-                'what can i help you with',
-                'how may i help',
-                'hello! how can i assist'
-            ]):
-                logger.info(f"SKIPPING citation for generic response document: {doc['metadata'].get('filename', 'Unknown')}")
-                continue
-            
-            # Skip completely unrelated document types for image-specific queries
+            # TEMPORARY: Skip image query filters to isolate citation issue
             query_lower = getattr(self, '_current_query', '').lower()
-            if any(term in query_lower for term in ['image', 'chart', 'graph', 'figure']):
-                # If asking about images but document is about taxes/personal matters, skip it
-                if any(term in filename_lower for term in ['tax', 'personal', 'canada', 'ey-managing']) and not any(term in content_lower for term in ['revenue', 'fy23', 'financial', 'earnings']):
-                    logger.info(f"SKIPPING citation for unrelated document in image query: {filename_lower}")
-                    continue
+            logger.info(f"🔧 TEMPORARY: Skipping image query filters for debugging")
                 
             # Get filename for source
             filename = doc['metadata'].get('filename', 'Unknown')
