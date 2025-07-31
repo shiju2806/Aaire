@@ -420,13 +420,15 @@ class RAGPipeline:
                 logger.info(f"Found {len(retrieved_docs)} relevant documents for query: '{query[:50]}...'")
                 
                 # Log document sources for transparency
-                doc_sources = [doc['metadata'].get('filename', 'Unknown') for doc in retrieved_docs[:3]]
-                logger.info(f"Top document sources: {doc_sources}")
+                doc_sources = [(doc['metadata'].get('filename', 'Unknown'), 
+                              doc.get('relevance_score', doc.get('score', 0))) 
+                             for doc in retrieved_docs[:5]]
+                logger.info(f"Top document sources with scores: {doc_sources}")
                 
                 # Check for potential document confusion issues
-                unique_sources = set(doc_sources)
+                unique_sources = set([source[0] for source in doc_sources])
                 if len(unique_sources) > 1:
-                    logger.info(f"Multiple document sources found for query, ensuring comprehensive citation coverage")
+                    logger.info(f"Multiple document sources found for query, applying strict citation filters")
                 
                 response = await self._generate_response(query, retrieved_docs, user_context, conversation_history)
                 citations = self._extract_citations(retrieved_docs, query)
@@ -1193,8 +1195,18 @@ Follow-up Questions:"""
         # Determine citation parameters based on query analysis
         if query_analysis.query_type.value == "specific_reference":
             max_citations = 5  # More citations for specific queries
-            score_threshold = 0.3  # Lower threshold for comprehensive coverage
-            logger.info(f"Specific reference query - including up to {max_citations} citations")
+            
+            # Dynamic threshold based on top result quality
+            top_scores = [doc.get('relevance_score', doc.get('score', 0)) for doc in retrieved_docs[:3]]
+            if top_scores and max(top_scores) > 0.7:
+                # High-quality match found - be more selective
+                score_threshold = 0.5  # Higher threshold when we have good matches
+                logger.info(f"High-quality specific reference match found - using selective threshold: {score_threshold}")
+            else:
+                # No high-quality matches - be more inclusive
+                score_threshold = 0.3
+                logger.info(f"No high-quality matches - using inclusive threshold: {score_threshold}")
+            
         elif query_analysis.query_type.value == "contextual":
             max_citations = 3
             score_threshold = 0.5  # Medium threshold
@@ -1213,6 +1225,28 @@ Follow-up Questions:"""
             # Skip documents with low relevance scores
             if relevance_score < score_threshold:
                 logger.info(f"SKIPPING citation for low-relevance document (score: {relevance_score:.3f}) - threshold: {score_threshold}")
+                continue
+            
+            # Additional filter for specific reference queries: require entity coverage
+            if query_analysis.query_type.value == "specific_reference":
+                entity_coverage = doc.get('relevance_breakdown', {}).get('entity_coverage', 0.0)
+                if entity_coverage < 0.1:  # Must cover at least 10% of query entities
+                    logger.info(f"SKIPPING citation for specific query - no entity coverage (coverage: {entity_coverage:.3f})")
+                    continue
+                
+                # Additional check: require some exact match score for highly specific queries
+                exact_match_score = doc.get('relevance_breakdown', {}).get('exact_match', 0.0)
+                if len(query_analysis.entities) > 0 and exact_match_score < 0.05:
+                    logger.info(f"SKIPPING citation for specific query - no exact matches (exact_score: {exact_match_score:.3f})")
+                    continue
+            
+            # Domain mismatch check: penalize documents from clearly different domains
+            doc_filename = doc['metadata'].get('filename', '').lower()
+            if query_analysis.domain == 'foreign_currency' and 'licat' in doc_filename:
+                logger.info(f"SKIPPING citation due to domain mismatch - foreign currency query but insurance document")
+                continue
+            elif query_analysis.domain == 'insurance' and any(term in doc_filename for term in ['pwc', 'foreign', 'currency']):
+                logger.info(f"SKIPPING citation due to domain mismatch - insurance query but foreign currency document")
                 continue
             
             # Additional filter: Skip documents that seem to be general/irrelevant responses
