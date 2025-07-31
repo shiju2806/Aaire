@@ -1214,31 +1214,56 @@ Follow-up Questions:"""
             max_citations = 3
             score_threshold = 0.6  # Higher threshold for general queries
         
+        logger.info(f"🔍 CITATION EXTRACTION: Processing {len(retrieved_docs)} documents with threshold {score_threshold}")
+        
         # Use relevance score (not just vector score) for citation filtering
         for i, doc in enumerate(retrieved_docs[:max_citations]):
             # Use relevance_score if available, otherwise fall back to original score
             relevance_score = doc.get('relevance_score', doc.get('score', 0.0))
+            filename = doc['metadata'].get('filename', 'Unknown')
             
             # Log all document scores for debugging
-            logger.info(f"Document {i+1}: relevance_score={relevance_score:.3f}, filename={doc['metadata'].get('filename', 'Unknown')}")
+            logger.info(f"📄 Document {i+1}: {filename}, relevance_score={relevance_score:.3f}, threshold={score_threshold}")
             
             # Skip documents with low relevance scores
             if relevance_score < score_threshold:
-                logger.info(f"SKIPPING citation for low-relevance document (score: {relevance_score:.3f}) - threshold: {score_threshold}")
+                logger.info(f"❌ SKIPPING - Low relevance: {relevance_score:.3f} < {score_threshold}")
                 continue
+            else:
+                logger.info(f"✅ PASSED threshold check: {relevance_score:.3f} >= {score_threshold}")
             
             # Additional filter for specific reference queries: require entity coverage
             if query_analysis.query_type.value == "specific_reference":
-                entity_coverage = doc.get('relevance_breakdown', {}).get('entity_coverage', 0.0)
-                if entity_coverage < 0.1:  # Must cover at least 10% of query entities
-                    logger.info(f"SKIPPING citation for specific query - no entity coverage (coverage: {entity_coverage:.3f})")
-                    continue
+                # Check if relevance breakdown exists (might be missing)
+                relevance_breakdown = doc.get('relevance_breakdown', {})
                 
-                # Additional check: require some exact match score for highly specific queries
-                exact_match_score = doc.get('relevance_breakdown', {}).get('exact_match', 0.0)
-                if len(query_analysis.entities) > 0 and exact_match_score < 0.05:
-                    logger.info(f"SKIPPING citation for specific query - no exact matches (exact_score: {exact_match_score:.3f})")
-                    continue
+                if relevance_breakdown:
+                    entity_coverage = relevance_breakdown.get('entity_coverage', 0.0)
+                    exact_match_score = relevance_breakdown.get('exact_match', 0.0)
+                    
+                    if entity_coverage < 0.1:  # Must cover at least 10% of query entities
+                        logger.info(f"SKIPPING citation for specific query - no entity coverage (coverage: {entity_coverage:.3f})")
+                        continue
+                    
+                    # Additional check: require some exact match score for highly specific queries
+                    if len(query_analysis.entities) > 0 and exact_match_score < 0.05:
+                        logger.info(f"SKIPPING citation for specific query - no exact matches (exact_score: {exact_match_score:.3f})")
+                        continue
+                else:
+                    # No relevance breakdown - fallback to basic content check
+                    logger.warning(f"No relevance breakdown for document {doc['metadata'].get('filename', 'Unknown')} - using fallback content check")
+                    content_lower = doc.get('content', '').lower()
+                    
+                    # Simple entity presence check
+                    entity_found = False
+                    for entity in query_analysis.entities:
+                        if entity.lower() in content_lower:
+                            entity_found = True
+                            break
+                    
+                    if not entity_found:
+                        logger.info(f"SKIPPING citation - no entities found in content using fallback check")
+                        continue
             
             # Domain mismatch check: Only block obvious mismatches
             doc_filename = doc['metadata'].get('filename', '').lower()
