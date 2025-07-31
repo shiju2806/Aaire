@@ -1240,12 +1240,18 @@ Follow-up Questions:"""
                     logger.info(f"SKIPPING citation for specific query - no exact matches (exact_score: {exact_match_score:.3f})")
                     continue
             
-            # Domain mismatch check: penalize documents from clearly different domains
+            # Domain mismatch check: Only block obvious mismatches
             doc_filename = doc['metadata'].get('filename', '').lower()
-            if query_analysis.domain == 'foreign_currency' and 'licat' in doc_filename:
-                logger.info(f"SKIPPING citation due to domain mismatch - foreign currency query but insurance document")
+            
+            # Only block LICAT for non-insurance queries, and only if query domain is clearly different
+            if 'licat' in doc_filename and query_analysis.domain not in ['insurance', 'accounting', None]:
+                logger.info(f"SKIPPING citation due to domain mismatch - {query_analysis.domain} query but LICAT document")
                 continue
-            elif query_analysis.domain == 'insurance' and any(term in doc_filename for term in ['pwc', 'foreign', 'currency']):
+            
+            # More specific: only block if we're sure about the mismatch
+            elif (query_analysis.domain == 'insurance' and 
+                  any(term in doc_filename for term in ['pwc']) and 
+                  'foreign' in doc_filename and 'currency' in doc_filename):
                 logger.info(f"SKIPPING citation due to domain mismatch - insurance query but foreign currency document")
                 continue
             
@@ -1281,7 +1287,7 @@ Follow-up Questions:"""
                 "text": doc['content'][:200] + "..." if len(doc['content']) > 200 else doc['content'],
                 "source": filename,
                 "source_type": doc['source_type'],
-                "confidence": round(doc['score'], 3)
+                "confidence": round(relevance_score, 3)  # Use relevance score instead of original score
             }
             
             # Add additional metadata if available
@@ -1293,8 +1299,9 @@ Follow-up Questions:"""
                 citation['standard'] = doc['metadata']['standard']
                 
             citations.append(citation)
+            logger.info(f"✅ ADDED citation from: {filename} (relevance: {relevance_score:.3f})")
         
-        logger.info(f"Generated {len(citations)} citations from {len(retrieved_docs)} retrieved documents")
+        logger.info(f"🎯 FINAL RESULT: Generated {len(citations)} citations from {len(retrieved_docs)} retrieved documents")
         return citations
     
     def _calculate_confidence(self, retrieved_docs: List[Dict], response: str) -> float:
