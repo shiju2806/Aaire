@@ -899,22 +899,53 @@ Response:"""
         categories = self._determine_question_categories(query, response, retrieved_docs)
         category_examples = self._get_category_examples(categories)
         
-        # Determine context for better follow-up questions
+        # Analyze actual document content for specific follow-up opportunities
+        content_insights = self._analyze_document_content_for_followups(retrieved_docs[:2])  # Analyze top 2 docs
+        
+        # Build rich context from document content analysis
         topic_context = ""
-        if retrieved_docs:
-            # Use document context for specific follow-ups
-            topics = []
-            for doc in retrieved_docs[:3]:  # Use top 3 documents for context
-                if 'source' in doc.get('metadata', {}):
-                    topics.append(doc['metadata']['source'])
-            if topics:
-                topic_context = f"Related to documents: {', '.join(topics[:2])}"
+        if content_insights:
+            context_parts = []
+            for insight_type, items in content_insights.items():
+                if items and insight_type != 'source_docs':
+                    context_parts.append(f"{insight_type}: {', '.join(items[:3])}")  # Top 3 items per type
+            
+            if context_parts:
+                topic_context = f"Document content analysis:\n" + "\n".join(context_parts)
+            
+            # Add source document info
+            source_docs = content_insights.get('source_docs', [])
+            if source_docs:
+                topic_context += f"\nSource documents: {', '.join(source_docs[:2])}"
         
         # Build category guidance
         category_guidance = ""
         for cat, examples in category_examples.items():
             category_guidance += f"\n{cat.title()}: {', '.join(examples[:2])}"
         
+        # Create content-specific guidance for better follow-ups
+        content_guidance = ""
+        if content_insights:
+            guidance_parts = []
+            
+            if content_insights.get('standards_mentioned'):
+                guidance_parts.append(f"Consider asking about other standards: {', '.join(content_insights['standards_mentioned'][:3])}")
+            
+            if content_insights.get('examples_found'):
+                guidance_parts.append("Ask about specific examples or scenarios mentioned in the documents")
+            
+            if content_insights.get('tables_data'):
+                guidance_parts.append(f"Reference specific data: {', '.join(content_insights['tables_data'][:2])}")
+            
+            if content_insights.get('key_concepts'):
+                guidance_parts.append(f"Explore concepts like: {', '.join(content_insights['key_concepts'][:3])}")
+            
+            if content_insights.get('implementation_terms'):
+                guidance_parts.append("Ask about implementation, transition, or adoption aspects")
+            
+            if guidance_parts:
+                content_guidance = f"\nContent-specific opportunities:\n" + "\n".join([f"- {part}" for part in guidance_parts])
+
         prompt = f"""As AAIRE, an insurance accounting and actuarial expert, generate 2-3 specific follow-up questions that would help the user understand this topic better.
 
 Original Question: {query}
@@ -925,10 +956,14 @@ My Response: {response}
 
 Suggested Question Categories:{category_guidance}
 
+{content_guidance}
+
 Instructions:
 - Generate exactly 2-3 concise, specific follow-up questions
-- Use different categories from the suggestions above for variety
-- Make questions relevant to insurance accounting, actuarial science, or compliance
+- Prioritize content-specific questions using the document analysis above
+- Use different categories for variety
+- Make questions highly relevant to insurance accounting, actuarial science, or compliance
+- Reference specific standards, examples, or concepts mentioned in the documents when possible
 - Keep questions under 15 words each
 - Format as a simple list, one question per line
 - No numbering, bullets, or extra formatting
@@ -961,6 +996,79 @@ Follow-up Questions:"""
                 "What are the practical implications?",
                 "How does this apply in practice?"
             ]
+    
+    def _analyze_document_content_for_followups(self, retrieved_docs: List[Dict]) -> Dict[str, List[str]]:
+        """Analyze document content to extract specific elements for targeted follow-up questions"""
+        insights = {
+            'standards_mentioned': [],
+            'examples_found': [],
+            'tables_data': [],
+            'implementation_terms': [],
+            'key_concepts': [],
+            'cross_references': [],
+            'source_docs': []
+        }
+        
+        try:
+            for doc in retrieved_docs:
+                content = doc.get('content', '').lower()
+                filename = doc.get('metadata', {}).get('filename', 'Unknown')
+                insights['source_docs'].append(filename)
+                
+                # Extract accounting standards (ASC, IFRS, etc.)
+                standards = re.findall(r'\b(?:asc|ifrs|ias|fas)\s+\d+(?:[-\.\s]\d+)*\b', content)
+                insights['standards_mentioned'].extend([std.upper() for std in standards])
+                
+                # Find examples in the document
+                examples = re.findall(r'example\s+\d+[:\s][^\.]*\.', content)
+                insights['examples_found'].extend([ex.strip()[:50] + "..." for ex in examples[:2]])
+                
+                # Detect tables and data references
+                table_refs = re.findall(r'table\s+\d+|schedule\s+\d+|appendix\s+[a-z]', content)
+                insights['tables_data'].extend([ref.title() for ref in table_refs])
+                
+                # Find implementation-related terms
+                impl_patterns = [
+                    r'transition\s+requirements?',
+                    r'implementation\s+guidance',
+                    r'effective\s+date',
+                    r'adoption\s+process',
+                    r'system\s+changes?'
+                ]
+                for pattern in impl_patterns:
+                    matches = re.findall(pattern, content)
+                    insights['implementation_terms'].extend([match.title() for match in matches])
+                
+                # Extract key financial/actuarial concepts
+                concept_patterns = [
+                    r'present\s+value',
+                    r'discount\s+rate',
+                    r'fair\s+value',
+                    r'amortization',
+                    r'reserve\s+adequacy',
+                    r'capital\s+ratio',
+                    r'risk\s+adjustment'
+                ]
+                for pattern in concept_patterns:
+                    matches = re.findall(pattern, content)
+                    insights['key_concepts'].extend([match.title() for match in matches])
+                
+                # Find cross-references to other standards/sections
+                cross_refs = re.findall(r'see\s+(?:also\s+)?(?:asc|ifrs|section|paragraph)\s+\d+(?:[-\.\s]\d+)*', content)
+                insights['cross_references'].extend([ref.upper() for ref in cross_refs])
+            
+            # Clean up and deduplicate
+            for key in insights:
+                if key != 'source_docs':
+                    insights[key] = list(set(insights[key]))[:5]  # Max 5 unique items per category
+            
+            logger.info(f"📊 Content analysis extracted: {sum(len(v) if isinstance(v, list) else 0 for v in insights.values())} content elements")
+            return insights
+            
+        except Exception as e:
+            logger.error(f"Failed to analyze document content: {e}")
+            return {'source_docs': [doc.get('metadata', {}).get('filename', 'Unknown') for doc in retrieved_docs]}
+
     
     def _expand_query(self, query: str) -> str:
         """Expand general queries with specific domain terms for better retrieval"""
