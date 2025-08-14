@@ -1,0 +1,16 @@
+[Unit]
+Description=AAIRE - AI Insurance Accounting Assistant
+After=network.target
+
+[Service]
+Type=simple
+User=ec2-user
+WorkingDirectory=/home/ec2-user/aaire
+ExecStart=/usr/bin/python3 main.py
+Restart=always
+RestartSec=10
+Environment=PATH=/usr/bin:/usr/local/bin
+Environment=PYTHONPATH=/home/ec2-user/aaire
+
+[Install]
+WantedBy=multi-user.target
