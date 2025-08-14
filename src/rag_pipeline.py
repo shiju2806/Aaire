@@ -946,30 +946,43 @@ Response:"""
             if guidance_parts:
                 content_guidance = f"\nContent-specific opportunities:\n" + "\n".join([f"- {part}" for part in guidance_parts])
 
-        prompt = f"""As AAIRE, an insurance accounting and actuarial expert, generate 2-3 specific follow-up questions that would help the user understand this topic better.
+        # Extract specific elements from the actual response to create targeted follow-ups
+        response_elements = self._extract_response_elements(response)
+        document_specifics = self._get_document_specifics(retrieved_docs[:2])
+        
+        prompt = f"""Generate 2-3 highly specific follow-up questions based on this EXACT conversation and documents.
 
-Original Question: {query}
+USER ASKED: "{query}"
 
-My Response: {response}
+MY RESPONSE: "{response[:500]}..." 
 
-{topic_context}
+SPECIFIC DOCUMENT CONTENT USED:
+{document_specifics}
 
-Suggested Question Categories:{category_guidance}
+RESPONSE ANALYSIS:
+{response_elements}
 
-{content_guidance}
+CRITICAL INSTRUCTIONS:
+- Questions must be DIRECTLY related to what I just explained to the user
+- Reference SPECIFIC information from the documents that were actually cited
+- Build upon the EXACT conversation context
+- NO generic insurance questions
+- NO questions about topics not mentioned in this specific exchange
+- If my response mentioned specific standards, ask about those exact standards
+- If my response referenced specific sections/examples, ask about those
+- If my response came from a specific document, ask about other parts of that same document
 
-Instructions:
-- Generate exactly 2-3 concise, specific follow-up questions
-- Prioritize content-specific questions using the document analysis above
-- Use different categories for variety
-- Make questions highly relevant to insurance accounting, actuarial science, or compliance
-- Reference specific standards, examples, or concepts mentioned in the documents when possible
-- Keep questions under 15 words each
-- Format as a simple list, one question per line
-- No numbering, bullets, or extra formatting
-- Questions should encourage deeper understanding and practical application
+Examples of GOOD contextual questions:
+- "Can you explain the calculation method mentioned in section X?"
+- "What does the PWC document say about the transition period?"
+- "How does ASC 255-10-50-52 relate to what you just explained?"
 
-Follow-up Questions:"""
+Examples of BAD generic questions to AVOID:
+- "How do claims impact profitability?" 
+- "What strategies do insurers use for capital management?"
+- "Can you explain adjusted operating income?"
+
+Generate exactly 2-3 contextual follow-up questions:"""
 
         try:
             response_obj = self.llm.complete(prompt)
@@ -983,10 +996,16 @@ Follow-up Questions:"""
                     # Clean up any unwanted formatting
                     clean_question = line.strip('- •').strip()
                     if clean_question.endswith('?'):
-                        questions.append(clean_question)
+                        # Validate question is contextual (not generic)
+                        if self._is_contextual_question(clean_question, query, response):
+                            questions.append(clean_question)
             
-            # Return max 3 questions
-            return questions[:3]
+            # Return max 3 questions, fallback if none are contextual
+            if questions:
+                return questions[:3]
+            else:
+                logger.warning("No contextual follow-up questions generated, using response-based fallback")
+                return self._generate_response_based_fallback(query, response, retrieved_docs)
             
         except Exception as e:
             logger.error("Failed to generate follow-up questions", error=str(e))
@@ -1069,6 +1088,180 @@ Follow-up Questions:"""
             logger.error(f"Failed to analyze document content: {e}")
             return {'source_docs': [doc.get('metadata', {}).get('filename', 'Unknown') for doc in retrieved_docs]}
 
+    def _extract_response_elements(self, response: str) -> str:
+        """Extract specific elements mentioned in the response for targeted follow-ups"""
+        elements = []
+        response_lower = response.lower()
+        
+        try:
+            # Extract specific standards mentioned in the response
+            standards_mentioned = re.findall(r'\b(?:asc|ifrs|ias|fas)\s+\d+(?:[-\.\s]\d+)*\b', response_lower)
+            if standards_mentioned:
+                elements.append(f"Standards mentioned: {', '.join(set([s.upper() for s in standards_mentioned]))}")
+            
+            # Extract specific sections or paragraphs referenced
+            sections = re.findall(r'\b(?:section|paragraph|chapter)\s+\d+(?:[.\-]\d+)*\b', response_lower)
+            if sections:
+                elements.append(f"Sections referenced: {', '.join(set(sections))}")
+            
+            # Extract specific examples or scenarios mentioned
+            examples = re.findall(r'example\s+\d+|scenario\s+\d+|case\s+\d+', response_lower)
+            if examples:
+                elements.append(f"Examples mentioned: {', '.join(set(examples))}")
+            
+            # Extract key concepts that could be explored further
+            concepts = []
+            concept_patterns = [
+                r'nonmonetary\s+(?:assets?|liabilities?|items?)',
+                r'monetary\s+(?:assets?|liabilities?|items?)',
+                r'foreign\s+currency\s+translation',
+                r'present\s+value',
+                r'fair\s+value',
+                r'discount\s+rate',
+                r'transition\s+requirements?',
+                r'effective\s+date'
+            ]
+            for pattern in concept_patterns:
+                matches = re.findall(pattern, response_lower)
+                concepts.extend(matches)
+            
+            if concepts:
+                elements.append(f"Key concepts explained: {', '.join(set(concepts)[:3])}")
+            
+            # Extract any calculations or formulas mentioned
+            if any(word in response_lower for word in ['calculate', 'formula', 'computation', 'ratio']):
+                elements.append("Calculations or formulas were mentioned")
+            
+            return "\n".join([f"- {element}" for element in elements]) if elements else "- Response focused on general explanation"
+            
+        except Exception as e:
+            logger.error(f"Failed to extract response elements: {e}")
+            return "- Unable to analyze response elements"
+    
+    def _get_document_specifics(self, retrieved_docs: List[Dict]) -> str:
+        """Extract specific information from the documents that were actually used"""
+        specifics = []
+        
+        try:
+            for i, doc in enumerate(retrieved_docs[:2], 1):
+                filename = doc.get('metadata', {}).get('filename', 'Unknown')
+                content = doc.get('content', '')[:400]  # First 400 chars
+                
+                specifics.append(f"Document {i} ({filename}):")
+                specifics.append(f"Content excerpt: \"{content}...\"")
+                
+                # Extract specific elements from this document
+                content_lower = content.lower()
+                doc_elements = []
+                
+                # Standards in this specific document
+                doc_standards = re.findall(r'\b(?:asc|ifrs|ias|fas)\s+\d+(?:[-\.\s]\d+)*\b', content_lower)
+                if doc_standards:
+                    doc_elements.append(f"Standards: {', '.join(set([s.upper() for s in doc_standards]))}")
+                
+                # Tables or data references
+                tables = re.findall(r'table\s+\d+|schedule\s+\d+|appendix\s+[a-z]', content_lower)
+                if tables:
+                    doc_elements.append(f"Data references: {', '.join(set(tables))}")
+                
+                if doc_elements:
+                    specifics.append(f"Specific elements: {'; '.join(doc_elements)}")
+                
+                specifics.append("")  # Add blank line between documents
+            
+            return "\n".join(specifics) if specifics else "No specific document content available"
+            
+        except Exception as e:
+            logger.error(f"Failed to get document specifics: {e}")
+            return "Unable to analyze document specifics"
+    
+    def _is_contextual_question(self, question: str, original_query: str, response: str) -> bool:
+        """Validate that a follow-up question is contextual to the conversation"""
+        question_lower = question.lower()
+        response_lower = response.lower()
+        query_lower = original_query.lower()
+        
+        # Generic phrases that indicate non-contextual questions
+        generic_phrases = [
+            'how do insurers',
+            'what strategies do',
+            'how does claims impact',
+            'what are some strategies',
+            'how do companies typically',
+            'what are the benefits of',
+            'how can organizations',
+            'what factors influence',
+            'how do unfavorable',
+            'what are some common'
+        ]
+        
+        # Check if question contains generic phrases
+        if any(phrase in question_lower for phrase in generic_phrases):
+            return False
+        
+        # Check if question references something mentioned in the response or query
+        contextual_indicators = [
+            # References specific elements from response/query
+            any(word in question_lower for word in ['mentioned', 'explained', 'described', 'discussed']),
+            # References specific standards that appear in response
+            bool(re.search(r'\b(?:asc|ifrs|ias|fas)\s+\d+', question_lower)) and bool(re.search(r'\b(?:asc|ifrs|ias|fas)\s+\d+', response_lower)),
+            # References document-specific terms
+            any(term in question_lower for term in ['document', 'section', 'example', 'table', 'schedule']),
+            # References calculation or specific concept from response
+            any(term in question_lower and term in response_lower for term in ['calculation', 'method', 'approach', 'guidance']),
+        ]
+        
+        # Must have at least one contextual indicator
+        return any(contextual_indicators)
+    
+    def _generate_response_based_fallback(self, query: str, response: str, retrieved_docs: List[Dict]) -> List[str]:
+        """Generate simple, contextual follow-ups based on the actual response content"""
+        fallback_questions = []
+        
+        try:
+            # Extract key terms from the response to create specific follow-ups
+            response_lower = response.lower()
+            
+            # If response mentions specific standards, ask about related ones
+            standards = re.findall(r'\b(?:asc|ifrs|ias|fas)\s+\d+(?:[-\.\s]\d+)*\b', response_lower)
+            if standards:
+                fallback_questions.append(f"How does {standards[0].upper()} relate to other accounting standards?")
+            
+            # If response mentions calculations, ask for details
+            if any(word in response_lower for word in ['calculate', 'computation', 'formula']):
+                fallback_questions.append("Can you walk through the calculation steps in more detail?")
+            
+            # If response mentions examples, ask for more
+            if 'example' in response_lower:
+                fallback_questions.append("Can you provide another example of this concept?")
+            
+            # If response mentions implementation, ask about challenges
+            if any(word in response_lower for word in ['implement', 'apply', 'adopt']):
+                fallback_questions.append("What are the main challenges in implementing this?")
+            
+            # Document-specific fallback
+            if retrieved_docs:
+                filename = retrieved_docs[0].get('metadata', {}).get('filename', '')
+                if filename:
+                    fallback_questions.append(f"What else does the {filename} document cover on this topic?")
+            
+            # If no specific fallbacks, use minimal contextual ones
+            if not fallback_questions:
+                fallback_questions = [
+                    "Can you clarify any part of this explanation?",
+                    "Are there related concepts I should understand?",
+                    "How would this apply in practice?"
+                ]
+            
+            return fallback_questions[:3]
+            
+        except Exception as e:
+            logger.error(f"Failed to generate fallback questions: {e}")
+            return [
+                "Can you elaborate on this topic?",
+                "What are the key takeaways?",
+                "How does this relate to our previous discussion?"
+            ]
     
     def _expand_query(self, query: str) -> str:
         """Expand general queries with specific domain terms for better retrieval"""
