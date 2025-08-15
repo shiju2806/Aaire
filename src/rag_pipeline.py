@@ -792,7 +792,13 @@ class RAGPipeline:
         
         # Check if we have relevant documents
         if not retrieved_docs:
-            # No relevant documents found - provide general knowledge response
+            # No relevant documents found - check topic classification before general knowledge response
+            topic_check = await self._classify_query_topic(query)
+            if not topic_check['is_relevant']:
+                logger.info(f"❌ General knowledge request rejected as off-topic: '{query[:50]}...'")
+                return topic_check['polite_response']
+                
+            # Query is relevant, provide general knowledge response
             # Check if this is a calculation request
             calc_config = self.config.get('calculation_config', {})
             calc_enhancement = ""
