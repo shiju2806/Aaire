@@ -1035,9 +1035,14 @@ Generate exactly 2-3 contextual follow-up questions that dig deeper into the spe
             for line in questions_text.split('\n'):
                 line = line.strip()
                 if line and len(line) > 10:  # Filter out empty or very short lines
-                    # Clean up any unwanted formatting
+                    # Clean up any unwanted formatting - remove numbers, bullets, quotes
                     clean_question = line.strip('- •').strip()
-                    if clean_question.endswith('?'):
+                    # Remove numbering like "1. " or "2. "
+                    clean_question = re.sub(r'^\d+\.\s*', '', clean_question)
+                    # Remove surrounding quotes
+                    clean_question = clean_question.strip('"\'').strip()
+                    
+                    if clean_question.endswith('?') and len(clean_question) > 10:
                         # Validate question is contextual (not generic)
                         is_contextual = self._is_contextual_question(clean_question, query, response)
                         logger.info(f"🔍 Question validation: '{clean_question}' -> {'✅' if is_contextual else '❌'}")
