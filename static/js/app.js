@@ -22,7 +22,7 @@ class AAIREApp {
     
     performOneTimeCleanup() {
         // FORCE CACHE REFRESH - Check if user has old cached version
-        const currentVersion = '18-hide-sections';
+        const currentVersion = '19-cache-fix';
         const lastVersion = localStorage.getItem('aaire_app_version');
         
         if (lastVersion !== currentVersion) {
