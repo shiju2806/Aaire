@@ -965,24 +965,31 @@ RESPONSE ANALYSIS:
 CRITICAL INSTRUCTIONS:
 - Questions must be DIRECTLY related to what I just explained to the user
 - Reference SPECIFIC information from the documents that were actually cited
-- Build upon the EXACT conversation context
-- NO generic insurance questions
-- NO questions about topics not mentioned in this specific exchange
-- If my response mentioned specific standards, ask about those exact standards
-- If my response referenced specific sections/examples, ask about those
-- If my response came from a specific document, ask about other parts of that same document
+- Build upon the EXACT conversation context and dig deeper into specifics
+- NO generic business/insurance questions
+- Focus on specific metrics, segments, time periods, or data points I mentioned
+- If discussing financial results, ask about specific components or related metrics
+- If discussing business segments, ask about other segments or comparative performance
+- If discussing time periods, ask about trends or comparisons to other periods
 
-Examples of GOOD contextual questions:
-- "Can you explain the calculation method mentioned in section X?"
-- "What does the PWC document say about the transition period?"
-- "How does ASC 255-10-50-52 relate to what you just explained?"
+Examples of GOOD contextual questions for financial discussions:
+- "What drove the unfavorable claims experience in U.S. Traditional that you mentioned?"
+- "How did the other business segments perform compared to the 14.3% ROE you cited?"
+- "What specific factors contributed to the $276 million capital deployment figure?"
+- "Can you break down the components of the variable investment income mentioned?"
 
-Examples of BAD generic questions to AVOID:
+Examples of GOOD contextual questions for technical documents:
+- "What does the PWC document say about the implementation timeline for this standard?"
+- "How does the calculation method in section 3.2 apply to different scenarios?"
+- "What are the disclosure requirements mentioned alongside this guidance?"
+
+Examples of BAD generic questions to COMPLETELY AVOID:
 - "How do claims impact profitability?" 
 - "What strategies do insurers use for capital management?"
 - "Can you explain adjusted operating income?"
+- "What are the benefits of this approach?"
 
-Generate exactly 2-3 contextual follow-up questions:"""
+Generate exactly 2-3 contextual follow-up questions that dig deeper into the specific information I just provided:"""
 
         try:
             response_obj = self.llm.complete(prompt)
@@ -1094,45 +1101,68 @@ Generate exactly 2-3 contextual follow-up questions:"""
         response_lower = response.lower()
         
         try:
-            # Extract specific standards mentioned in the response
+            # Extract specific financial metrics and dollar amounts
+            financial_metrics = []
+            dollar_amounts = re.findall(r'\$[\d,]+(?:\.\d+)?\s*(?:million|billion|thousand)?', response_lower)
+            percentages = re.findall(r'\d+\.\d+%', response_lower)
+            
+            if dollar_amounts:
+                elements.append(f"Financial amounts: {', '.join(dollar_amounts[:3])}")
+            if percentages:
+                elements.append(f"Performance metrics: {', '.join(percentages[:3])}")
+            
+            # Extract specific business segments mentioned
+            segments = re.findall(r'(?:u\.s\.|us|canada|emea|latin america)\s+(?:traditional|group|individual life|financial solutions)', response_lower)
+            if segments:
+                elements.append(f"Business segments: {', '.join(set([s.title() for s in segments[:3]]))}")
+            
+            # Extract time periods and quarters
+            periods = re.findall(r'q[1-4]\s+(?:20\d{2}|results?)|(?:second|first|third|fourth)\s+quarter', response_lower)
+            if periods:
+                elements.append(f"Time periods discussed: {', '.join(set([p.upper() for p in periods]))}")
+            
+            # Extract company/entity names
+            companies = re.findall(r'\b(?:rga|reinsurance group|equitable holdings?)\b', response_lower)
+            if companies:
+                elements.append(f"Companies mentioned: {', '.join(set([c.upper() for c in companies]))}")
+            
+            # Extract performance trends and outcomes
+            performance_terms = []
+            if 'favorable' in response_lower:
+                favorable_items = re.findall(r'favorable\s+(?:\w+\s+){0,2}(?:experience|performance|results?|investment)', response_lower)
+                performance_terms.extend(favorable_items)
+            if 'unfavorable' in response_lower:
+                unfavorable_items = re.findall(r'unfavorable\s+(?:\w+\s+){0,2}(?:experience|claims?|results?)', response_lower)
+                performance_terms.extend(unfavorable_items)
+            
+            if performance_terms:
+                elements.append(f"Performance trends: {', '.join(set(performance_terms[:3]))}")
+            
+            # Extract specific standards mentioned
             standards_mentioned = re.findall(r'\b(?:asc|ifrs|ias|fas)\s+\d+(?:[-\.\s]\d+)*\b', response_lower)
             if standards_mentioned:
-                elements.append(f"Standards mentioned: {', '.join(set([s.upper() for s in standards_mentioned]))}")
+                elements.append(f"Standards referenced: {', '.join(set([s.upper() for s in standards_mentioned]))}")
             
-            # Extract specific sections or paragraphs referenced
-            sections = re.findall(r'\b(?:section|paragraph|chapter)\s+\d+(?:[.\-]\d+)*\b', response_lower)
-            if sections:
-                elements.append(f"Sections referenced: {', '.join(set(sections))}")
-            
-            # Extract specific examples or scenarios mentioned
-            examples = re.findall(r'example\s+\d+|scenario\s+\d+|case\s+\d+', response_lower)
-            if examples:
-                elements.append(f"Examples mentioned: {', '.join(set(examples))}")
-            
-            # Extract key concepts that could be explored further
-            concepts = []
+            # Extract key financial concepts
+            financial_concepts = []
             concept_patterns = [
-                r'nonmonetary\s+(?:assets?|liabilities?|items?)',
-                r'monetary\s+(?:assets?|liabilities?|items?)',
-                r'foreign\s+currency\s+translation',
-                r'present\s+value',
-                r'fair\s+value',
-                r'discount\s+rate',
-                r'transition\s+requirements?',
-                r'effective\s+date'
+                r'adjusted\s+operating\s+income',
+                r'return\s+on\s+equity',
+                r'excess\s+capital',
+                r'variable\s+investment\s+income',
+                r'claims?\s+experience',
+                r'premium\s+growth',
+                r'reserve\s+adequacy',
+                r'capital\s+deployment'
             ]
             for pattern in concept_patterns:
                 matches = re.findall(pattern, response_lower)
-                concepts.extend(matches)
+                financial_concepts.extend([match.title() for match in matches])
             
-            if concepts:
-                elements.append(f"Key concepts explained: {', '.join(set(concepts)[:3])}")
+            if financial_concepts:
+                elements.append(f"Key concepts: {', '.join(set(financial_concepts[:3]))}")
             
-            # Extract any calculations or formulas mentioned
-            if any(word in response_lower for word in ['calculate', 'formula', 'computation', 'ratio']):
-                elements.append("Calculations or formulas were mentioned")
-            
-            return "\n".join([f"- {element}" for element in elements]) if elements else "- Response focused on general explanation"
+            return "\n".join([f"- {element}" for element in elements]) if elements else "- General financial/business information provided"
             
         except Exception as e:
             logger.error(f"Failed to extract response elements: {e}")
@@ -1192,26 +1222,45 @@ Generate exactly 2-3 contextual follow-up questions:"""
             'how can organizations',
             'what factors influence',
             'how do unfavorable',
-            'what are some common'
+            'what are some common',
+            'how can we improve',
+            'what does this mean for',
+            'what are the implications',
+            'how should companies',
+            'what best practices',
+            'how does this compare to industry'
         ]
         
         # Check if question contains generic phrases
         if any(phrase in question_lower for phrase in generic_phrases):
             return False
         
+        # Extract specific metrics, amounts, or data points from response
+        response_specifics = []
+        response_specifics.extend(re.findall(r'\$[\d,]+(?:\.\d+)?\s*(?:million|billion)', response_lower))
+        response_specifics.extend(re.findall(r'\d+\.\d+%', response_lower))
+        response_specifics.extend(re.findall(r'q[1-4]\s+(?:20\d{2}|results?)', response_lower))
+        response_specifics.extend(re.findall(r'(?:u\.s\.|canada|emea)\s+(?:traditional|group)', response_lower))
+        
         # Check if question references something mentioned in the response or query
         contextual_indicators = [
+            # References specific financial amounts/metrics from response
+            any(specific in question_lower for specific in response_specifics),
             # References specific elements from response/query
-            any(word in question_lower for word in ['mentioned', 'explained', 'described', 'discussed']),
+            any(word in question_lower for word in ['mentioned', 'explained', 'described', 'discussed', 'cited']),
             # References specific standards that appear in response
             bool(re.search(r'\b(?:asc|ifrs|ias|fas)\s+\d+', question_lower)) and bool(re.search(r'\b(?:asc|ifrs|ias|fas)\s+\d+', response_lower)),
             # References document-specific terms
-            any(term in question_lower for term in ['document', 'section', 'example', 'table', 'schedule']),
+            any(term in question_lower for term in ['document', 'section', 'example', 'table', 'schedule', 'presentation']),
             # References calculation or specific concept from response
-            any(term in question_lower and term in response_lower for term in ['calculation', 'method', 'approach', 'guidance']),
+            any(term in question_lower and term in response_lower for term in ['calculation', 'method', 'approach', 'guidance', 'component', 'breakdown']),
+            # References specific company/business terms that appear in both
+            any(term in question_lower and term in response_lower for term in ['rga', 'equitable', 'segment', 'traditional', 'group']),
+            # References specific time periods or comparative language
+            any(term in question_lower for term in ['compared to', 'other segments', 'different', 'breakdown', 'components']),
         ]
         
-        # Must have at least one contextual indicator
+        # Must have at least one strong contextual indicator
         return any(contextual_indicators)
     
     def _generate_response_based_fallback(self, query: str, response: str, retrieved_docs: List[Dict]) -> List[str]:
