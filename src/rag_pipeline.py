@@ -399,6 +399,21 @@ class RAGPipeline:
                     logger.info("Returning cached response", query_hash=cache_key[:8])
                     return self._deserialize_response(cached_response, session_id)
             
+            # Check if query is within AAIRE's domain expertise
+            logger.info(f"🔍 Classifying query topic: '{query[:50]}...'")
+            topic_check = await self._classify_query_topic(query)
+            logger.info(f"🎯 Topic classification result: {topic_check}")
+            
+            if not topic_check['is_relevant']:
+                logger.info(f"❌ Query rejected as off-topic: '{query[:50]}...'")
+                return RAGResponse(
+                    answer=topic_check['polite_response'],
+                    citations=[],
+                    confidence=1.0,  # High confidence in polite rejection
+                    session_id=session_id,
+                    follow_up_questions=[]
+                )
+            
             # Determine document type filter
             doc_type_filter = self._get_doc_type_filter(filters)
             
@@ -434,8 +449,21 @@ class RAGPipeline:
                 citations = self._extract_citations(retrieved_docs, query)
                 confidence = self._calculate_confidence(retrieved_docs, response)
             else:
-                # No relevant documents found - check if this could be general knowledge
+                # No relevant documents found - check if this could be relevant general knowledge
                 is_general_query = self._is_general_knowledge_query(query)
+                
+                # Even if it's a general query, it must still be within AAIRE's domain
+                if is_general_query:
+                    # Re-check topic relevance for general knowledge questions
+                    topic_check = await self._classify_query_topic(query)
+                    if not topic_check['is_relevant']:
+                        return RAGResponse(
+                            answer=topic_check['polite_response'],
+                            citations=[],
+                            confidence=1.0,
+                            session_id=session_id,
+                            follow_up_questions=[]
+                        )
                 
                 if is_general_query:
                     # Use general knowledge response
@@ -1312,6 +1340,113 @@ Generate exactly 2-3 contextual follow-up questions that dig deeper into the spe
                 "How does this relate to our previous discussion?"
             ]
     
+    async def _classify_query_topic(self, query: str) -> Dict[str, Any]:
+        """Classify whether the query is within AAIRE's domain expertise"""
+        
+        logger.info(f"📋 Starting topic classification for: '{query[:30]}...'")
+        
+        # Define relevant financial/insurance/accounting domains
+        relevant_keywords = {
+            'financial': [
+                'financial', 'finance', 'revenue', 'profit', 'loss', 'earnings', 'income', 'expense',
+                'assets', 'liabilities', 'equity', 'balance sheet', 'cash flow', 'statement',
+                'budget', 'forecast', 'valuation', 'investment', 'portfolio', 'returns',
+                'capital', 'funding', 'financing', 'debt', 'credit', 'loan', 'mortgage'
+            ],
+            'accounting': [
+                'accounting', 'gaap', 'ifrs', 'asc', 'fas', 'ias', 'standard', 'compliance',
+                'audit', 'auditing', 'journal', 'ledger', 'depreciation', 'amortization',
+                'accrual', 'recognition', 'measurement', 'disclosure', 'reporting',
+                'consolidation', 'segment', 'fair value', 'impairment', 'tax'
+            ],
+            'insurance': [
+                'insurance', 'insurer', 'policy', 'premium', 'claim', 'coverage', 'underwriting',
+                'reinsurance', 'actuarial', 'risk', 'reserve', 'liability', 'benefit',
+                'annuity', 'life insurance', 'health insurance', 'property', 'casualty',
+                'solvency', 'capital adequacy', 'licat', 'regulatory'
+            ],
+            'banking': [
+                'bank', 'banking', 'deposit', 'withdrawal', 'account', 'lending', 'borrowing',
+                'interest rate', 'mortgage', 'loan', 'credit', 'debit', 'payment',
+                'financial institution', 'federal reserve', 'monetary policy', 'currency'
+            ],
+            'investment': [
+                'investment', 'investing', 'stock', 'bond', 'security', 'portfolio',
+                'mutual fund', 'etf', 'dividend', 'yield', 'return', 'risk', 'volatility',
+                'market', 'trading', 'hedge fund', 'private equity', 'venture capital'
+            ],
+            'mathematical': [
+                'calculation', 'formula', 'equation', 'mathematical', 'statistics', 'probability',
+                'model', 'modeling', 'quantitative', 'analysis', 'ratio', 'percentage',
+                'present value', 'future value', 'discount rate', 'compound', 'regression'
+            ],
+            'economics': [
+                'economic', 'economics', 'inflation', 'deflation', 'gdp', 'recession',
+                'growth', 'unemployment', 'monetary', 'fiscal', 'policy', 'market',
+                'supply', 'demand', 'price', 'cost', 'microeconomic', 'macroeconomic'
+            ]
+        }
+        
+        # Quick keyword-based check first
+        query_lower = query.lower()
+        has_relevant_keywords = False
+        
+        for domain, keywords in relevant_keywords.items():
+            if any(keyword in query_lower for keyword in keywords):
+                has_relevant_keywords = True
+                break
+        
+        # If obvious keywords found, likely relevant
+        if has_relevant_keywords:
+            return {'is_relevant': True, 'confidence': 0.9}
+        
+        # Use AI classification for ambiguous cases
+        classification_prompt = f"""Determine if this question is relevant to AAIRE, an AI assistant specialized in:
+- Financial analysis and reporting
+- Accounting standards (GAAP, IFRS, ASC, etc.)
+- Insurance and actuarial topics
+- Banking and investment concepts  
+- Mathematical and statistical analysis
+- Economics and business finance
+
+Question: "{query}"
+
+Is this question within AAIRE's expertise domain?
+
+Respond with either:
+"RELEVANT" - if the question relates to finance, accounting, insurance, banking, investments, mathematics/statistics, or economics
+"NOT_RELEVANT" - if the question is about other topics like sports, entertainment, cooking, travel, personal relationships, general knowledge, etc.
+
+Answer:"""
+
+        try:
+            response = self.llm.complete(classification_prompt)
+            classification = response.text.strip().upper()
+            
+            if "RELEVANT" in classification:
+                return {'is_relevant': True, 'confidence': 0.8}
+            else:
+                polite_responses = [
+                    "I'm AAIRE, a specialized AI assistant focused on financial, accounting, insurance, and actuarial topics. I'd be happy to help you with questions related to these areas instead!",
+                    "I specialize in financial, accounting, insurance, banking, and related business topics. Could you ask me something within these domains? I'd love to help!",
+                    "As an insurance and financial industry specialist, I'm designed to assist with accounting standards, financial analysis, insurance topics, and related mathematical concepts. How can I help you with these areas?",
+                    "I'm focused on providing expert assistance with financial, accounting, actuarial, and insurance-related questions. Is there something in these areas I can help you with instead?"
+                ]
+                
+                import random
+                selected_response = random.choice(polite_responses)
+                
+                return {
+                    'is_relevant': False, 
+                    'polite_response': selected_response,
+                    'confidence': 0.8
+                }
+                
+        except Exception as e:
+            logger.error(f"Failed to classify query topic: {e}")
+            # Default to allowing the query if classification fails
+            return {'is_relevant': True, 'confidence': 0.3}
+
     def _expand_query(self, query: str) -> str:
         """Expand general queries with specific domain terms for better retrieval"""
         query_lower = query.lower()
