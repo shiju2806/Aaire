@@ -1031,6 +1031,7 @@ Generate exactly 2-3 contextual follow-up questions that dig deeper into the spe
             
             # Parse the response into individual questions
             questions = []
+            logger.info(f"🎯 AI generated follow-up questions: {questions_text}")
             for line in questions_text.split('\n'):
                 line = line.strip()
                 if line and len(line) > 10:  # Filter out empty or very short lines
@@ -1038,7 +1039,9 @@ Generate exactly 2-3 contextual follow-up questions that dig deeper into the spe
                     clean_question = line.strip('- •').strip()
                     if clean_question.endswith('?'):
                         # Validate question is contextual (not generic)
-                        if self._is_contextual_question(clean_question, query, response):
+                        is_contextual = self._is_contextual_question(clean_question, query, response)
+                        logger.info(f"🔍 Question validation: '{clean_question}' -> {'✅' if is_contextual else '❌'}")
+                        if is_contextual:
                             questions.append(clean_question)
             
             # Return max 3 questions, fallback if none are contextual
