@@ -82,7 +82,7 @@ server {
     }
     
     # WebSocket support for real-time chat
-    location /ws {
+    location /api/v1/chat/ws {
         proxy_pass http://localhost:8000;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
