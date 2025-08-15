@@ -488,7 +488,7 @@ async def chat(request: ChatRequest):
         # Process query through RAG pipeline if available
         if rag_pipeline:
             logger.info(f"Using RAG pipeline for query: {request.query}")
-            rag_response = await rag_pipeline.process_query(
+            rag_response = await rag_pipeline.process_query_with_intelligence(
                 query=request.query,
                 filters=request.filters,
                 user_context=request.user_context or {},
@@ -709,7 +709,7 @@ async def websocket_chat(websocket: WebSocket):
                                        role=user_context.get('role', 'Unknown'),
                                        query=query[:50] + "..." if len(query) > 50 else query)
                         
-                        rag_response = await rag_pipeline.process_query(
+                        rag_response = await rag_pipeline.process_query_with_intelligence(
                             query=query,
                             filters=None,
                             user_context=user_context,

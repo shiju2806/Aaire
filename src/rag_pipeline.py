@@ -43,6 +43,8 @@ except ImportError:
 import redis
 import structlog
 from .relevance_engine import RelevanceEngine
+from .intelligent_extractor_simple import IntelligentDocumentExtractor
+from .enhanced_query_handler_simple import EnhancedQueryHandler
 
 logger = structlog.get_logger()
 
@@ -523,6 +525,168 @@ class RAGPipeline:
             logger.error("Failed to process query", error=str(e), query=query[:100])
             raise
     
+    
+    async def process_query_with_intelligence(
+        self, 
+        query: str, 
+        filters: Optional[Dict[str, Any]] = None,
+        user_context: Optional[Dict[str, Any]] = None,
+        session_id: Optional[str] = None,
+        conversation_history: Optional[List[Dict]] = None
+    ) -> RAGResponse:
+        """
+        Enhanced query processing with intelligent extraction capabilities
+        """
+        if not session_id:
+            session_id = str(uuid.uuid4())
+        
+        try:
+            # Initialize enhanced query handler
+            query_handler = EnhancedQueryHandler(self.client)
+            
+            # Check if query needs intelligent extraction
+            needs_extraction, extraction_type, extraction_confidence = query_handler.needs_intelligent_extraction(query)
+            
+            logger.info(f"Query analysis: needs_extraction={needs_extraction}, type={extraction_type}, confidence={extraction_confidence:.3f}")
+            
+            if needs_extraction and extraction_confidence >= 0.3:
+                # Use intelligent extraction approach
+                logger.info(f"Using intelligent extraction for {extraction_type} query")
+                
+                # Enhance the query for better extraction
+                enhanced_query = await query_handler.enhance_extraction_query(query, extraction_type)
+                
+                # Get relevant documents first
+                doc_type_filter = self._get_doc_type_filter(filters)
+                retrieved_docs = await self._retrieve_documents(enhanced_query, doc_type_filter)
+                
+                if not retrieved_docs:
+                    return RAGResponse(
+                        answer="I couldn't find any relevant documents to extract information from.",
+                        citations=[],
+                        confidence=0.1,
+                        session_id=session_id,
+                        follow_up_questions=[]
+                    )
+                
+                # Extract and combine text from retrieved documents
+                combined_text = "\n\n".join([
+                    f"[Document: {doc.get('source', 'Unknown')}]\n{doc.get('content', '')}"
+                    for doc in retrieved_docs[:5]  # Limit to top 5 docs
+                ])
+                
+                # Use intelligent extractor for job titles and organizational info
+                if extraction_type in ['job_titles', 'organizational', 'financial_roles']:
+                    extractor = IntelligentDocumentExtractor(self.client)
+                    extraction_result = await extractor.process_document(combined_text)
+                    
+                    # Format the intelligent extraction results
+                    if extraction_result.entities:
+                        answer_parts = []
+                        answer_parts.append(f"**Document Analysis Results** (Confidence: {extraction_result.confidence:.1%})\n")
+                        answer_parts.append(f"**Document Type:** {extraction_result.structure_type}\n")
+                        
+                        # Group by department/section
+                        by_section = {}
+                        for entity in extraction_result.entities:
+                            section = entity.source_section or entity.department or "General"
+                            if section not in by_section:
+                                by_section[section] = []
+                            by_section[section].append(entity)
+                        
+                        for section, entities in by_section.items():
+                            answer_parts.append(f"\n### {section}")
+                            for entity in entities:
+                                confidence_indicator = "🔹" if entity.confidence >= 0.8 else "🔸" if entity.confidence >= 0.5 else "🔺"
+                                answer_parts.append(f"{confidence_indicator} **{entity.name}**")
+                                if entity.title and entity.title != "not specified":
+                                    answer_parts.append(f"   - Title: {entity.title}")
+                                if entity.authority_level:
+                                    answer_parts.append(f"   - Authority Level: {entity.authority_level}")
+                                if entity.confidence < 0.8:
+                                    answer_parts.append(f"   - Confidence: {entity.confidence:.1%}")
+                        
+                        # Add methodology note
+                        answer_parts.append(f"\n**Extraction Method:** Intelligent document analysis")
+                        answer_parts.append(f"**High Confidence:** {extraction_result.metadata.get('high_confidence_count', 0)} items")
+                        answer_parts.append(f"**Medium Confidence:** {extraction_result.metadata.get('medium_confidence_count', 0)} items")
+                        answer_parts.append(f"**Low Confidence:** {extraction_result.metadata.get('low_confidence_count', 0)} items")
+                        
+                        answer = "\n".join(answer_parts)
+                        
+                        # Create citations from retrieved docs
+                        citations = [
+                            {
+                                "id": i + 1,
+                                "text": doc.get('content', '')[:200] + "...",
+                                "source": doc.get('source', 'Unknown'),
+                                "source_type": doc.get('source_type', 'document'),
+                                "confidence": doc.get('score', 0.5)
+                            }
+                            for i, doc in enumerate(retrieved_docs[:3])
+                        ]
+                        
+                        return RAGResponse(
+                            answer=answer,
+                            citations=citations,
+                            confidence=extraction_result.confidence,
+                            session_id=session_id,
+                            follow_up_questions=await self._generate_extraction_follow_ups(query, extraction_result),
+                            metadata={
+                                "extraction_method": "intelligent",
+                                "extraction_type": extraction_type,
+                                "document_type": extraction_result.structure_type
+                            }
+                        )
+                    else:
+                        # Fallback to standard RAG if extraction failed
+                        logger.info("Intelligent extraction found no results, falling back to standard RAG")
+            
+            # Use standard RAG processing
+            return await self.process_query(query, filters, user_context, session_id, conversation_history)
+        
+        except Exception as e:
+            logger.error("Enhanced query processing failed", error=str(e))
+            # Fallback to standard processing
+            return await self.process_query(query, filters, user_context, session_id, conversation_history)
+    
+    async def _generate_extraction_follow_ups(self, query: str, extraction_result) -> List[str]:
+        """Generate relevant follow-up questions for extraction results"""
+        try:
+            if not extraction_result.entities:
+                return []
+            
+            follow_up_prompt = f"""Based on this organizational information extraction, suggest 3 relevant follow-up questions:
+            
+    Original query: {query}
+    Document type: {extraction_result.structure_type}
+    People found: {len(extraction_result.entities)}
+    
+    Create questions that would:
+    1. Dive deeper into specific roles or departments
+    2. Explore relationships or reporting structures  
+    3. Clarify authority levels or responsibilities
+    
+    Return only the questions, one per line."""
+            
+            response = await self.client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "Generate relevant follow-up questions for organizational analysis."},
+                    {"role": "user", "content": follow_up_prompt}
+                ],
+                temperature=0.3,
+                max_tokens=200
+            )
+            
+            questions = [q.strip() for q in response.choices[0].message.content.strip().split("\n") if q.strip()]
+            return questions[:3]  # Limit to 3 questions
+            
+        except Exception as e:
+            logger.error("Follow-up generation failed", error=str(e))
+            return []
+    
+
     async def stream_response(self, query: str) -> AsyncGenerator[str, None]:
         """Stream response generation for real-time UI updates"""
         # This is a simplified streaming implementation
