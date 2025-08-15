@@ -22,7 +22,7 @@ class AAIREApp {
     
     performOneTimeCleanup() {
         // FORCE CACHE REFRESH - Check if user has old cached version
-        const currentVersion = '17-cleanup-fix';
+        const currentVersion = '18-hide-sections';
         const lastVersion = localStorage.getItem('aaire_app_version');
         
         if (lastVersion !== currentVersion) {
@@ -276,18 +276,12 @@ class AAIREApp {
         // Update header title
         const titles = {
             'chat': 'Welcome to AAIRE',
-            'upload': 'Document Upload',
-            'workflows': 'Accounting Workflows',
-            'dashboard': 'System Dashboard'
+            'upload': 'Document Upload'
         };
         document.getElementById('section-title').textContent = titles[section];
 
-        // Load section-specific data
-        if (section === 'dashboard') {
-            this.loadDashboardData();
-        } else if (section === 'workflows') {
-            this.loadWorkflows();
-        }
+        // Load section-specific data (only for visible sections)
+        // Dashboard and workflow sections are hidden
     }
 
     connectWebSocket() {
