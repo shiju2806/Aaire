@@ -2471,3 +2471,229 @@ Use professional, precise language with specific details. Include relevant accou
             })
         
         return insights
+
+    async def process_query_with_intelligence(
+        self,
+        query: str,
+        filters: Optional[Dict[str, Any]] = None,
+        user_context: Optional[Dict[str, Any]] = None,
+        session_id: str = "default",
+        conversation_history: Optional[List[Dict[str, Any]]] = None,
+        use_strict_mode: bool = True
+    ) -> RAGResponse:
+        """
+        Enhanced query processing with intelligent extraction capabilities
+        Routes queries to appropriate processing method based on content analysis
+        """
+        try:
+            # Import the enhanced components
+            from .enhanced_query_handler import EnhancedQueryHandler
+            from .intelligent_extractor import IntelligentDocumentExtractor
+            
+            # Initialize components
+            query_handler = EnhancedQueryHandler(self.llm)
+            intelligent_extractor = IntelligentDocumentExtractor(self.llm)
+            
+            logger.info("Enhanced query processing started", 
+                       query=query[:100], 
+                       session_id=session_id)
+            
+            # Step 1: Analyze query to determine processing strategy
+            routing_decision = await query_handler.route_query(query, user_context)
+            
+            logger.info("Query routing decision made",
+                       method=routing_decision['method'],
+                       extraction_type=routing_decision['extraction_type'],
+                       confidence=routing_decision['confidence'])
+            
+            # Step 2: Route to appropriate processing method
+            if routing_decision['method'] == 'intelligent_extraction':
+                return await self._process_with_intelligent_extraction(
+                    query, routing_decision, intelligent_extractor, 
+                    filters, user_context, session_id, conversation_history
+                )
+            else:
+                # Fall back to standard RAG processing
+                logger.info("Using standard RAG processing")
+                return await self.process_query(
+                    query, filters, user_context, session_id, conversation_history
+                )
+                
+        except Exception as e:
+            logger.error("Enhanced query processing failed", 
+                        error=str(e), 
+                        query=query[:50],
+                        event="Enhanced query processing failed")
+            
+            # Fallback to standard processing
+            logger.info("Falling back to standard RAG processing")
+            return await self.process_query(
+                query, filters, user_context, session_id, conversation_history
+            )
+    
+    async def _process_with_intelligent_extraction(
+        self,
+        query: str,
+        routing_decision: Dict[str, Any],
+        intelligent_extractor,
+        filters: Optional[Dict[str, Any]] = None,
+        user_context: Optional[Dict[str, Any]] = None,
+        session_id: str = "default",
+        conversation_history: Optional[List[Dict[str, Any]]] = None
+    ) -> RAGResponse:
+        """Process query using intelligent document extraction"""
+        
+        logger.info("Starting intelligent extraction processing",
+                   extraction_type=routing_decision['extraction_type'])
+        
+        try:
+            # Step 1: Retrieve relevant documents using standard RAG
+            rag_response = await self.process_query(
+                query, filters, user_context, session_id, conversation_history
+            )
+            
+            # Step 2: Apply intelligent extraction to retrieved documents
+            extracted_insights = []
+            
+            if hasattr(rag_response, 'citations') and rag_response.citations:
+                for citation in rag_response.citations[:3]:  # Limit to top 3 docs
+                    try:
+                        # Get document content for extraction
+                        doc_content = citation.get('content', '')
+                        if doc_content:
+                            extraction_result = await intelligent_extractor.process_document(
+                                doc_content, query
+                            )
+                            
+                            if extraction_result.confidence_score > 0.5:
+                                extracted_insights.append({
+                                    'source': citation.get('source', 'Unknown'),
+                                    'extraction_data': extraction_result.extracted_data,
+                                    'confidence': extraction_result.confidence_score,
+                                    'document_type': extraction_result.document_type.value,
+                                    'warnings': extraction_result.warnings
+                                })
+                                
+                    except Exception as e:
+                        logger.warning(f"Extraction failed for document: {e}")
+                        continue
+            
+            # Step 3: Enhanced response generation with extracted insights
+            enhanced_response = await self._generate_enhanced_response(
+                query, rag_response, extracted_insights, routing_decision
+            )
+            
+            # Step 4: Update response with enhanced information
+            rag_response.response = enhanced_response
+            rag_response.follow_up_questions = self._generate_extraction_followups(
+                routing_decision['extraction_type'], extracted_insights
+            )
+            
+            # Add extraction metadata
+            if not hasattr(rag_response, 'metadata'):
+                rag_response.metadata = {}
+            
+            rag_response.metadata['intelligent_extraction'] = {
+                'extraction_type': routing_decision['extraction_type'],
+                'insights_count': len(extracted_insights),
+                'confidence': routing_decision['confidence'],
+                'processing_method': 'enhanced'
+            }
+            
+            logger.info("Intelligent extraction completed successfully",
+                       insights_found=len(extracted_insights),
+                       extraction_type=routing_decision['extraction_type'])
+            
+            return rag_response
+            
+        except Exception as e:
+            logger.error("Intelligent extraction processing failed", error=str(e))
+            # Return the basic RAG response if enhancement fails
+            return await self.process_query(
+                query, filters, user_context, session_id, conversation_history
+            )
+    
+    async def _generate_enhanced_response(
+        self,
+        query: str,
+        rag_response: RAGResponse,
+        extracted_insights: List[Dict[str, Any]],
+        routing_decision: Dict[str, Any]
+    ) -> str:
+        """Generate enhanced response incorporating intelligent extraction results"""
+        
+        if not extracted_insights:
+            return rag_response.response
+        
+        # Build enhancement prompt
+        insights_summary = []
+        for insight in extracted_insights:
+            insights_summary.append(f"From {insight['source']}: {insight['extraction_data']}")
+        
+        enhancement_prompt = f"""
+The user asked: "{query}"
+
+Original response:
+{rag_response.response}
+
+Additional intelligent extraction results:
+{chr(10).join(insights_summary)}
+
+Extraction type: {routing_decision['extraction_type']}
+
+Instructions:
+1. Enhance the original response with the specific extracted information
+2. For job title queries, provide a clear breakdown of roles and people
+3. Include confidence levels where appropriate
+4. Highlight any discrepancies or unclear information
+5. Keep the response professional and well-structured
+6. Focus on accuracy - only include information that was explicitly extracted
+
+Generate an enhanced response that combines the original information with the extracted insights:
+"""
+
+        try:
+            enhanced_response = self.llm.complete(enhancement_prompt)
+            return enhanced_response.text
+        except Exception as e:
+            logger.error(f"Failed to generate enhanced response: {e}")
+            return rag_response.response
+    
+    def _generate_extraction_followups(
+        self, 
+        extraction_type: str, 
+        extracted_insights: List[Dict[str, Any]]
+    ) -> List[str]:
+        """Generate follow-up questions based on extraction results"""
+        
+        followups = []
+        
+        if extraction_type == 'job_titles':
+            followups.extend([
+                "Can you provide more details about the reporting structure?",
+                "What are the responsibilities for each role?",
+                "Are there any vacant positions or recent changes?",
+                "How do these roles relate to the overall organizational structure?"
+            ])
+        elif extraction_type == 'financial_roles':
+            followups.extend([
+                "What are the specific responsibilities of each financial role?",
+                "How is the finance team structured hierarchically?",
+                "What approval authorities do these roles have?",
+                "Are there any recent changes in the finance organization?"
+            ])
+        elif extraction_type == 'organizational':
+            followups.extend([
+                "Can you explain the reporting relationships in more detail?",
+                "What departments are represented in this structure?",
+                "How does this structure support business operations?",
+                "Are there any upcoming organizational changes planned?"
+            ])
+        
+        # Add specific followups based on extracted data
+        if extracted_insights:
+            insight_count = sum(len(insight.get('extraction_data', {})) for insight in extracted_insights)
+            if insight_count > 0:
+                followups.append(f"Can you provide more context about the {insight_count} items identified?")
+        
+        return followups[:4]  # Limit to 4 follow-ups
