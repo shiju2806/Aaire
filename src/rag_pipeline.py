@@ -1250,22 +1250,21 @@ Generate exactly 2-3 contextual follow-up questions that dig deeper into the spe
         
         # Generic phrases that indicate non-contextual questions
         generic_phrases = [
-            'how do insurers',
-            'what strategies do',
-            'how does claims impact',
-            'what are some strategies',
-            'how do companies typically',
-            'what are the benefits of',
-            'how can organizations',
-            'what factors influence',
-            'how do unfavorable',
-            'what are some common',
-            'how can we improve',
-            'what does this mean for',
-            'what are the implications',
-            'how should companies',
-            'what best practices',
-            'how does this compare to industry'
+            'how do insurers typically',
+            'what strategies do insurers',
+            'how does claims impact profitability',
+            'what are some strategies for',
+            'how do companies typically handle',
+            'what are the benefits of this approach',
+            'how can organizations improve',
+            'what factors influence profitability',
+            'what are some common practices',
+            'how can we improve our',
+            'what does this mean for the industry',
+            'what are the implications for',
+            'how should companies approach',
+            'what best practices should',
+            'how does this compare to industry standards'
         ]
         
         # Check if question contains generic phrases
