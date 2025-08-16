@@ -140,7 +140,17 @@ class EnhancedDocumentProcessor(DocumentProcessor):
                 
                 # Add source information if available
                 if 'cluster_id' in unit:
-                    content_parts.append(f"   Source: {unit['cluster_id']}")
+                    cluster_id = unit['cluster_id']
+                    # Extract page number from cluster_id if available
+                    if 'page_' in cluster_id:
+                        page_num = cluster_id.split('page_')[-1].split('_')[0]
+                        content_parts.append(f"   Source: Page {page_num}, {cluster_id}")
+                    else:
+                        content_parts.append(f"   Source: {cluster_id}")
+                
+                # Add page information if available
+                if 'page' in unit:
+                    content_parts.append(f"   Page: {unit['page']}")
                 
                 # Add warnings if any
                 if unit.get('warnings'):

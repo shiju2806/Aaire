@@ -350,6 +350,23 @@ class RAGPipeline:
                 if documents and documents[0].metadata and 'job_id' in documents[0].metadata:
                     node.metadata['job_id'] = documents[0].metadata['job_id']
                     node.metadata['filename'] = documents[0].metadata.get('filename', 'Unknown')
+                
+                # Preserve page information if available in node start_char_idx
+                if hasattr(node, 'start_char_idx') and hasattr(node, 'ref_doc_id'):
+                    # Try to estimate page number from character position
+                    # This is approximate but better than no page info
+                    char_idx = getattr(node, 'start_char_idx', 0)
+                    # Rough estimate: 2000 characters per page
+                    estimated_page = max(1, (char_idx // 2000) + 1)
+                    node.metadata['estimated_page'] = estimated_page
+                
+                # Check if the node content contains page information from shape-aware extraction
+                node_content = getattr(node, 'text', '') or getattr(node, 'content', '')
+                if 'Source: Page' in node_content:
+                    import re
+                    page_match = re.search(r'Source: Page (\d+)', node_content)
+                    if page_match:
+                        node.metadata['page'] = int(page_match.group(1))
             
             # Add to single index
             self.index.insert_nodes(nodes)
@@ -1887,10 +1904,33 @@ Answer:"""
             # Get filename for source
             filename = doc['metadata'].get('filename', 'Unknown')
             
+            # Extract page information if available
+            page_info = ""
+            if 'page' in doc['metadata']:
+                page_info = f", Page {doc['metadata']['page']}"
+            elif 'page_label' in doc['metadata']:
+                page_info = f", Page {doc['metadata']['page_label']}"
+            elif hasattr(doc, 'node_id') and 'page_' in str(doc.get('node_id', '')):
+                # Extract page from node_id like "page_1_chunk_2"
+                try:
+                    page_num = str(doc.get('node_id', '')).split('page_')[1].split('_')[0]
+                    page_info = f", Page {page_num}"
+                except:
+                    pass
+            
+            # Check if content contains page references from shape-aware extraction
+            content = doc.get('content', '')
+            if 'Source: Page' in content:
+                # Extract page number from content like "Source: Page 2, cluster_1_page_2"
+                import re
+                page_match = re.search(r'Source: Page (\d+)', content)
+                if page_match:
+                    page_info = f", Page {page_match.group(1)}"
+            
             citation = {
                 "id": len(citations) + 1,  # Use actual citation count, not doc index
                 "text": doc['content'][:200] + "..." if len(doc['content']) > 200 else doc['content'],
-                "source": filename,
+                "source": f"{filename}{page_info}",
                 "source_type": doc['source_type'],
                 "confidence": round(relevance_score, 3)  # Use relevance score instead of original score
             }
