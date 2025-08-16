@@ -1026,7 +1026,8 @@ Relevant Information from Company Documents:
 Instructions:
 - Consider the conversation history to provide contextual and relevant answers
 - Provide a comprehensive answer based ONLY on the relevant information provided above
-- Always cite your sources using [1], [2], etc. format when referencing the provided information
+- When citing sources, use the exact source names with page numbers (e.g., "LICAT.pdf, Page 2" or "Finance Structures.pdf, Page 5") instead of just [1], [2], etc.
+- If page numbers are not available, use descriptive references like "Section 2 of LICAT.pdf" or "Part 3 of the document"
 - If the provided information is insufficient to fully answer the question, clearly state this
 - You may supplement with general accounting knowledge, but clearly distinguish between document-based and general information
 - Never provide tax or legal advice
@@ -2736,4 +2737,18 @@ Generate an enhanced response that combines the original information with the ex
             if insight_count > 0:
                 followups.append(f"Can you provide more context about the {insight_count} items identified?")
         
-        return followups[:4]  # Limit to 4 follow-ups
+        return followups[:6]  # Limit to 6 follow-ups for better user engagement
+    
+    def clear_cache(self):
+        """Clear the response cache to force fresh responses"""
+        try:
+            if self.cache:
+                self.cache.flushdb()
+                logger.info("✅ Response cache cleared successfully")
+                return True
+            else:
+                logger.info("ℹ️ No cache available to clear")
+                return False
+        except Exception as e:
+            logger.error(f"❌ Failed to clear cache: {e}")
+            return False
