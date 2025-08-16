@@ -2737,7 +2737,7 @@ Generate an enhanced response that combines the original information with the ex
             if insight_count > 0:
                 followups.append(f"Can you provide more context about the {insight_count} items identified?")
         
-        return followups[:6]  # Limit to 6 follow-ups for better user engagement
+        return followups[:3]  # Limit to 3 follow-ups for optimal user experience
     
     def clear_cache(self):
         """Clear the response cache to force fresh responses"""
