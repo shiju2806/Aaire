@@ -23,6 +23,9 @@ import re
 from datetime import datetime
 from pathlib import Path
 
+# Initialize logger
+logger = structlog.get_logger()
+
 # Import modules with fallbacks for MVP startup
 try:
     from src.rag_pipeline import RAGPipeline
