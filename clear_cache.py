@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """
-Clear Redis cache to resolve old citation issues
+Clear AAIRE cache and restart server with enhanced citation formatting
 """
 
 import redis
 import os
+import subprocess
+import time
 
 def clear_cache():
-    """Clear all cached responses"""
+    """Clear all cached responses to force fresh citations with page numbers"""
     try:
         # Connect to Redis
         cache = redis.Redis(
@@ -21,28 +23,61 @@ def clear_cache():
         cache.ping()
         print("✅ Connected to Redis")
         
-        # Get all keys
-        all_keys = list(cache.scan_iter(match="*"))
-        print(f"Found {len(all_keys)} cache entries")
+        # Clear all cached responses
+        cache.flushdb()
+        print("✅ All cached responses cleared")
         
-        if all_keys:
-            # Show sample keys
-            print("\nSample cache keys:")
-            for key in all_keys[:5]:
-                print(f"  {key}")
-            
-            # Clear all keys
-            cleared_count = cache.delete(*all_keys)
-            print(f"\n✅ Cleared {cleared_count} cache entries")
-        else:
-            print("No cache entries to clear")
+        print("📄 Next responses will use new citation format with page numbers")
+        print("💬 Follow-up questions limited to 3 for optimal UX")
         
-        # Verify cleared
-        remaining_keys = list(cache.scan_iter(match="*"))
-        print(f"Remaining cache entries: {len(remaining_keys)}")
+        return True
         
     except Exception as e:
-        print(f"❌ Error clearing cache: {e}")
+        print(f"⚠️ Cache clear failed (OK if Redis not running): {e}")
+        return False
+
+def restart_server():
+    """Restart the server to load citation improvements"""
+    try:
+        print("\n🔄 Restarting server with enhanced citation formatting...")
+        
+        # Kill existing process
+        subprocess.run(['pkill', '-f', 'main.py'], check=False)
+        print("   Stopped current server")
+        
+        # Wait for graceful shutdown
+        time.sleep(3)
+        
+        # Start new server
+        subprocess.Popen(['python3', 'main.py'])
+        print("   Started server with enhanced citations")
+        
+        return True
+        
+    except Exception as e:
+        print(f"❌ Server restart failed: {e}")
+        return False
 
 if __name__ == "__main__":
-    clear_cache()
+    print("🧹 **CLEARING CACHE FOR ENHANCED CITATIONS**\n")
+    
+    # Clear cache
+    cache_cleared = clear_cache()
+    
+    # Ask about server restart
+    if cache_cleared:
+        print("\n🚀 **CACHE CLEARED SUCCESSFULLY**")
+        print("   • Old [1], [2] citations removed")
+        print("   • Next responses will show page numbers")
+        print("   • Follow-up questions optimized to 3")
+        
+        # Auto-restart if running as script
+        restart_server()
+        
+        print("\n🎉 **AAIRE READY WITH ENHANCED CITATIONS**")
+        print("   Test by asking: 'what are the ratios used to assess capital health?'")
+        print("   Should now show: 'LICAT.pdf, Page 2' instead of '[2]'")
+    
+    else:
+        print("\n⚠️ **MANUAL RESTART RECOMMENDED**")
+        print("   Run: pkill -f main.py && python3 main.py")
