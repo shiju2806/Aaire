@@ -465,6 +465,10 @@ class RAGPipeline:
                     logger.info(f"Multiple document sources found for query, applying strict citation filters")
                 
                 response = await self._generate_response(query, retrieved_docs, user_context, conversation_history)
+                
+                # Post-process response to fix citation format
+                response = self._fix_citation_format(response, retrieved_docs)
+                
                 citations = self._extract_citations(retrieved_docs, query)
                 confidence = self._calculate_confidence(retrieved_docs, response)
             else:
@@ -2738,6 +2742,56 @@ Generate an enhanced response that combines the original information with the ex
                 followups.append(f"Can you provide more context about the {insight_count} items identified?")
         
         return followups[:3]  # Limit to 3 follow-ups for optimal user experience
+    
+    def _fix_citation_format(self, response: str, retrieved_docs: List[Dict]) -> str:
+        """Post-process response to replace [1], [2] citations with proper source names and page numbers"""
+        if not retrieved_docs:
+            return response
+        
+        import re
+        
+        # Create mapping of citation numbers to proper source names
+        citation_map = {}
+        for i, doc in enumerate(retrieved_docs[:10]):  # Handle up to 10 citations
+            citation_num = i + 1
+            filename = doc['metadata'].get('filename', 'Unknown')
+            
+            # Try to extract page number
+            page_info = ""
+            if 'page' in doc['metadata']:
+                page_info = f", Page {doc['metadata']['page']}"
+            elif 'estimated_page' in doc['metadata']:
+                page_info = f", Page {doc['metadata']['estimated_page']}"
+            elif 'Source: Page' in doc.get('content', ''):
+                page_match = re.search(r'Source: Page (\d+)', doc.get('content', ''))
+                if page_match:
+                    page_info = f", Page {page_match.group(1)}"
+            
+            # Create proper citation
+            proper_citation = f"({filename}{page_info})"
+            citation_map[f"[{citation_num}]"] = proper_citation
+        
+        # Replace all [1], [2], etc. with proper citations
+        fixed_response = response
+        for old_citation, new_citation in citation_map.items():
+            fixed_response = fixed_response.replace(old_citation, new_citation)
+        
+        # Also handle "Document X" references
+        for i in range(1, 11):  # Handle Document 1-10
+            doc_ref = f"Document {i}"
+            if doc_ref in fixed_response and i <= len(retrieved_docs):
+                doc = retrieved_docs[i-1]
+                filename = doc['metadata'].get('filename', 'Unknown')
+                page_info = ""
+                if 'page' in doc['metadata']:
+                    page_info = f", Page {doc['metadata']['page']}"
+                elif 'estimated_page' in doc['metadata']:
+                    page_info = f", Page {doc['metadata']['estimated_page']}"
+                
+                proper_ref = f"{filename}{page_info}"
+                fixed_response = fixed_response.replace(doc_ref, proper_ref)
+        
+        return fixed_response
     
     def clear_cache(self):
         """Clear the response cache to force fresh responses"""
