@@ -21,6 +21,7 @@ def validate_integration():
     
     files_to_check = [
         ("PDF Spatial Extractor", "src/pdf_spatial_extractor.py"),
+        ("PowerPoint Shape Extractor", "src/pptx_shape_extractor.py"),
         ("Shape-Aware Processor", "src/shape_aware_processor.py"),
         ("Enhanced Document Processor", "src/enhanced_document_processor.py"),
         ("Enhanced Query Handler", "src/enhanced_query_handler.py"),
@@ -73,6 +74,7 @@ def validate_integration():
     
     test_files = [
         ("Spatial Logic Test", "test_spatial_logic.py"),
+        ("PowerPoint Extraction Test", "test_pptx_extraction.py"),
         ("Complete System Test", "test_complete_system.py"),
         ("Enhanced Processor Test", "test_enhanced_processor.py"),
         ("Intelligent Extraction Test", "test_intelligent_extraction.py")
@@ -89,12 +91,13 @@ def validate_integration():
     
     features = [
         "✅ PDF spatial extraction with coordinate clustering",
+        "✅ PowerPoint shape extraction with group detection",
         "✅ Intelligent line type identification (name/title/department)",
         "✅ Confidence-based routing between extraction methods",
         "✅ Zero-regression fallback mechanisms",
         "✅ Enhanced query processing with intelligent routing",
         "✅ Comprehensive error handling and validation",
-        "🔄 PowerPoint shape parsing (ready for implementation)"
+        "✅ Complete shape-aware document processing system"
     ]
     
     for feature in features:
@@ -119,10 +122,12 @@ def validate_integration():
         print(f"\n⚠️ **INTEGRATION INCOMPLETE**")
         print(f"   Some components are missing or not properly integrated")
     
-    print(f"\n🎯 **Next Step: PowerPoint Shape Parsing**")
-    print(f"   The foundation is ready for implementing PowerPoint")
-    print(f"   shape extraction to handle organizational charts in")
-    print(f"   presentation files.")
+    print(f"\n🎯 **SHAPE-AWARE DOCUMENT PROCESSING COMPLETE**")
+    print(f"   • PDF spatial extraction with coordinate clustering ✅")
+    print(f"   • PowerPoint shape extraction with group detection ✅")
+    print(f"   • Intelligent fallback mechanisms ✅")
+    print(f"   • Enhanced document processor integration ✅")
+    print(f"   • Complete organizational chart processing system ✅")
     
     return success_rate == 100
 

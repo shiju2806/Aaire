@@ -142,9 +142,77 @@ class ShapeAwareProcessor:
         return await self._basic_text_fallback(file_path)
     
     async def _process_powerpoint(self, file_path: str, query_context: str) -> ProcessingResult:
-        """Process PowerPoint files (placeholder for future implementation)"""
+        """Process PowerPoint files with shape-aware extraction"""
         
-        logger.info("PowerPoint processing not yet implemented, using basic extraction")
+        logger.info(f"Processing PowerPoint file with shape-aware extraction: {file_path}")
+        
+        try:
+            from .pptx_shape_extractor import PPTXShapeExtractor
+            
+            extractor = PPTXShapeExtractor()
+            pptx_data = extractor.extract_organizational_data(file_path)
+            
+            if pptx_data['success'] and pptx_data['organizational_units']:
+                confidence = pptx_data['metadata']['average_confidence']
+                
+                if confidence >= self.spatial_confidence_threshold:
+                    logger.info(f"PowerPoint shape extraction successful with confidence {confidence:.3f}")
+                    
+                    # Convert PPTX format to our standard organizational data format
+                    org_units = []
+                    for unit in pptx_data['organizational_units']:
+                        org_units.append({
+                            'name': unit['name'],
+                            'title': unit['title'],
+                            'department': unit['department'],
+                            'confidence': unit['confidence'],
+                            'source_shape': unit['shape_group_id'],
+                            'slide_number': unit['slide_number'],
+                            'cluster_id': f"pptx_{unit['shape_group_id']}",
+                            'warnings': unit.get('warnings', [])
+                        })
+                    
+                    return ProcessingResult(
+                        success=True,
+                        extraction_method="pptx_shapes",
+                        organizational_data=org_units,
+                        confidence=confidence,
+                        metadata=pptx_data['metadata'],
+                        warnings=[w for unit in pptx_data['organizational_units'] for w in unit.get('warnings', [])],
+                        fallback_used=False
+                    )
+                else:
+                    logger.info(f"PowerPoint shape extraction low confidence ({confidence:.3f}), using fallback")
+                    
+        except ImportError:
+            logger.warning("PowerPoint shape extractor not available, using basic extraction")
+        except Exception as e:
+            logger.warning(f"PowerPoint shape extraction failed: {e}, using fallback")
+        
+        # Fallback to intelligent extraction if available
+        if self.llm:
+            try:
+                logger.info("Attempting intelligent extraction for PowerPoint")
+                intelligent_result = await self._intelligent_extraction_fallback(file_path, query_context)
+                
+                if intelligent_result and intelligent_result.confidence >= self.confidence_threshold:
+                    logger.info(f"Intelligent PowerPoint extraction successful")
+                    
+                    return ProcessingResult(
+                        success=True,
+                        extraction_method="pptx_intelligent",
+                        organizational_data=self._convert_intelligent_to_org_data(intelligent_result),
+                        confidence=intelligent_result.confidence,
+                        metadata={"extraction_type": "intelligent_fallback", "file_type": "pptx"},
+                        warnings=intelligent_result.warnings,
+                        fallback_used=True
+                    )
+                    
+            except Exception as e:
+                logger.warning(f"Intelligent PowerPoint extraction failed: {e}")
+        
+        # Final fallback to basic text extraction
+        logger.info("Using basic extraction for PowerPoint")
         return await self._basic_text_fallback(file_path)
     
     async def _process_fallback(self, file_path: str, query_context: str) -> ProcessingResult:
@@ -245,6 +313,8 @@ class ShapeAwareProcessor:
         method_names = {
             "pdf_spatial": "PDF Spatial Analysis",
             "pdf_spatial_low_conf": "PDF Spatial Analysis (Low Confidence)",
+            "pptx_shapes": "PowerPoint Shape Analysis", 
+            "pptx_intelligent": "PowerPoint AI-Powered Extraction",
             "intelligent_llm": "AI-Powered Extraction",
             "basic_text": "Basic Text Extraction",
             "failed": "Processing Failed"

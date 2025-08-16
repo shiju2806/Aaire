@@ -160,13 +160,54 @@ class EnhancedDocumentProcessor(DocumentProcessor):
         """
         
         logger.info(f"Enhanced PowerPoint extraction starting for: {file_path}")
+        self.extraction_stats['total_processed'] += 1
         
-        # For now, use parent's extraction method
-        # PowerPoint shape parsing will be implemented next
+        # Step 1: Try shape-aware extraction first
+        try:
+            self.extraction_stats['spatial_attempts'] += 1
+            
+            # Process with shape-aware extractor for PowerPoint
+            shape_result = await self.shape_processor.process_document(
+                str(file_path),
+                query_context="Extract all organizational information including names, titles, and departments from PowerPoint",
+                prefer_spatial=True
+            )
+            
+            if shape_result.success and shape_result.organizational_data:
+                logger.info(f"PowerPoint shape-aware extraction successful: {len(shape_result.organizational_data)} units found")
+                self.extraction_stats['spatial_success'] += 1
+                
+                # Convert shape-aware results to text format
+                content = self._format_shape_aware_results(shape_result)
+                
+                # Add metadata about extraction method
+                content += f"\n\n[EXTRACTION METADATA]\n"
+                content += f"Method: {shape_result.extraction_method}\n"
+                content += f"Confidence: {shape_result.confidence:.1%}\n"
+                content += f"Personnel Found: {len(shape_result.organizational_data)}\n"
+                content += f"Source: PowerPoint presentation\n"
+                
+                if shape_result.warnings:
+                    content += f"Warnings: {', '.join(shape_result.warnings)}\n"
+                
+                # Log extraction summary
+                summary = self.shape_processor.get_processing_summary(shape_result)
+                logger.info(f"PowerPoint shape-aware extraction summary:\n{summary}")
+                
+                return content
+                
+            else:
+                logger.info("PowerPoint shape-aware extraction did not produce organizational data, falling back")
+                
+        except Exception as e:
+            logger.warning(f"PowerPoint shape-aware extraction failed: {e}, falling back to standard extraction")
+        
+        # Step 2: Fallback to standard PowerPoint extraction
+        self.extraction_stats['fallback_used'] += 1
+        logger.info("Using standard PowerPoint extraction as fallback")
+        
+        # Call parent's extraction method
         content = await super()._extract_from_pptx(file_path)
-        
-        # Add placeholder for future shape-aware PowerPoint processing
-        content += "\n\n[NOTE: PowerPoint shape-aware extraction coming soon]"
         
         return content
     
