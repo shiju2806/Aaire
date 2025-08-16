@@ -35,9 +35,14 @@ except ImportError:
     ComplianceEngine = None
 
 try:
-    from src.document_processor import DocumentProcessor
+    from src.enhanced_document_processor import EnhancedDocumentProcessor as DocumentProcessor
+    logger.info("Using Enhanced Document Processor with shape-aware extraction")
 except ImportError:
-    DocumentProcessor = None
+    try:
+        from src.document_processor import DocumentProcessor
+        logger.info("Using standard Document Processor")
+    except ImportError:
+        DocumentProcessor = None
 
 try:
     from src.external_apis import ExternalAPIManager
