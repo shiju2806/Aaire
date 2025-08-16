@@ -1,0 +1,462 @@
+"""
+PDF Spatial Extractor - Shape-aware document processing for organizational charts
+Extracts text while preserving spatial relationships and box structures
+"""
+
+try:
+    import fitz  # PyMuPDF
+    PYMUPDF_AVAILABLE = True
+except ImportError:
+    PYMUPDF_AVAILABLE = False
+    # Create mock fitz for testing/development
+    class MockFitz:
+        def open(self, *args, **kwargs):
+            raise ImportError("PyMuPDF not available - install with: pip install PyMuPDF==1.24.7")
+    fitz = MockFitz()
+import json
+from typing import Dict, List, Any, Optional, Tuple
+from dataclasses import dataclass
+import structlog
+import re
+from pathlib import Path
+
+logger = structlog.get_logger()
+
+@dataclass
+class TextElement:
+    """Individual text element with spatial information"""
+    text: str
+    x0: float  # Left coordinate
+    y0: float  # Bottom coordinate  
+    x1: float  # Right coordinate
+    y1: float  # Top coordinate
+    page: int
+    font_size: float
+    font_name: str
+    
+    @property
+    def center_x(self) -> float:
+        return (self.x0 + self.x1) / 2
+    
+    @property 
+    def center_y(self) -> float:
+        return (self.y0 + self.y1) / 2
+    
+    @property
+    def width(self) -> float:
+        return self.x1 - self.x0
+    
+    @property
+    def height(self) -> float:
+        return self.y1 - self.y0
+
+@dataclass
+class TextCluster:
+    """Group of related text elements forming a logical unit (e.g., org chart box)"""
+    elements: List[TextElement]
+    cluster_id: str
+    confidence: float = 0.0
+    
+    @property
+    def bbox(self) -> Tuple[float, float, float, float]:
+        """Bounding box of entire cluster"""
+        if not self.elements:
+            return (0, 0, 0, 0)
+        
+        x0 = min(elem.x0 for elem in self.elements)
+        y0 = min(elem.y0 for elem in self.elements)
+        x1 = max(elem.x1 for elem in self.elements)
+        y1 = max(elem.y1 for elem in self.elements)
+        return (x0, y0, x1, y1)
+    
+    @property
+    def text_lines(self) -> List[str]:
+        """Text lines sorted by vertical position (top to bottom)"""
+        # Sort by Y coordinate (descending - top to bottom in PDF coordinates)
+        sorted_elements = sorted(self.elements, key=lambda e: -e.center_y)
+        return [elem.text.strip() for elem in sorted_elements if elem.text.strip()]
+
+@dataclass
+class OrganizationalUnit:
+    """Structured organizational information extracted from a cluster"""
+    name: str
+    title: str
+    department: str
+    cluster_id: str
+    confidence: float
+    source_box: Tuple[float, float, float, float]  # Bounding box
+    warnings: List[str]
+
+class PDFSpatialExtractor:
+    """
+    Advanced PDF extractor that preserves spatial relationships
+    Specifically designed for organizational charts and structured documents
+    """
+    
+    def __init__(self):
+        self.proximity_threshold = 50  # Pixels - adjust based on document density
+        self.min_cluster_size = 2  # Minimum elements per cluster
+        self.max_cluster_size = 10  # Maximum elements per cluster
+        
+    def extract_with_coordinates(self, pdf_path: str) -> Dict[str, Any]:
+        """
+        Extract text from PDF while preserving spatial relationships
+        Returns structured data with organizational information
+        """
+        try:
+            logger.info(f"Starting spatial extraction for: {pdf_path}")
+            
+            # Step 1: Extract all text elements with coordinates
+            text_elements = self._extract_text_elements(pdf_path)
+            
+            if not text_elements:
+                return self._create_empty_result("No text elements found")
+            
+            logger.info(f"Extracted {len(text_elements)} text elements")
+            
+            # Step 2: Group elements into spatial clusters (potential boxes)
+            clusters = self._create_spatial_clusters(text_elements)
+            
+            logger.info(f"Created {len(clusters)} spatial clusters")
+            
+            # Step 3: Parse each cluster for organizational information
+            org_units = self._parse_organizational_clusters(clusters)
+            
+            logger.info(f"Identified {len(org_units)} organizational units")
+            
+            # Step 4: Create structured output
+            result = self._create_structured_result(org_units, clusters, text_elements)
+            
+            logger.info("Spatial extraction completed successfully")
+            return result
+            
+        except Exception as e:
+            logger.error(f"Spatial extraction failed: {e}")
+            return self._create_error_result(str(e))
+    
+    def _extract_text_elements(self, pdf_path: str) -> List[TextElement]:
+        """Extract individual text elements with spatial coordinates"""
+        elements = []
+        
+        if not PYMUPDF_AVAILABLE:
+            logger.warning("PyMuPDF not available - spatial extraction disabled")
+            return elements
+        
+        try:
+            doc = fitz.open(pdf_path)
+            
+            for page_num in range(len(doc)):
+                page = doc[page_num]
+                
+                # Get text with detailed information
+                text_dict = page.get_text("dict")
+                
+                for block in text_dict["blocks"]:
+                    if "lines" in block:  # Text block
+                        for line in block["lines"]:
+                            for span in line["spans"]:
+                                text = span["text"].strip()
+                                if text and len(text) > 1:  # Skip single characters and empty
+                                    elements.append(TextElement(
+                                        text=text,
+                                        x0=span["bbox"][0],
+                                        y0=span["bbox"][1], 
+                                        x1=span["bbox"][2],
+                                        y1=span["bbox"][3],
+                                        page=page_num,
+                                        font_size=span["size"],
+                                        font_name=span["font"]
+                                    ))
+            
+            doc.close()
+            
+        except Exception as e:
+            logger.error(f"Failed to extract text elements: {e}")
+            
+        return elements
+    
+    def _create_spatial_clusters(self, elements: List[TextElement]) -> List[TextCluster]:
+        """Group text elements into spatial clusters based on proximity"""
+        if not elements:
+            return []
+        
+        clusters = []
+        used_elements = set()
+        
+        for i, element in enumerate(elements):
+            if i in used_elements:
+                continue
+                
+            # Start new cluster
+            cluster_elements = [element]
+            used_elements.add(i)
+            
+            # Find nearby elements
+            for j, other_element in enumerate(elements):
+                if j in used_elements or i == j:
+                    continue
+                
+                # Check if elements are on same page
+                if element.page != other_element.page:
+                    continue
+                
+                # Calculate distance between elements
+                distance = self._calculate_distance(element, other_element)
+                
+                if distance <= self.proximity_threshold:
+                    cluster_elements.append(other_element)
+                    used_elements.add(j)
+            
+            # Only create cluster if it has enough elements
+            if (len(cluster_elements) >= self.min_cluster_size and 
+                len(cluster_elements) <= self.max_cluster_size):
+                
+                cluster_id = f"cluster_{len(clusters)}_page_{element.page}"
+                confidence = self._calculate_cluster_confidence(cluster_elements)
+                
+                clusters.append(TextCluster(
+                    elements=cluster_elements,
+                    cluster_id=cluster_id,
+                    confidence=confidence
+                ))
+        
+        return clusters
+    
+    def _calculate_distance(self, elem1: TextElement, elem2: TextElement) -> float:
+        """Calculate spatial distance between two text elements"""
+        center_x1, center_y1 = elem1.center_x, elem1.center_y
+        center_x2, center_y2 = elem2.center_x, elem2.center_y
+        
+        return ((center_x1 - center_x2) ** 2 + (center_y1 - center_y2) ** 2) ** 0.5
+    
+    def _calculate_cluster_confidence(self, elements: List[TextElement]) -> float:
+        """Calculate confidence score for a cluster based on spatial coherence"""
+        if len(elements) < 2:
+            return 0.0
+        
+        # Check alignment and spacing consistency
+        confidence = 0.5  # Base confidence
+        
+        # Bonus for consistent font sizes
+        font_sizes = [elem.font_size for elem in elements]
+        if len(set(font_sizes)) <= 2:  # Max 2 different font sizes
+            confidence += 0.2
+        
+        # Bonus for good vertical alignment
+        x_positions = [elem.center_x for elem in elements]
+        x_range = max(x_positions) - min(x_positions)
+        if x_range < 100:  # Well aligned horizontally
+            confidence += 0.2
+        
+        # Bonus for reasonable number of elements (org chart box typically has 2-4 lines)
+        if 2 <= len(elements) <= 4:
+            confidence += 0.1
+        
+        return min(confidence, 1.0)
+    
+    def _parse_organizational_clusters(self, clusters: List[TextCluster]) -> List[OrganizationalUnit]:
+        """Parse clusters to extract organizational information"""
+        org_units = []
+        
+        for cluster in clusters:
+            if cluster.confidence < 0.6:  # Skip low-confidence clusters
+                continue
+            
+            try:
+                org_unit = self._parse_single_cluster(cluster)
+                if org_unit:
+                    org_units.append(org_unit)
+            except Exception as e:
+                logger.warning(f"Failed to parse cluster {cluster.cluster_id}: {e}")
+        
+        return org_units
+    
+    def _parse_single_cluster(self, cluster: TextCluster) -> Optional[OrganizationalUnit]:
+        """Parse a single cluster to extract name, title, department"""
+        lines = cluster.text_lines
+        
+        if len(lines) < 2:
+            return None
+        
+        # Common patterns for org chart boxes:
+        # Pattern 1: Title / Department / Name
+        # Pattern 2: Name / Title / Department  
+        # Pattern 3: Title / Name / Department
+        
+        name = ""
+        title = ""
+        department = ""
+        warnings = []
+        
+        # Try to identify each line type
+        for line in lines:
+            line_type = self._identify_line_type(line)
+            
+            if line_type == "name" and not name:
+                name = line
+            elif line_type == "title" and not title:
+                title = line
+            elif line_type == "department" and not department:
+                department = line
+        
+        # Fallback parsing if pattern detection fails
+        if not all([name, title, department]) and len(lines) >= 2:
+            # Try different common patterns based on what we have
+            if len(lines) >= 3:
+                # Pattern: Title, Department, Name (most common)
+                if not title:
+                    title = lines[0]
+                if not department:
+                    department = lines[1]
+                if not name:
+                    name = lines[2]
+            elif len(lines) == 2:
+                # Pattern: Title, Name (simple case)
+                if not title:
+                    title = lines[0]
+                if not name:
+                    name = lines[1]
+                if not department:
+                    department = "Not specified"
+            
+            # Validate assignments make sense
+            name_score = 0
+            for line in lines:
+                if re.match(r'^[A-Z][a-z]+ [A-Z][a-z]+', line):
+                    if not name or line != name:
+                        name = line
+                        name_score += 1
+                        break
+            
+            warnings.append("Used fallback parsing pattern")
+        
+        # Validation
+        if not name or not title:
+            return None
+        
+        confidence = cluster.confidence
+        if warnings:
+            confidence *= 0.8  # Reduce confidence for fallback parsing
+        
+        return OrganizationalUnit(
+            name=name.strip(),
+            title=title.strip(),
+            department=department.strip() if department else "Not specified",
+            cluster_id=cluster.cluster_id,
+            confidence=confidence,
+            source_box=cluster.bbox,
+            warnings=warnings
+        )
+    
+    def _identify_line_type(self, line: str) -> str:
+        """Identify if a line contains a name, title, or department"""
+        line_lower = line.lower()
+        
+        # Department patterns (check first - most specific)
+        dept_keywords = ['finance', 'accounting', 'hr', 'human resources', 'operations', 
+                        'marketing', 'sales', 'it', 'technology', 'legal', 'department']
+        
+        if any(keyword in line_lower for keyword in dept_keywords):
+            return "department"
+        
+        # Title patterns (check before names - titles are more specific)
+        title_keywords = ['cfo', 'ceo', 'cto', 'director', 'manager', 'analyst', 
+                         'controller', 'treasurer', 'officer', 'senior', 'junior', 'lead',
+                         'chief', 'president', 'vice', 'assistant', 'associate', 'coordinator']
+        
+        if any(keyword in line_lower for keyword in title_keywords):
+            return "title"
+        
+        # Name patterns (typically has first and last name)
+        name_patterns = [
+            r'^[A-Z][a-z]+ [A-Z][a-z]+$',  # First Last
+            r'^[A-Z][a-z]+ [A-Z]\. [A-Z][a-z]+$',  # First M. Last
+            r'^[A-Z][a-z]+ [A-Z][a-z]+ [A-Z][a-z]+$'  # First Middle Last
+        ]
+        
+        for pattern in name_patterns:
+            if re.match(pattern, line):
+                return "name"
+        
+        # Default to title if unclear (safer assumption for org charts)
+        return "title"
+    
+    def _create_structured_result(self, org_units: List[OrganizationalUnit], 
+                                clusters: List[TextCluster], 
+                                elements: List[TextElement]) -> Dict[str, Any]:
+        """Create final structured result"""
+        
+        return {
+            "extraction_method": "pdf_spatial",
+            "success": True,
+            "organizational_units": [
+                {
+                    "name": unit.name,
+                    "title": unit.title,
+                    "department": unit.department,
+                    "confidence": unit.confidence,
+                    "source_box": unit.source_box,
+                    "cluster_id": unit.cluster_id,
+                    "warnings": unit.warnings
+                }
+                for unit in org_units
+            ],
+            "metadata": {
+                "total_clusters": len(clusters),
+                "successful_extractions": len(org_units),
+                "total_text_elements": len(elements),
+                "average_confidence": sum(unit.confidence for unit in org_units) / len(org_units) if org_units else 0.0
+            },
+            "spatial_data": {
+                "clusters": [
+                    {
+                        "id": cluster.cluster_id,
+                        "bbox": cluster.bbox,
+                        "text_lines": cluster.text_lines,
+                        "confidence": cluster.confidence
+                    }
+                    for cluster in clusters
+                ]
+            }
+        }
+    
+    def _create_empty_result(self, reason: str) -> Dict[str, Any]:
+        """Create empty result structure"""
+        return {
+            "extraction_method": "pdf_spatial",
+            "success": False,
+            "organizational_units": [],
+            "metadata": {
+                "total_clusters": 0,
+                "successful_extractions": 0,
+                "total_text_elements": 0,
+                "average_confidence": 0.0,
+                "error": reason
+            },
+            "spatial_data": {"clusters": []}
+        }
+    
+    def _create_error_result(self, error: str) -> Dict[str, Any]:
+        """Create error result structure"""
+        return {
+            "extraction_method": "pdf_spatial",
+            "success": False,
+            "organizational_units": [],
+            "metadata": {
+                "total_clusters": 0,
+                "successful_extractions": 0,
+                "total_text_elements": 0,
+                "average_confidence": 0.0,
+                "error": error
+            },
+            "spatial_data": {"clusters": []}
+        }
+
+# Convenience function for easy integration
+async def extract_pdf_spatial(pdf_path: str) -> Dict[str, Any]:
+    """
+    Async wrapper for PDF spatial extraction
+    Returns structured organizational data from PDF
+    """
+    extractor = PDFSpatialExtractor()
+    return extractor.extract_with_coordinates(pdf_path)
