@@ -64,20 +64,21 @@ if __name__ == "__main__":
     # Clear cache
     cache_cleared = clear_cache()
     
-    # Ask about server restart
-    if cache_cleared:
-        print("\n🚀 **CACHE CLEARED SUCCESSFULLY**")
-        print("   • Old [1], [2] citations removed")
-        print("   • Next responses will show page numbers")
-        print("   • Follow-up questions optimized to 3")
-        
-        # Auto-restart if running as script
-        restart_server()
-        
-        print("\n🎉 **AAIRE READY WITH ENHANCED CITATIONS**")
-        print("   Test by asking: 'what are the ratios used to assess capital health?'")
-        print("   Should now show: 'LICAT.pdf, Page 2' instead of '[2]'")
+    # Restart server regardless of cache status
+    print("\n🔄 **RESTARTING SERVER WITH ENHANCED CITATIONS**")
+    print("   • Updated LLM prompts for page number citations")
+    print("   • Follow-up questions optimized to 3")
     
+    server_restarted = restart_server()
+    
+    if server_restarted:
+        print("\n🎉 **AAIRE READY WITH ENHANCED CITATIONS**")
+        print("   • Citations will show 'LICAT.pdf, Page 2' instead of '[2]'")
+        print("   • Exactly 3 contextual follow-up questions")
+        print("   • Enhanced shape-aware extraction active")
+        print("\n🧪 **TEST NOW:**")
+        print("   Ask: 'what are the ratios used to assess capital health?'")
+        print("   Should see proper page references!")
     else:
-        print("\n⚠️ **MANUAL RESTART RECOMMENDED**")
+        print("\n⚠️ **MANUAL RESTART NEEDED**")
         print("   Run: pkill -f main.py && python3 main.py")
