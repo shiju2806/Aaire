@@ -19,6 +19,7 @@ from dataclasses import dataclass
 import structlog
 import re
 from pathlib import Path
+from advanced_org_parser import AdvancedOrgParser
 
 logger = structlog.get_logger()
 
@@ -97,6 +98,7 @@ class PDFSpatialExtractor:
         self.proximity_threshold = 50  # Pixels - adjust based on document density
         self.min_cluster_size = 2  # Minimum elements per cluster
         self.max_cluster_size = 10  # Maximum elements per cluster
+        self.advanced_parser = AdvancedOrgParser()  # Use advanced parsing logic
         
     def extract_with_coordinates(self, pdf_path: str) -> Dict[str, Any]:
         """
@@ -272,114 +274,36 @@ class PDFSpatialExtractor:
         return org_units
     
     def _parse_single_cluster(self, cluster: TextCluster) -> Optional[OrganizationalUnit]:
-        """Parse a single cluster to extract name, title, department"""
-        lines = cluster.text_lines
+        """Parse a single cluster to extract name, title, department using advanced parser"""
         
-        if len(lines) < 2:
+        # Combine cluster text lines into single text for advanced parser
+        cluster_text = '\n'.join(cluster.text_lines)
+        
+        # Use advanced parser
+        person_record = self.advanced_parser.parse_spatial_cluster(
+            cluster_text, 
+            cluster.bbox
+        )
+        
+        if not person_record:
+            logger.debug(f"Advanced parser failed for cluster {cluster.cluster_id}")
             return None
         
-        # Common patterns for org chart boxes:
-        # Pattern 1: Title / Department / Name
-        # Pattern 2: Name / Title / Department  
-        # Pattern 3: Title / Name / Department
-        
-        name = ""
-        title = ""
-        department = ""
+        # Map PersonRecord to OrganizationalUnit
         warnings = []
-        
-        # Try to identify each line type
-        for line in lines:
-            line_type = self._identify_line_type(line)
-            
-            if line_type == "name" and not name:
-                name = line
-            elif line_type == "title" and not title:
-                title = line
-            elif line_type == "department" and not department:
-                department = line
-        
-        # Fallback parsing if pattern detection fails
-        if not all([name, title, department]) and len(lines) >= 2:
-            # Try different common patterns based on what we have
-            if len(lines) >= 3:
-                # Pattern: Title, Department, Name (most common)
-                if not title:
-                    title = lines[0]
-                if not department:
-                    department = lines[1]
-                if not name:
-                    name = lines[2]
-            elif len(lines) == 2:
-                # Pattern: Title, Name (simple case)
-                if not title:
-                    title = lines[0]
-                if not name:
-                    name = lines[1]
-                if not department:
-                    department = "Not specified"
-            
-            # Validate assignments make sense
-            name_score = 0
-            for line in lines:
-                if re.match(r'^[A-Z][a-z]+ [A-Z][a-z]+', line):
-                    if not name or line != name:
-                        name = line
-                        name_score += 1
-                        break
-            
+        if person_record.source_info.get('method') == 'fallback':
             warnings.append("Used fallback parsing pattern")
         
-        # Validation
-        if not name or not title:
-            return None
-        
-        confidence = cluster.confidence
-        if warnings:
-            confidence *= 0.8  # Reduce confidence for fallback parsing
-        
         return OrganizationalUnit(
-            name=name.strip(),
-            title=title.strip(),
-            department=department.strip() if department else "Not specified",
+            name=person_record.name,
+            title=person_record.title,
+            department=person_record.department,
             cluster_id=cluster.cluster_id,
-            confidence=confidence,
+            confidence=person_record.confidence,
             source_box=cluster.bbox,
             warnings=warnings
         )
     
-    def _identify_line_type(self, line: str) -> str:
-        """Identify if a line contains a name, title, or department"""
-        line_lower = line.lower()
-        
-        # Department patterns (check first - most specific)
-        dept_keywords = ['finance', 'accounting', 'hr', 'human resources', 'operations', 
-                        'marketing', 'sales', 'it', 'technology', 'legal', 'department']
-        
-        if any(keyword in line_lower for keyword in dept_keywords):
-            return "department"
-        
-        # Title patterns (check before names - titles are more specific)
-        title_keywords = ['cfo', 'ceo', 'cto', 'director', 'manager', 'analyst', 
-                         'controller', 'treasurer', 'officer', 'senior', 'junior', 'lead',
-                         'chief', 'president', 'vice', 'assistant', 'associate', 'coordinator']
-        
-        if any(keyword in line_lower for keyword in title_keywords):
-            return "title"
-        
-        # Name patterns (typically has first and last name)
-        name_patterns = [
-            r'^[A-Z][a-z]+ [A-Z][a-z]+$',  # First Last
-            r'^[A-Z][a-z]+ [A-Z]\. [A-Z][a-z]+$',  # First M. Last
-            r'^[A-Z][a-z]+ [A-Z][a-z]+ [A-Z][a-z]+$'  # First Middle Last
-        ]
-        
-        for pattern in name_patterns:
-            if re.match(pattern, line):
-                return "name"
-        
-        # Default to title if unclear (safer assumption for org charts)
-        return "title"
     
     def _create_structured_result(self, org_units: List[OrganizationalUnit], 
                                 clusters: List[TextCluster], 
