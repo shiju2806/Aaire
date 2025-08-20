@@ -95,9 +95,9 @@ class PDFSpatialExtractor:
     """
     
     def __init__(self):
-        self.proximity_threshold = 50  # Pixels - adjust based on document density
+        self.proximity_threshold = 25  # Reduced for tighter clustering
         self.min_cluster_size = 2  # Minimum elements per cluster
-        self.max_cluster_size = 10  # Maximum elements per cluster
+        self.max_cluster_size = 6   # Reduced max - org boxes typically have 2-4 lines
         self.advanced_parser = AdvancedOrgParser()  # Use advanced parsing logic
         
     def extract_with_coordinates(self, pdf_path: str) -> Dict[str, Any]:
@@ -209,9 +209,10 @@ class PDFSpatialExtractor:
                     cluster_elements.append(other_element)
                     used_elements.add(j)
             
-            # Only create cluster if it has enough elements
+            # Only create cluster if it has enough elements and forms a coherent box
             if (len(cluster_elements) >= self.min_cluster_size and 
-                len(cluster_elements) <= self.max_cluster_size):
+                len(cluster_elements) <= self.max_cluster_size and
+                self._is_valid_org_cluster(cluster_elements)):
                 
                 cluster_id = f"cluster_{len(clusters)}_page_{element.page}"
                 confidence = self._calculate_cluster_confidence(cluster_elements)
@@ -225,11 +226,64 @@ class PDFSpatialExtractor:
         return clusters
     
     def _calculate_distance(self, elem1: TextElement, elem2: TextElement) -> float:
-        """Calculate spatial distance between two text elements"""
-        center_x1, center_y1 = elem1.center_x, elem1.center_y
-        center_x2, center_y2 = elem2.center_x, elem2.center_y
+        """Calculate spatial distance between two text elements with org chart awareness"""
         
-        return ((center_x1 - center_x2) ** 2 + (center_y1 - center_y2) ** 2) ** 0.5
+        # For organizational charts, prioritize vertical alignment over pure distance
+        x_distance = abs(elem1.center_x - elem2.center_x)
+        y_distance = abs(elem1.center_y - elem2.center_y)
+        
+        # If elements are vertically aligned (same column), weight y-distance more
+        if x_distance < 30:  # Elements are roughly in same column
+            return y_distance * 0.7  # Prefer vertical grouping
+        
+        # If elements are horizontally aligned (same row), they probably don't belong together
+        if y_distance < 10:  # Same horizontal line
+            return x_distance * 2.0  # Discourage horizontal grouping
+        
+        # Standard euclidean distance for other cases
+        return ((x_distance ** 2) + (y_distance ** 2)) ** 0.5
+    
+    def _is_valid_org_cluster(self, elements: List[TextElement]) -> bool:
+        """Validate that elements form a coherent organizational chart box"""
+        if len(elements) < 2:
+            return False
+        
+        # Sort elements by vertical position (top to bottom)
+        sorted_elements = sorted(elements, key=lambda e: e.y0, reverse=True)
+        
+        # Check if elements are roughly vertically aligned (same column)
+        x_positions = [e.center_x for e in elements]
+        x_variance = max(x_positions) - min(x_positions)
+        
+        # Elements should be in roughly the same column (within 50 pixels)
+        if x_variance > 50:
+            return False
+        
+        # Check vertical spacing - elements should be close vertically
+        for i in range(len(sorted_elements) - 1):
+            current = sorted_elements[i]
+            next_elem = sorted_elements[i + 1]
+            vertical_gap = current.y0 - next_elem.y1  # Gap between elements
+            
+            # Gap should be reasonable (not too large)
+            if vertical_gap > 30:  # More than 30 pixels gap
+                return False
+        
+        # Check if cluster contains typical org chart content patterns
+        combined_text = ' '.join([e.text.lower() for e in elements])
+        
+        # Should contain typical org chart indicators
+        has_name_pattern = any(
+            len(word) > 2 and word[0].isupper() and word[1:].islower()
+            for word in ' '.join([e.text for e in elements]).split()
+        )
+        
+        has_title_indicators = any(
+            indicator in combined_text 
+            for indicator in ['manager', 'director', 'vp', 'avp', 'analyst', 'accountant', 'mvp']
+        )
+        
+        return has_name_pattern or has_title_indicators
     
     def _calculate_cluster_confidence(self, elements: List[TextElement]) -> float:
         """Calculate confidence score for a cluster based on spatial coherence"""
