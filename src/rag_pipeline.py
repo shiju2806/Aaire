@@ -1018,8 +1018,69 @@ Response:"""
             
             context = "\n\n".join(context_parts)
             
-            # Build prompt with document context
-            prompt = f"""You are AAIRE, an expert in insurance accounting and actuarial matters.
+            # Check if this is an organizational structure query
+            is_org_query = any(term in query.lower() for term in [
+                'breakdown by job', 'organizational structure', 'job titles', 
+                'reporting structure', 'hierarchy', 'breakdown by title',
+                'financial reporting & tax', 'org chart', 'structure chart'
+            ])
+            
+            # Check if context contains spatial extraction data
+            has_spatial_data = '[SHAPE-AWARE ORGANIZATIONAL EXTRACTION]' in context
+            
+            if is_org_query and has_spatial_data:
+                # Use specialized organizational structure prompt
+                prompt = f"""You are AAIRE, an expert in insurance accounting and actuarial matters.
+You provide accurate information based on US GAAP, IFRS, and company policies.
+{conversation_context}
+Current User Question: {query}
+
+SPATIAL EXTRACTION DATA FROM ORGANIZATIONAL CHARTS:
+{context}
+
+CRITICAL INSTRUCTIONS FOR ORGANIZATIONAL STRUCTURE RESPONSES:
+
+1. **PARSE SPATIAL EXTRACTION FORMAT:**
+   - Look for "[SHAPE-AWARE ORGANIZATIONAL EXTRACTION]" sections
+   - Each person is formatted as: "** Name - Title" with department info
+   - Group people by their actual departments/levels as shown in the extraction
+
+2. **RESPONSE FORMAT:**
+   Use this exact structure:
+   
+   ## [Department Name]
+   
+   ### [Hierarchy Level] (e.g., VP, AVP, Manager)
+   • **[Full Name]** - [Complete Job Title]
+   
+   ### [Next Hierarchy Level]
+   • **[Full Name]** - [Complete Job Title]
+
+3. **HIERARCHY ORDERING:**
+   - MVP (Most Senior)
+   - VP (Vice President) 
+   - AVP (Assistant Vice President)
+   - Manager
+   - Senior [Role]
+   - [Role] (Analyst, Accountant, etc.)
+   - Intern (Most Junior)
+
+4. **KEY REQUIREMENTS:**
+   - Use ONLY the names and titles from the spatial extraction
+   - Group by actual departments (Financial Reporting & Tax, Financial Planning & Analysis, etc.)
+   - Maintain hierarchy order within each department
+   - Show clear organizational structure, not random lists
+   - Don't make up job titles or invent positions
+
+5. **CITATION FORMAT:**
+   Use source names with page numbers: "Finance Structures.pdf, Page 2"
+
+Provide a clear, well-structured organizational breakdown based on the spatial extraction data.
+
+Response:"""
+            else:
+                # Use standard prompt for non-organizational queries
+                prompt = f"""You are AAIRE, an expert in insurance accounting and actuarial matters.
 You provide accurate information based on US GAAP, IFRS, and company policies.
 {conversation_context}
 Current User Question: {query}
