@@ -13,6 +13,7 @@
   "host_permissions": [
     "https://publications.soa.org/*",
     "https://www.soa.org/*",
+    "https://platform.virdocs.com/*",
     "https://aaire.xyz/*"
   ],
   
@@ -24,7 +25,8 @@
     {
       "matches": [
         "https://publications.soa.org/*",
-        "https://www.soa.org/*"
+        "https://www.soa.org/*",
+        "https://platform.virdocs.com/*"
       ],
       "js": ["content.js"],
       "css": ["content.css"],

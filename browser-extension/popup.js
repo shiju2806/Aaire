@@ -190,21 +190,21 @@ function updateDetectTab() {
     return;
   }
   
-  const isSOAPage = currentPageInfo.url.includes('soa.org');
+  const isSupportedPage = currentPageInfo.url.includes('soa.org') || currentPageInfo.url.includes('platform.virdocs.com');
   const documentCount = currentPageInfo.documents ? currentPageInfo.documents.length : 0;
   
-  if (!isSOAPage) {
+  if (!isSupportedPage) {
     statusElement.className = 'status-indicator warning';
     statusElement.innerHTML = `
       <span class="status-dot"></span>
-      <span class="status-text">Not on SOA website</span>
+      <span class="status-text">Not on supported website</span>
     `;
     documentsElement.innerHTML = `
       <div class="empty-state">
         <div class="empty-state-icon">🌐</div>
-        <div class="empty-state-title">Navigate to SOA</div>
+        <div class="empty-state-title">Navigate to Supported Site</div>
         <div class="empty-state-description">
-          Visit publications.soa.org to detect and capture documents
+          Visit publications.soa.org or platform.virdocs.com to detect and capture documents
         </div>
       </div>
     `;

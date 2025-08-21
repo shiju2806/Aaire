@@ -5,7 +5,7 @@
 
 // Configuration
 const SUPPORTED_DOCUMENT_TYPES = ['.pdf', '.docx', '.doc', '.ppt', '.pptx'];
-const SOA_DOMAINS = ['publications.soa.org', 'www.soa.org'];
+const SUPPORTED_DOMAINS = ['publications.soa.org', 'www.soa.org', 'platform.virdocs.com'];
 
 // State
 let detectedDocuments = [];
@@ -20,18 +20,29 @@ if (document.readyState === 'loading') {
 
 function initialize() {
   console.log('AAIRE Content Script initializing on:', window.location.href);
+  console.log('Hostname:', window.location.hostname);
+  console.log('Supported domains:', SUPPORTED_DOMAINS);
   
-  // Check if we're on a supported SOA domain
-  if (!SOA_DOMAINS.some(domain => window.location.hostname.includes(domain))) {
-    console.log('Not on SOA domain, extension inactive');
+  // Check if we're on a supported domain
+  const isSupported = SUPPORTED_DOMAINS.some(domain => {
+    const matches = window.location.hostname.includes(domain);
+    console.log(`Checking ${domain}: ${matches}`);
+    return matches;
+  });
+  
+  if (!isSupported) {
+    console.log('Not on supported domain, extension inactive');
+    console.log('Current hostname:', window.location.hostname);
     return;
   }
   
-  // Detect documents on page
-  detectDocuments();
+  console.log('✅ Supported domain detected, continuing initialization');
   
-  // Create AAIRE UI overlay
+  // Create AAIRE UI overlay first
   createAAIREUI();
+  
+  // Then detect documents (this will update the UI)
+  detectDocuments();
   
   // Monitor for dynamic content changes
   observePageChanges();
@@ -73,8 +84,8 @@ function detectDocuments() {
     }
   });
   
-  // Method 3: Look for SOA-specific document patterns
-  detectSOASpecificDocuments();
+  // Method 3: Look for platform-specific document patterns
+  detectPlatformSpecificDocuments();
   
   console.log(`Detected ${detectedDocuments.length} documents:`, detectedDocuments);
   
@@ -83,9 +94,73 @@ function detectDocuments() {
 }
 
 /**
- * Detect SOA-specific document patterns
+ * Detect platform-specific document patterns
  */
-function detectSOASpecificDocuments() {
+function detectPlatformSpecificDocuments() {
+  
+  // VirDocs platform detection
+  if (window.location.hostname.includes('platform.virdocs.com')) {
+    detectVirDocsDocument();
+  }
+  
+  // SOA platform detection
+  if (window.location.hostname.includes('soa.org')) {
+    detectSOADocuments();
+  }
+}
+
+/**
+ * Detect VirDocs document
+ */
+function detectVirDocsDocument() {
+  // VirDocs shows documents in a viewer - detect the current document
+  const currentUrl = window.location.href;
+  const documentTitle = document.title || 'VirDocs Document';
+  
+  // Extract document ID from URL (e.g., /read/2867432/8/#/4/222)
+  const docIdMatch = currentUrl.match(/\/read\/(\d+)/);
+  if (docIdMatch) {
+    const docId = docIdMatch[1];
+    
+    // Check if there's a way to get the actual document URL
+    // VirDocs usually has a download or print option
+    const downloadLink = document.querySelector('a[href*="download"], a[href*="pdf"], button[title*="download"], button[title*="print"]');
+    
+    let documentUrl = currentUrl;
+    if (downloadLink && downloadLink.href) {
+      documentUrl = downloadLink.href;
+    }
+    
+    detectedDocuments.push({
+      type: 'virdocs_viewer',
+      url: documentUrl,
+      title: documentTitle,
+      element: document.body,
+      platform: 'VirDocs',
+      documentId: docId
+    });
+    
+    // Also try to find direct PDF links in the page
+    const pdfLinks = document.querySelectorAll('a[href*=".pdf"], iframe[src*=".pdf"]');
+    pdfLinks.forEach(link => {
+      const url = link.href || link.src;
+      if (url && !detectedDocuments.some(doc => doc.url === url)) {
+        detectedDocuments.push({
+          type: 'virdocs_pdf',
+          url: url,
+          title: documentTitle + ' (PDF)',
+          element: link,
+          platform: 'VirDocs'
+        });
+      }
+    });
+  }
+}
+
+/**
+ * Detect SOA-specific documents
+ */
+function detectSOADocuments() {
   // Look for publication download buttons
   const downloadButtons = document.querySelectorAll('.download-btn, .pdf-download, [data-download]');
   downloadButtons.forEach(button => {
@@ -176,6 +251,12 @@ function updateAAIREUI() {
   const documentsElement = document.getElementById('aaire-documents');
   const actionsElement = document.getElementById('aaire-actions');
   
+  // Safety check - if UI elements don't exist, skip update
+  if (!statusElement || !documentsElement || !actionsElement) {
+    console.log('AAIRE UI elements not found, skipping update');
+    return;
+  }
+  
   if (detectedDocuments.length === 0) {
     statusElement.textContent = 'No documents detected on this page';
     documentsElement.innerHTML = '';
@@ -243,21 +324,29 @@ async function sendSelectedDocuments() {
 /**
  * Send individual document to AAIRE
  */
-async function sendDocumentToAAIRE(document) {
+async function sendDocumentToAAIRE(docInfo) {
   try {
-    // Download the document
-    const response = await fetch(document.url);
-    if (!response.ok) {
-      throw new Error(`Failed to download: ${response.status}`);
+    let file, filename;
+    
+    // Handle VirDocs viewer documents differently
+    if (docInfo.type === 'virdocs_viewer') {
+      // For VirDocs, we'll capture the page content or try to get the PDF
+      // Since VirDocs doesn't provide direct download, we'll capture the text content
+      const pageContent = document.body.innerText || document.body.textContent || '';
+      const blob = new Blob([pageContent], { type: 'text/plain' });
+      filename = `virdocs_${docInfo.documentId || 'document'}.txt`;
+      file = new File([blob], filename, { type: 'text/plain' });
+    } else {
+      // For regular documents, download normally
+      const response = await fetch(docInfo.url);
+      if (!response.ok) {
+        throw new Error(`Failed to download: ${response.status}`);
+      }
+      
+      const blob = await response.blob();
+      filename = docInfo.url.split('/').pop() || 'document.pdf';
+      file = new File([blob], filename, { type: blob.type });
     }
-    
-    const blob = await response.blob();
-    
-    // Extract filename from URL
-    const filename = document.url.split('/').pop() || 'document.pdf';
-    
-    // Create file object
-    const file = new File([blob], filename, { type: blob.type });
     
     // Send to background script
     const result = await new Promise((resolve, reject) => {
@@ -267,7 +356,9 @@ async function sendDocumentToAAIRE(document) {
           file: file,
           filename: filename,
           sourceUrl: window.location.href,
-          pageTitle: document.title
+          pageTitle: document.title,
+          documentType: docInfo.type,
+          platform: docInfo.platform || 'Unknown'
         }
       }, response => {
         if (response.success) {
@@ -279,7 +370,7 @@ async function sendDocumentToAAIRE(document) {
     });
     
     console.log('Document sent successfully:', result);
-    alert(`Document "${document.title}" sent to AAIRE successfully!`);
+    alert(`Document "${docInfo.title}" sent to AAIRE successfully!`);
     
   } catch (error) {
     console.error('Failed to send document:', error);
