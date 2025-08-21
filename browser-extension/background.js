@@ -12,7 +12,7 @@ let activeJobs = new Map();
 
 // Listen for messages from content script and popup
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  console.log('Background received message:', request.type);
+  console.log('Background received message:', request.type, request.data);
   
   switch (request.type) {
     case 'UPLOAD_DOCUMENT':
@@ -79,18 +79,25 @@ async function handleDocumentUpload(uploadData) {
     });
     
     // Upload to AAIRE
-    const response = await fetch(`${AAIRE_API_BASE}/upload`, {
-      method: 'POST',
-      body: formData
-    });
+    console.log('Making fetch request to:', `${AAIRE_API_BASE}/upload`);
+    let response;
+    try {
+      response = await fetch(`${AAIRE_API_BASE}/upload`, {
+        method: 'POST',
+        body: formData
+      });
+    } catch (networkError) {
+      console.error('Network error during fetch:', networkError);
+      throw new Error(`Network error: ${networkError.message}`);
+    }
     
     console.log('Upload response status:', response.status);
-    console.log('Upload response headers:', response.headers);
+    console.log('Upload response headers:', [...response.headers.entries()]);
     
     if (!response.ok) {
       const errorText = await response.text();
       console.error('Upload error response:', errorText);
-      throw new Error(`Upload failed: ${response.status} ${response.statusText}`);
+      throw new Error(`Upload failed: ${response.status} ${response.statusText} - ${errorText}`);
     }
     
     const result = await response.json();

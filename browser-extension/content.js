@@ -547,6 +547,12 @@ suggests this is a protected or dynamically-loaded document that requires specia
     };
     
     // Send to background script
+    console.log('Sending message to background script...', {
+      fileSize: fileData.size,
+      fileName: fileData.name,
+      sourceUrl: window.location.href
+    });
+    
     const result = await new Promise((resolve, reject) => {
       chrome.runtime.sendMessage({
         type: 'UPLOAD_DOCUMENT',
@@ -558,6 +564,7 @@ suggests this is a protected or dynamically-loaded document that requires specia
           platform: docInfo.platform || 'Unknown'
         }
       }, response => {
+        console.log('Response from background script:', response);
         if (response && response.success) {
           resolve(response.data);
         } else {
