@@ -39,6 +39,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         .catch(error => sendResponse({ success: false, error: error.message }));
       return true;
       
+    case 'OPEN_AAIRE':
+      // Open AAIRE website in new tab
+      chrome.tabs.create({ url: 'https://aaire.xyz' });
+      sendResponse({ success: true });
+      return true;
+      
     default:
       console.warn('Unknown message type:', request.type);
   }
@@ -49,14 +55,28 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
  */
 async function handleDocumentUpload(uploadData) {
   try {
-    console.log('Starting document upload:', uploadData.filename);
+    console.log('Starting document upload:', uploadData.fileData.name);
+    
+    // Reconstruct File object from transferred data
+    const fileContent = new Uint8Array(uploadData.fileData.content);
+    const file = new File([fileContent], uploadData.fileData.name, { 
+      type: uploadData.fileData.type 
+    });
     
     // Create form data
     const formData = new FormData();
-    formData.append('file', uploadData.file);
+    formData.append('file', file);
     formData.append('source_url', uploadData.sourceUrl);
     formData.append('page_title', uploadData.pageTitle);
     formData.append('extension_version', EXTENSION_VERSION);
+    
+    console.log('Uploading to AAIRE:', {
+      filename: file.name,
+      fileSize: file.size,
+      fileType: file.type,
+      sourceUrl: uploadData.sourceUrl,
+      pageTitle: uploadData.pageTitle
+    });
     
     // Upload to AAIRE
     const response = await fetch(`${AAIRE_API_BASE}/upload`, {
@@ -64,7 +84,12 @@ async function handleDocumentUpload(uploadData) {
       body: formData
     });
     
+    console.log('Upload response status:', response.status);
+    console.log('Upload response headers:', response.headers);
+    
     if (!response.ok) {
+      const errorText = await response.text();
+      console.error('Upload error response:', errorText);
       throw new Error(`Upload failed: ${response.status} ${response.statusText}`);
     }
     

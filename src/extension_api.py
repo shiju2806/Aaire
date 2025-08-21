@@ -56,11 +56,50 @@ async def extension_upload(
         if not file.filename:
             raise HTTPException(status_code=400, detail="No file provided")
         
+        # Read and validate file content
+        content = await file.read()
+        file_size = len(content)
+        
+        # Basic file validation  
+        if file_size == 0:
+            raise HTTPException(status_code=422, detail="File is empty")
+        
+        # For text files, be more lenient with small files (VirDocs extractions can be small)
+        if file.content_type and 'text' in file.content_type and file_size < 10:
+            raise HTTPException(status_code=422, detail="Text file too small (minimum 10 bytes)")
+        elif file_size < 5:
+            raise HTTPException(status_code=422, detail="File too small")
+        
+        if file_size > 100 * 1024 * 1024:  # 100MB limit
+            raise HTTPException(status_code=422, detail="File too large (max 100MB)")
+        
+        # Validate filename
+        if len(file.filename) > 255:
+            raise HTTPException(status_code=422, detail="Filename too long")
+        
+        # Check for potentially problematic characters
+        invalid_chars = ['<', '>', ':', '"', '|', '?', '*']
+        if any(char in file.filename for char in invalid_chars):
+            logger.warning("Filename contains potentially problematic characters", filename=file.filename)
+        
+        # Reset file position for later reading
+        await file.seek(0)
+        
+        # Log first 200 characters of content for debugging (only for text files)
+        debug_content = ""
+        if file.content_type and 'text' in file.content_type and file_size < 10000:
+            try:
+                debug_content = content.decode('utf-8')[:200] + ('...' if file_size > 200 else '')
+            except:
+                debug_content = "Binary content"
+        
         logger.info("Extension upload request received", 
                    filename=file.filename,
                    content_type=file.content_type,
+                   file_size=file_size,
                    source_url=source_url,
-                   page_title=page_title)
+                   page_title=page_title,
+                   content_preview=debug_content)
         
         # Create upload metadata with extension context
         upload_metadata = {
@@ -91,8 +130,7 @@ async def extension_upload(
         
         file_path = uploads_dir / f"{job_id}_{file.filename}"
         
-        # Save uploaded file
-        content = await file.read()
+        # Save uploaded file (content already read during validation)
         with open(file_path, 'wb') as f:
             f.write(content)
         
