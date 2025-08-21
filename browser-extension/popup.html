@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AAIRE Document Assistant</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="popup-container">
+    <!-- Header -->
+    <div class="popup-header">
+      <img src="icons/icon32.png" alt="AAIRE" class="popup-logo">
+      <div class="popup-title">
+        <h1>AAIRE Assistant</h1>
+        <p>Document Analysis & Q&A</p>
+      </div>
+    </div>
+
+    <!-- Navigation Tabs -->
+    <div class="popup-tabs">
+      <button class="tab-btn active" data-tab="detect">Detect</button>
+      <button class="tab-btn" data-tab="documents">Documents</button>
+      <button class="tab-btn" data-tab="query">Query</button>
+    </div>
+
+    <!-- Detect Tab -->
+    <div class="tab-content active" id="detect-tab">
+      <div class="status-section">
+        <div class="status-indicator" id="page-status">
+          <span class="status-dot"></span>
+          <span class="status-text">Checking page...</span>
+        </div>
+      </div>
+
+      <div class="documents-section" id="detected-documents">
+        <!-- Detected documents will be populated here -->
+      </div>
+
+      <div class="actions-section">
+        <button class="btn btn-primary" id="scan-page">
+          <span class="btn-icon">🔍</span>
+          Scan Page
+        </button>
+        <button class="btn btn-secondary" id="send-all" disabled>
+          <span class="btn-icon">📤</span>
+          Send to AAIRE
+        </button>
+      </div>
+    </div>
+
+    <!-- Documents Tab -->
+    <div class="tab-content" id="documents-tab">
+      <div class="search-section">
+        <input type="text" class="search-input" id="document-search" placeholder="Search documents...">
+      </div>
+
+      <div class="document-list" id="stored-documents">
+        <!-- Stored documents will be populated here -->
+      </div>
+
+      <div class="actions-section">
+        <button class="btn btn-outline" id="refresh-documents">
+          <span class="btn-icon">🔄</span>
+          Refresh
+        </button>
+        <button class="btn btn-secondary" id="open-aaire">
+          <span class="btn-icon">🌐</span>
+          Open AAIRE
+        </button>
+      </div>
+    </div>
+
+    <!-- Query Tab -->
+    <div class="tab-content" id="query-tab">
+      <div class="query-section">
+        <select class="document-select" id="query-document">
+          <option value="">Select a document...</option>
+        </select>
+
+        <textarea 
+          class="query-input" 
+          id="query-text" 
+          placeholder="Ask a question about the selected document..."
+          rows="4"
+        ></textarea>
+
+        <button class="btn btn-primary" id="submit-query" disabled>
+          <span class="btn-icon">❓</span>
+          Ask AAIRE
+        </button>
+      </div>
+
+      <div class="response-section" id="query-response">
+        <!-- Query response will appear here -->
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <div class="popup-footer">
+      <a href="https://aaire.xyz" target="_blank" class="footer-link">
+        Open AAIRE Web App
+      </a>
+      <button class="settings-btn" id="open-settings">⚙️</button>
+    </div>
+  </div>
+
+  <!-- Loading Overlay -->
+  <div class="loading-overlay" id="loading-overlay" style="display: none;">
+    <div class="loading-spinner"></div>
+    <p class="loading-text">Processing...</p>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

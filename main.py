@@ -227,6 +227,14 @@ logger.info("Component initialization complete",
            rag_pipeline_available=rag_pipeline is not None,
            document_processor_available=document_processor is not None)
 
+# Include Browser Extension API routes (separate from main functionality)
+try:
+    from src.extension_api import extension_router
+    app.include_router(extension_router)
+    logger.info("✅ Browser Extension API routes added")
+except ImportError as e:
+    logger.warning("❌ Browser Extension API not available", error=str(e))
+
 # Request/Response Models per MVP API spec
 class ChatRequest(BaseModel):
     query: str = Field(..., max_length=2000, description="User query")
