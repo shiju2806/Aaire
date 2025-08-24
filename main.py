@@ -452,6 +452,14 @@ async def health_check():
 
 @app.post("/api/v1/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
+    return await chat_handler(request)
+
+@app.post("/api/v2/data/process", response_model=ChatResponse)
+async def chat_v2(request: ChatRequest):
+    """API v2 compatibility endpoint - routes to same chat handler"""
+    return await chat_handler(request)
+
+async def chat_handler(request: ChatRequest):
     """
     Main chat endpoint - MVP-FR-001 through MVP-FR-008
     Implements query processing, retrieval, and response generation
