@@ -446,7 +446,7 @@ class RAGPipeline:
             self._current_query = query
             
             # ALWAYS search uploaded documents first
-            retrieved_docs = await self._retrieve_documents(expanded_query, doc_type_filter, similarity_threshold)
+            retrieved_docs = await self._retrieve_documents(expanded_query, doc_type_filter, similarity_threshold, filters)
             
             # Check if we found relevant documents in uploaded content
             if retrieved_docs and len(retrieved_docs) > 0:
@@ -579,7 +579,7 @@ class RAGPipeline:
                 
                 # Get relevant documents first
                 doc_type_filter = self._get_doc_type_filter(filters)
-                retrieved_docs = await self._retrieve_documents(enhanced_query, doc_type_filter)
+                retrieved_docs = await self._retrieve_documents(enhanced_query, doc_type_filter, None, filters)
                 
                 if not retrieved_docs:
                     return RAGResponse(
@@ -747,12 +747,12 @@ class RAGPipeline:
         
         return doc_types if doc_types else None
     
-    async def _retrieve_documents(self, query: str, doc_type_filter: Optional[List[str]], similarity_threshold: Optional[float] = None) -> List[Dict]:
+    async def _retrieve_documents(self, query: str, doc_type_filter: Optional[List[str]], similarity_threshold: Optional[float] = None, filters: Optional[Dict[str, Any]] = None) -> List[Dict]:
         """Hybrid retrieval: combines vector search with BM25 keyword search"""
         
         # Get results from both search methods
-        vector_results = await self._vector_search(query, doc_type_filter, similarity_threshold)
-        keyword_results = await self._keyword_search(query, doc_type_filter)
+        vector_results = await self._vector_search(query, doc_type_filter, similarity_threshold, filters)
+        keyword_results = await self._keyword_search(query, doc_type_filter, filters)
         
         # Combine results using advanced relevance engine
         all_results = vector_results + keyword_results
@@ -776,8 +776,8 @@ class RAGPipeline:
         
         return combined_results
     
-    async def _vector_search(self, query: str, doc_type_filter: Optional[List[str]], similarity_threshold: Optional[float] = None) -> List[Dict]:
-        """Original vector-based semantic search"""
+    async def _vector_search(self, query: str, doc_type_filter: Optional[List[str]], similarity_threshold: Optional[float] = None, filters: Optional[Dict[str, Any]] = None) -> List[Dict]:
+        """Original vector-based semantic search with filtering support"""
         all_results = []
         
         try:
@@ -794,6 +794,12 @@ class RAGPipeline:
             
             for node in nodes:
                 if node.score >= threshold:
+                    # Apply job_id filter if specified (highest priority)
+                    if filters and 'job_id' in filters:
+                        node_job_id = node.metadata.get('job_id') if node.metadata else None
+                        if node_job_id != filters['job_id']:
+                            continue  # Skip nodes from different documents
+                    
                     # Apply document type filter if specified
                     if doc_type_filter:
                         node_doc_type = node.metadata.get('doc_type') if node.metadata else None
@@ -816,7 +822,7 @@ class RAGPipeline:
         all_results.sort(key=lambda x: x['score'], reverse=True)
         return all_results[:self.config['retrieval_config']['max_results']]
     
-    async def _keyword_search(self, query: str, doc_type_filter: Optional[List[str]]) -> List[Dict]:
+    async def _keyword_search(self, query: str, doc_type_filter: Optional[List[str]], filters: Optional[Dict[str, Any]] = None) -> List[Dict]:
         """BM25-based keyword search"""
         results = []
         
@@ -835,6 +841,12 @@ class RAGPipeline:
             for i, score in enumerate(bm25_scores):
                 if score > 0 and i < len(self.bm25_metadata):  # Only include docs with positive scores
                     doc_metadata = self.bm25_metadata[i]
+                    
+                    # Apply job_id filter if specified (highest priority)
+                    if filters and 'job_id' in filters:
+                        doc_job_id = doc_metadata['metadata'].get('job_id')
+                        if doc_job_id != filters['job_id']:
+                            continue  # Skip docs from different documents
                     
                     # Apply document type filter if specified
                     if doc_type_filter:

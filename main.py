@@ -242,6 +242,7 @@ class ChatRequest(BaseModel):
     filters: Optional[Dict[str, Any]] = None
     conversation_history: Optional[List[Dict[str, str]]] = None
     user_context: Optional[Dict[str, str]] = None
+    job_id: Optional[str] = None  # For filtering to specific uploaded document
 
 class ChatResponse(BaseModel):
     response: str
@@ -512,9 +513,16 @@ async def chat_handler(request: ChatRequest):
         # Process query through RAG pipeline if available
         if rag_pipeline:
             logger.info(f"Using RAG pipeline for query: {request.query}")
+            
+            # Add job_id to filters if provided
+            query_filters = request.filters or {}
+            if request.job_id:
+                query_filters["job_id"] = request.job_id
+                logger.info(f"Filtering query to job_id: {request.job_id}")
+            
             rag_response = await rag_pipeline.process_query_with_intelligence(
                 query=request.query,
-                filters=request.filters,
+                filters=query_filters,
                 user_context=request.user_context or {},
                 session_id=request.session_id,
                 conversation_history=request.conversation_history
