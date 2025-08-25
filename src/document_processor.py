@@ -23,6 +23,13 @@ import pandas as pd
 from llama_index.core import Document
 from .rag_pipeline import RAGPipeline
 
+# Import shape-aware processor for better PDF extraction
+try:
+    from .shape_aware_processor import ShapeAwareProcessor
+    SHAPE_AWARE_AVAILABLE = True
+except ImportError:
+    SHAPE_AWARE_AVAILABLE = False
+
 logger = structlog.get_logger()
 
 try:
@@ -66,6 +73,24 @@ class DocumentProcessor:
         else:
             self.ocr_processor = None
             logger.warning("No OCR processor available - image text extraction disabled")
+        
+        # Initialize shape-aware processor for PDF charts/diagrams
+        if SHAPE_AWARE_AVAILABLE and rag_pipeline:
+            try:
+                # Get LLM client from RAG pipeline for shape analysis
+                llm_client = getattr(rag_pipeline, 'llm_client', None)
+                if llm_client:
+                    self.shape_processor = ShapeAwareProcessor(llm_client)
+                    logger.info("✅ Shape-aware PDF processor initialized")
+                else:
+                    self.shape_processor = None
+                    logger.warning("⚠️ LLM client not available - shape-aware processing disabled")
+            except Exception as e:
+                self.shape_processor = None
+                logger.warning(f"⚠️ Shape-aware processor initialization failed: {str(e)}")
+        else:
+            self.shape_processor = None
+            logger.warning("⚠️ Shape-aware processor not available")
         
         # Document processing status tracking
         self.processing_jobs = {}
@@ -319,7 +344,28 @@ class DocumentProcessor:
             raise
     
     async def _extract_from_pdf(self, file_path: Path) -> str:
-        """Extract text from PDF file with OCR for images"""
+        """Extract text from PDF file with shape-aware processing and OCR fallback"""
+        
+        # Try shape-aware processing first for better organizational chart extraction
+        if self.shape_processor:
+            try:
+                logger.info(f"🔍 Using shape-aware extraction for PDF: {file_path.name}")
+                result = await self.shape_processor.process_document(
+                    str(file_path), 
+                    query_context="organizational structure analysis",
+                    prefer_spatial=True
+                )
+                
+                if result and result.structured_content:
+                    logger.info(f"✅ Shape-aware extraction successful: {len(result.structured_content)} chars")
+                    return result.structured_content
+                else:
+                    logger.warning("⚠️ Shape-aware extraction returned empty - falling back to basic extraction")
+            except Exception as e:
+                logger.warning(f"⚠️ Shape-aware extraction failed: {str(e)} - falling back to basic extraction")
+        
+        # Fallback to basic PyPDF2 extraction
+        logger.info(f"📄 Using basic PDF extraction for: {file_path.name}")
         text_content = []
         
         with open(file_path, 'rb') as file:
