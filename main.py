@@ -1288,6 +1288,114 @@ async def get_knowledge_gaps(limit: int = 20):
         "generated_at": datetime.utcnow().isoformat()
     }
 
+# ========================================================================
+# SEC EDGAR API ENDPOINTS - Clean Implementation
+# ========================================================================
+
+try:
+    from src.sec_edgar_source import SECEdgarSource
+    sec_source_available = True
+    logger.info("✅ SEC EDGAR integration available")
+except ImportError:
+    sec_source_available = False
+    logger.warning("❌ SEC EDGAR integration not available")
+
+@app.get("/api/v1/sec/companies/search")
+async def search_sec_companies(q: str):
+    """Search SEC companies by name or ticker"""
+    if not sec_source_available:
+        raise HTTPException(status_code=503, detail="SEC EDGAR integration not available")
+    
+    try:
+        async with SECEdgarSource() as sec_client:
+            companies = await sec_client.search_company(q)
+            return {
+                "query": q,
+                "companies": companies,
+                "count": len(companies)
+            }
+    except Exception as e:
+        logger.error(f"SEC company search failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
+
+@app.get("/api/v1/sec/filings")
+async def get_sec_filings(cik: str, forms: str = "10-K,10-Q,8-K", years: str = None):
+    """Get recent SEC filings for a company"""
+    if not sec_source_available:
+        raise HTTPException(status_code=503, detail="SEC EDGAR integration not available")
+    
+    try:
+        # Parse parameters
+        form_types = [f.strip() for f in forms.split(',')]
+        year_list = None
+        if years:
+            year_list = [int(y.strip()) for y in years.split(',')]
+        
+        async with SECEdgarSource() as sec_client:
+            filings = await sec_client.get_company_filings(cik, form_types, year_list)
+            return {
+                "cik": cik,
+                "filings": filings,
+                "count": len(filings)
+            }
+    except Exception as e:
+        logger.error(f"SEC filings fetch failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Filings fetch failed: {str(e)}")
+
+@app.post("/api/v1/sec/ingest")
+async def ingest_sec_filing(request: dict):
+    """Ingest SEC filing into RAG pipeline"""
+    if not sec_source_available:
+        raise HTTPException(status_code=503, detail="SEC EDGAR integration not available")
+    
+    if not document_processor or not rag_pipeline:
+        raise HTTPException(status_code=503, detail="Document processing not available")
+    
+    try:
+        filing_info = request.get('filing_info')
+        if not filing_info:
+            raise HTTPException(status_code=400, detail="filing_info required")
+        
+        logger.info(f"SEC filing ingestion: {filing_info['form_type']} for {filing_info['company_name']}")
+        
+        # Download SEC filing content
+        async with SECEdgarSource() as sec_client:
+            content = await sec_client.download_filing_content(filing_info)
+            
+            if not content:
+                raise HTTPException(status_code=400, detail="Failed to download filing content")
+        
+        # Create Document object
+        from llama_index.core import Document
+        
+        metadata = {
+            'filename': f"{filing_info['company_name']}_{filing_info['form_type']}_{filing_info['filing_date']}.txt",
+            'source_type': 'SEC_FILING',
+            'form_type': filing_info['form_type'],
+            'company_name': filing_info['company_name'],
+            'ticker': filing_info.get('ticker', ''),
+            'cik': filing_info['cik'],
+            'filing_date': filing_info['filing_date'],
+            'processed_at': datetime.utcnow().isoformat(),
+            'job_id': f"sec_{filing_info['accession_number']}"
+        }
+        
+        document = Document(text=content, metadata=metadata)
+        chunks_created = await rag_pipeline.add_documents([document], "sec_filing")
+        
+        logger.info(f"SEC filing ingested: {chunks_created} chunks created")
+        
+        return {
+            "status": "success",
+            "filing_info": filing_info,
+            "chunks_created": chunks_created,
+            "message": f"SEC {filing_info['form_type']} filing ingested successfully"
+        }
+        
+    except Exception as e:
+        logger.error(f"SEC filing ingestion failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Ingestion failed: {str(e)}")
+
 if __name__ == "__main__":
     uvicorn.run(
         app, 

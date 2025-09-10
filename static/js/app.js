@@ -87,6 +87,9 @@ class AAIREApp {
         
         // Also clear server-side caches to eliminate false citations
         this.clearServerCaches();
+        
+        // Initialize SEC functionality
+        this.initializeSEC();
     }
     
     clearFalseCitationSessions() {
@@ -266,6 +269,7 @@ class AAIREApp {
         // Hide all sections
         document.getElementById('chat-section').style.display = 'none';
         document.getElementById('upload-section').style.display = 'none';
+        document.getElementById('sec-section').style.display = 'none';
         document.getElementById('workflows-section').style.display = 'none';
         document.getElementById('dashboard-section').style.display = 'none';
 
@@ -2394,6 +2398,132 @@ function reportIssue(messageId) {
             console.error('Error reporting issue:', error);
             alert('Error submitting issue report. Please try again.');
         });
+    }
+
+    // SEC Functionality
+    initializeSEC() {
+        const companySearch = document.getElementById('company-search');
+        if (companySearch) {
+            let searchTimeout;
+            companySearch.addEventListener('input', (e) => {
+                clearTimeout(searchTimeout);
+                const query = e.target.value.trim();
+                
+                if (query.length >= 2) {
+                    searchTimeout = setTimeout(() => {
+                        this.searchCompanies(query);
+                    }, 500);
+                } else {
+                    document.getElementById('company-results').innerHTML = '';
+                    document.getElementById('filings-section').style.display = 'none';
+                }
+            });
+        }
+    }
+
+    async searchCompanies(query) {
+        try {
+            const response = await fetch(`/api/v1/sec/companies/search?q=${encodeURIComponent(query)}`);
+            const data = await response.json();
+            this.displayCompanyResults(data.companies);
+        } catch (error) {
+            console.error('Company search failed:', error);
+            document.getElementById('company-results').innerHTML = '<div style="color: #e74c3c; padding: 10px;">Search failed. Please try again.</div>';
+        }
+    }
+
+    displayCompanyResults(companies) {
+        const resultsDiv = document.getElementById('company-results');
+        if (!companies || companies.length === 0) {
+            resultsDiv.innerHTML = '<div style="color: #7f8c8d; padding: 10px;">No companies found</div>';
+            return;
+        }
+
+        let html = '';
+        companies.forEach(company => {
+            html += `
+                <div class="company-item" onclick="app.selectCompany('${company.cik}', '${company.name}')" style="padding: 10px; border: 1px solid #ecf0f1; margin-bottom: 5px; border-radius: 5px; cursor: pointer; transition: background 0.3s;">
+                    <strong>${company.name}</strong> (${company.ticker})<br>
+                    <small>CIK: ${company.cik}</small>
+                </div>
+            `;
+        });
+        resultsDiv.innerHTML = html;
+    }
+
+    async selectCompany(cik, name) {
+        // Highlight selected company
+        document.querySelectorAll('.company-item').forEach(item => item.style.background = '#ffffff');
+        event.target.closest('.company-item').style.background = '#e3f2fd';
+
+        // Load recent filings
+        try {
+            const response = await fetch(`/api/v1/sec/filings?cik=${cik}&forms=10-K,10-Q,8-K&years=2024,2023`);
+            const data = await response.json();
+            this.displayFilings(data.filings);
+            document.getElementById('filings-section').style.display = 'block';
+        } catch (error) {
+            console.error('Failed to load filings:', error);
+        }
+    }
+
+    displayFilings(filings) {
+        const filingsDiv = document.getElementById('filings-list');
+        if (!filings || filings.length === 0) {
+            filingsDiv.innerHTML = '<div style="color: #7f8c8d; padding: 10px;">No recent filings found</div>';
+            return;
+        }
+
+        let html = '';
+        filings.forEach(filing => {
+            html += `
+                <div class="filing-item" style="padding: 15px; border: 1px solid #ecf0f1; margin-bottom: 10px; border-radius: 8px; display: flex; justify-content: space-between; align-items: center;">
+                    <div class="filing-info">
+                        <h4 style="margin: 0 0 5px 0; color: #2c3e50;">${filing.form_type} - ${filing.company_name}</h4>
+                        <div style="font-size: 12px; color: #7f8c8d;">Filed: ${filing.filing_date}</div>
+                    </div>
+                    <button class="ingest-btn" onclick="app.ingestFiling(${JSON.stringify(filing).replace(/"/g, '&quot;')})" style="background: #27ae60; color: white; border: none; padding: 8px 16px; border-radius: 5px; cursor: pointer; font-size: 12px;">
+                        Ingest Filing
+                    </button>
+                </div>
+            `;
+        });
+        filingsDiv.innerHTML = html;
+    }
+
+    async ingestFiling(filing) {
+        const btn = event.target;
+        btn.disabled = true;
+        btn.textContent = 'Ingesting...';
+
+        try {
+            const response = await fetch('/api/v1/sec/ingest', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ filing_info: filing })
+            });
+
+            const result = await response.json();
+            if (result.status === 'success') {
+                btn.textContent = 'Ingested!';
+                btn.style.background = '#3498db';
+                this.addMessage('system', `✅ SEC ${filing.form_type} filing ingested successfully: ${result.chunks_created} chunks created`);
+                this.loadUploadedFiles(); // Refresh file list
+            } else {
+                throw new Error(result.message || 'Ingestion failed');
+            }
+        } catch (error) {
+            console.error('Filing ingestion failed:', error);
+            btn.textContent = 'Failed';
+            btn.style.background = '#e74c3c';
+            this.addMessage('system', `❌ SEC filing ingestion failed: ${error.message}`);
+        }
+
+        setTimeout(() => {
+            btn.disabled = false;
+            btn.textContent = 'Ingest Filing';
+            btn.style.background = '#27ae60';
+        }, 3000);
     }
 }
 

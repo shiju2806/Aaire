@@ -1397,6 +1397,10 @@
                     <i class="fas fa-upload"></i>
                     <span>Upload Documents</span>
                 </div>
+                <div class="nav-item" data-section="sec">
+                    <i class="fas fa-building"></i>
+                    <span>SEC Filings</span>
+                </div>
                 <div class="nav-item" data-section="workflows" style="display: none;">
                     <i class="fas fa-route"></i>
                     <span>Workflows</span>
@@ -1557,6 +1561,24 @@
                     <h3>Uploaded Documents</h3>
                     <div class="files-list" id="files-list">
                         <div class="no-files">No files uploaded yet</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- SEC Section -->
+            <div id="sec-section" class="upload-section" style="display: none;">
+                <div class="upload-area">
+                    <h3><i class="fas fa-building"></i> SEC EDGAR Filings</h3>
+                    <p class="section-description">Search and ingest public company filings from SEC EDGAR database</p>
+                    
+                    <div style="margin-bottom: 20px;">
+                        <input type="text" id="company-search" placeholder="Search companies (e.g., Apple, Microsoft)..." style="width: 100%; padding: 12px; border: 2px solid #ecf0f1; border-radius: 5px; font-size: 14px;">
+                        <div id="company-results" style="margin-top: 10px; max-height: 200px; overflow-y: auto;"></div>
+                    </div>
+                    
+                    <div id="filings-section" style="display: none;">
+                        <h4>Recent Filings</h4>
+                        <div id="filings-list"></div>
                     </div>
                 </div>
             </div>
