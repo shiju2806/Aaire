@@ -517,6 +517,9 @@ class RAGPipeline:
                     citations = []
                     confidence = 0.1  # Very low confidence when we can't find specific content
             
+            # Clean up formatting before finalizing
+            response = self._clean_formulas(response)
+            
             # Generate contextual follow-up questions
             follow_up_questions = await self._generate_follow_up_questions(query, response, retrieved_docs)
             
@@ -647,6 +650,12 @@ class RAGPipeline:
         
         # Use advanced relevance engine for ranking
         combined_results = self.relevance_engine.rank_documents(query, list(unique_results.values()))
+        
+        # Apply the document limit to the final combined results
+        doc_limit = self._get_document_limit(query)
+        if len(combined_results) > doc_limit:
+            logger.info(f"Trimming combined results from {len(combined_results)} to {doc_limit}")
+            combined_results = combined_results[:doc_limit]
         
         return combined_results
     
@@ -1037,6 +1046,33 @@ Enhanced Response:"""
             
         except Exception as e:
             logger.warning(f"Completeness check failed: {str(e)}")
+            return response
+    
+    def _fix_reserve_terminology(self, response: str) -> str:
+        """Fix common terminology errors in reserve calculations"""
+        import re
+        
+        try:
+            # Fix Deferred Reserve -> Deterministic Reserve
+            response = re.sub(r'\bDeferred Reserve\b', 'Deterministic Reserve', response, flags=re.IGNORECASE)
+            response = re.sub(r'\bDeferred Reserves\b', 'Deterministic Reserves', response, flags=re.IGNORECASE)
+            
+            # Ensure DR is correctly defined
+            response = re.sub(r'\bDR\s*=\s*Deferred', 'DR = Deterministic', response, flags=re.IGNORECASE)
+            
+            # Fix Scenario Reserve -> Stochastic Reserve (if needed)
+            # Note: Scenario Reserve is sometimes acceptable, but Stochastic is more precise
+            response = re.sub(r'\bScenario Reserve\s*\(SR\)', 'Stochastic Reserve (SR)', response)
+            
+            # Fix inconsistent header formatting
+            response = re.sub(r'\*\*([A-Z][a-z]+.*?):\*\*\s*([A-Z])', r'\n**\1**\n\2', response)
+            response = re.sub(r'•\s*\*\*(.*?):\*\*', r'• **\1:**', response)
+            
+            logger.info("Fixed reserve terminology and formatting")
+            return response
+            
+        except Exception as e:
+            logger.warning(f"Failed to fix terminology: {str(e)}")
             return response
     
     def _clean_formulas(self, response: str) -> str:
