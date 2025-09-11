@@ -1412,33 +1412,16 @@ Provide detailed response covering all information that relates to the question.
             futures = [executor.submit(process_group, i+1, doc_group) for i, doc_group in enumerate(document_groups)]
             response_parts = [future.result() for future in concurrent.futures.as_completed(futures)]
         
-        # First try structured JSON approach for better formatting
-        try:
-            # Build context from documents for structured generation
-            context = "\n\n".join([f"[Doc {i+1}]\n{doc['content'][:800]}..." 
-                                 for i, doc in enumerate(documents[:20])])  # Use top docs
-            
-            logger.info("🔧 Attempting structured JSON response generation")
-            structured_response = self._generate_structured_response(query, context)
-            
-            # Validate formula formatting
-            if self._validate_formula_formatting(structured_response):
-                logger.info("✅ Structured generation successful with valid formulas")
-                return self._normalize_spacing(structured_response)
-            else:
-                logger.info("⚠️ Structured response has formula issues, applying correction")
-                corrected = self._apply_llm_formatting_fix(structured_response, ["Formula formatting issues"])
-                return self._normalize_spacing(corrected)
-                
-        except Exception as e:
-            logger.warning(f"Structured generation failed: {e}, falling back to standard approach")
-            
-            # Fallback to existing chunked approach
-            # Merge all parts
-            merged_response = self._merge_response_parts(query, response_parts)
-            
-            # Apply basic normalization only (no heavy post-processing since structured failed)
-            return self._normalize_spacing(merged_response)
+        # Temporarily disable structured JSON approach - has parsing issues
+        # TODO: Fix JSON parsing and markdown conversion in structured approach
+        logger.info("📋 Using enhanced chunked response approach")
+        
+        # Fallback to existing chunked approach
+        # Merge all parts
+        merged_response = self._merge_response_parts(query, response_parts)
+        
+        # Apply basic normalization only (no heavy post-processing since structured failed)
+        return self._normalize_spacing(merged_response)
     
     
     async def _generate_response(
