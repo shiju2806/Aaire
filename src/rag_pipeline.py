@@ -545,132 +545,6 @@ class RAGPipeline:
         except Exception as e:
             logger.error("Failed to process query", error=str(e), query=query[:100])
             raise
-    
-    
-    async def process_query_with_intelligence(
-        self, 
-        query: str, 
-        filters: Optional[Dict[str, Any]] = None,
-        user_context: Optional[Dict[str, Any]] = None,
-        session_id: Optional[str] = None,
-        conversation_history: Optional[List[Dict]] = None
-    ) -> RAGResponse:
-        """
-        Enhanced query processing with intelligent extraction capabilities
-        """
-        if not session_id:
-            session_id = str(uuid.uuid4())
-        
-        try:
-            # Initialize enhanced query handler
-            query_handler = EnhancedQueryHandler(self.client)
-            
-            # Check if query needs intelligent extraction
-            needs_extraction, extraction_type, extraction_confidence = query_handler.needs_intelligent_extraction(query)
-            
-            logger.info(f"Query analysis: needs_extraction={needs_extraction}, type={extraction_type}, confidence={extraction_confidence:.3f}")
-            
-            if needs_extraction and extraction_confidence >= 0.3:
-                # Use intelligent extraction approach
-                logger.info(f"Using intelligent extraction for {extraction_type} query")
-                
-                # Enhance the query for better extraction
-                enhanced_query = await query_handler.enhance_extraction_query(query, extraction_type)
-                
-                # Get relevant documents first
-                doc_type_filter = self._get_doc_type_filter(filters)
-                retrieved_docs = await self._retrieve_documents(enhanced_query, doc_type_filter, None, filters)
-                
-                if not retrieved_docs:
-                    return RAGResponse(
-                        answer="I couldn't find any relevant documents to extract information from.",
-                        citations=[],
-                        confidence=0.1,
-                        session_id=session_id,
-                        follow_up_questions=[]
-                    )
-                
-                # Extract and combine text from retrieved documents
-                combined_text = "\n\n".join([
-                    f"[Document: {doc.get('source', 'Unknown')}]\n{doc.get('content', '')}"
-                    for doc in retrieved_docs[:5]  # Limit to top 5 docs
-                ])
-                
-                # Use intelligent extractor for job titles and organizational info
-                if extraction_type in ['job_titles', 'organizational', 'financial_roles']:
-                    extractor = IntelligentDocumentExtractor(self.client)
-                    extraction_result = await extractor.process_document(combined_text)
-                    
-                    # Format the intelligent extraction results
-                    if extraction_result.entities:
-                        answer_parts = []
-                        answer_parts.append(f"**Document Analysis Results** (Confidence: {extraction_result.confidence:.1%})\n")
-                        answer_parts.append(f"**Document Type:** {extraction_result.structure_type}\n")
-                        
-                        # Group by department/section
-                        by_section = {}
-                        for entity in extraction_result.entities:
-                            section = entity.source_section or entity.department or "General"
-                            if section not in by_section:
-                                by_section[section] = []
-                            by_section[section].append(entity)
-                        
-                        for section, entities in by_section.items():
-                            answer_parts.append(f"\n### {section}")
-                            for entity in entities:
-                                confidence_indicator = "🔹" if entity.confidence >= 0.8 else "🔸" if entity.confidence >= 0.5 else "🔺"
-                                answer_parts.append(f"{confidence_indicator} **{entity.name}**")
-                                if entity.title and entity.title != "not specified":
-                                    answer_parts.append(f"   - Title: {entity.title}")
-                                if entity.authority_level:
-                                    answer_parts.append(f"   - Authority Level: {entity.authority_level}")
-                                if entity.confidence < 0.8:
-                                    answer_parts.append(f"   - Confidence: {entity.confidence:.1%}")
-                        
-                        # Add methodology note
-                        answer_parts.append(f"\n**Extraction Method:** Intelligent document analysis")
-                        answer_parts.append(f"**High Confidence:** {extraction_result.metadata.get('high_confidence_count', 0)} items")
-                        answer_parts.append(f"**Medium Confidence:** {extraction_result.metadata.get('medium_confidence_count', 0)} items")
-                        answer_parts.append(f"**Low Confidence:** {extraction_result.metadata.get('low_confidence_count', 0)} items")
-                        
-                        answer = "\n".join(answer_parts)
-                        
-                        # Create citations from retrieved docs
-                        citations = [
-                            {
-                                "id": i + 1,
-                                "text": doc.get('content', '')[:200] + "...",
-                                "source": doc.get('source', 'Unknown'),
-                                "source_type": doc.get('source_type', 'document'),
-                                "confidence": doc.get('score', 0.5)
-                            }
-                            for i, doc in enumerate(retrieved_docs[:3])
-                        ]
-                        
-                        return RAGResponse(
-                            answer=answer,
-                            citations=citations,
-                            confidence=extraction_result.confidence,
-                            session_id=session_id,
-                            follow_up_questions=await self._generate_extraction_follow_ups(query, extraction_result),
-                            metadata={
-                                "extraction_method": "intelligent",
-                                "extraction_type": extraction_type,
-                                "document_type": extraction_result.structure_type
-                            }
-                        )
-                    else:
-                        # Fallback to standard RAG if extraction failed
-                        logger.info("Intelligent extraction found no results, falling back to standard RAG")
-            
-            # Use standard RAG processing
-            return await self.process_query(query, filters, user_context, session_id, conversation_history)
-        
-        except Exception as e:
-            logger.error("Enhanced query processing failed", error=str(e))
-            # Fallback to standard processing
-            return await self.process_query(query, filters, user_context, session_id, conversation_history)
-    
     async def _generate_extraction_follow_ups(self, query: str, extraction_result) -> List[str]:
         """Generate relevant follow-up questions for extraction results"""
         try:
@@ -1119,10 +993,19 @@ Missing content:"""
             
             logger.info(f"🔍 COMPLETENESS CHECK RESULT: {missing_content[:200]}...")
             
-            if missing_content and "COMPLETE" not in missing_content.upper():
-                logger.info("✅ Missing content identified, enhancing response")
-                # Add missing content
-                enhancement_prompt = f"""Enhance this response by adding the missing content identified below.
+            # Enhanced debugging for completeness check
+            logger.info(f"🔍 DEBUG: missing_content length: {len(missing_content) if missing_content else 0}")
+            logger.info(f"🔍 DEBUG: missing_content truthy: {bool(missing_content)}")
+            logger.info(f"🔍 DEBUG: 'COMPLETE' in upper: {'COMPLETE' in missing_content.upper() if missing_content else 'N/A'}")
+            
+            # Check if the response is exactly "COMPLETE" (not just containing the word)
+            if missing_content and missing_content.strip():
+                if missing_content.strip().upper() == "COMPLETE" or missing_content.strip().upper().startswith("COMPLETE."):
+                    logger.info("✅ Response marked as COMPLETE by completeness check")
+                else:
+                    logger.info("✅ Missing content identified, enhancing response")
+                    # Add missing content
+                    enhancement_prompt = f"""Enhance this response by adding the missing content identified below.
 
 Original Response:
 {response}
@@ -1134,17 +1017,59 @@ Create an enhanced response that includes the original content plus the missing 
 Organize it clearly with appropriate headings.
 
 Enhanced Response:"""
-                
-                enhanced = self.llm.complete(enhancement_prompt)
-                logger.info("✅ Added missing content via completeness check")
-                return enhanced.text.strip()
+                    
+                    enhanced = self.llm.complete(enhancement_prompt)
+                    logger.info("✅ Added missing content via completeness check")
+                    return enhanced.text.strip()
             else:
-                logger.info("❌ No missing content identified or response marked as COMPLETE")
+                logger.info("❌ No missing content response received")
             
             return response
             
         except Exception as e:
             logger.warning(f"Completeness check failed: {str(e)}")
+            return response
+    
+    def _clean_formulas(self, response: str) -> str:
+        """Convert LaTeX notation to readable text format"""
+        import re
+        
+        try:
+            logger.info("🧮 Cleaning formula formatting for better readability")
+            
+            # Convert LaTeX display equations \[ ... \] to bold formatting
+            response = re.sub(r'\\\[([^\\]+?)\\\]', r'**\1**', response, flags=re.DOTALL)
+            
+            # Convert \text{} commands to plain text
+            response = re.sub(r'\\text\{([^}]+)\}', r'\1', response)
+            
+            # Convert subscripts like NPR_{future} to NPR(future)
+            response = re.sub(r'([A-Z]+)_\{([^}]+)\}', r'\1(\2)', response)
+            
+            # Convert complex mathematical notation to readable format
+            # E(x+t) = VNPR × annuity(x+t):v-t pattern
+            response = re.sub(r'([A-Z]+)([a-z]*)\+([a-z]+)', r'\1(\2+\3)', response)
+            
+            # Clean up any remaining LaTeX commands
+            response = re.sub(r'\\([a-zA-Z]+)\{([^}]*)\}', r'\2', response)
+            
+            # Convert mathematical operators
+            response = response.replace('\\times', '×')
+            response = response.replace('\\cdot', '·')
+            response = response.replace('\\le', '≤')
+            response = response.replace('\\ge', '≥')
+            response = response.replace('\\ne', '≠')
+            
+            # Clean up extra spaces and formatting
+            response = re.sub(r'\s+', ' ', response)
+            response = re.sub(r'\*\*\s+', '**', response)
+            response = re.sub(r'\s+\*\*', '**', response)
+            
+            logger.info("✅ Formula formatting cleaned successfully")
+            return response
+            
+        except Exception as e:
+            logger.warning(f"Formula cleaning failed: {str(e)}")
             return response
     
     def _preserve_formulas(self, response: str, documents: List[Dict]) -> str:

@@ -428,15 +428,88 @@ class AAIREApp {
         // Format the content for better readability with enhanced markdown support
         let formatted = content;
         
-        // Convert markdown headers (### Header -> h3, ## Header -> h2)
-        formatted = formatted.replace(/^### (.+)$/gm, '<h3 style="margin-top: 1.5em; margin-bottom: 0.5em; color: #2c3e50;">$1</h3>');
-        formatted = formatted.replace(/^## (.+)$/gm, '<h2 style="margin-top: 1.5em; margin-bottom: 0.5em; color: #1a252f;">$1</h2>');
-        formatted = formatted.replace(/^# (.+)$/gm, '<h1 style="margin-top: 1.5em; margin-bottom: 0.5em; color: #1a252f;">$1</h1>');
+        // Remove "Enhanced Response:" prefix from completeness check
+        formatted = formatted.replace(/^Enhanced Response:\s*/i, '');
         
-        // Convert bold markdown **text** to <strong>
-        formatted = formatted.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+        // Clean up LaTeX formulas - convert to readable text
+        formatted = formatted.replace(/\\text\{([^}]+)\}/g, '$1'); // \text{NPR} -> NPR
         
-        // Convert numbered lists (e.g., "1. ", "2. ", etc.)
+        // Convert LaTeX fractions to division notation
+        formatted = formatted.replace(/\\frac\{([^}]+)\}\{([^}]+)\}/g, '($1) ÷ ($2)');
+        
+        // Handle LaTeX subscripts (x_1 -> x₁, x_{10} -> x₁₀)
+        formatted = formatted.replace(/([a-zA-Z])\_{([^}]+)}/g, function(match, base, sub) {
+            const subscriptMap = {
+                '0': '₀', '1': '₁', '2': '₂', '3': '₃', '4': '₄', 
+                '5': '₅', '6': '₆', '7': '₇', '8': '₈', '9': '₉',
+                'a': 'ₐ', 'e': 'ₑ', 'h': 'ₕ', 'i': 'ᵢ', 'j': 'ⱼ', 'k': 'ₖ', 
+                'l': 'ₗ', 'm': 'ₘ', 'n': 'ₙ', 'o': 'ₒ', 'p': 'ₚ', 'r': 'ᵣ', 
+                's': 'ₛ', 't': 'ₜ', 'u': 'ᵤ', 'v': 'ᵥ', 'x': 'ₓ'
+            };
+            let converted = '';
+            for (let char of sub) {
+                converted += subscriptMap[char] || char;
+            }
+            return base + converted;
+        });
+        
+        // Handle simple subscripts without braces (x_1 -> x₁)
+        formatted = formatted.replace(/([a-zA-Z])_([0-9a-z])/g, function(match, base, sub) {
+            const subscriptMap = {
+                '0': '₀', '1': '₁', '2': '₂', '3': '₃', '4': '₄', 
+                '5': '₅', '6': '₆', '7': '₇', '8': '₈', '9': '₉',
+                'a': 'ₐ', 'e': 'ₑ', 'h': 'ₕ', 'i': 'ᵢ', 'j': 'ⱼ', 'k': 'ₖ', 
+                'l': 'ₗ', 'm': 'ₘ', 'n': 'ₙ', 'o': 'ₒ', 'p': 'ₚ', 'r': 'ᵣ', 
+                's': 'ₛ', 't': 'ₜ', 'u': 'ᵤ', 'v': 'ᵥ', 'x': 'ₓ'
+            };
+            return base + (subscriptMap[sub] || sub);
+        });
+        
+        // Remove bold ** markers around formulas
+        formatted = formatted.replace(/\*\*\s*([^*]*(?:\\frac|÷)[^*]*)\s*\*\*/g, '$1');
+        
+        // Handle display math \[ \] - convert to regular text
+        formatted = formatted.replace(/\\\[([^\]]+)\\\]/g, '$1');
+        
+        // Handle LaTeX cases environment
+        formatted = formatted.replace(/\\begin\{cases\}\s*([\s\S]*?)\s*\\end\{cases\}/g, function(match, content) {
+            // Split by \\ and clean up each line
+            const lines = content.split('\\\\').map(line => line.trim()).filter(line => line);
+            const cleanLines = lines.map(line => {
+                // Remove & alignment markers and clean up
+                return line.replace(/\s*&\s*/g, ' → ').replace(/\\text\{([^}]+)\}/g, '$1');
+            });
+            return '**Formula:**\n' + cleanLines.map(line => `• ${line}`).join('\n');
+        });
+        
+        // Handle other LaTeX constructs
+        formatted = formatted.replace(/\\left\(/g, '(');
+        formatted = formatted.replace(/\\right\)/g, ')');
+        formatted = formatted.replace(/\\left\[/g, '[');
+        formatted = formatted.replace(/\\right\]/g, ']');
+        formatted = formatted.replace(/\\left\{/g, '{');
+        formatted = formatted.replace(/\\right\}/g, '}');
+        formatted = formatted.replace(/\\max/g, 'max');
+        formatted = formatted.replace(/\\min/g, 'min');
+        formatted = formatted.replace(/\\times/g, '×');
+        formatted = formatted.replace(/\\cdot/g, '·');
+        
+        // Convert markdown headers with smaller sizes and less spacing
+        formatted = formatted.replace(/^#### (.+)$/gm, '<h4 style="margin-top: 1em; margin-bottom: 0.3em; color: #2c3e50; font-size: 1.05em; font-weight: 600;">$1</h4>');
+        formatted = formatted.replace(/^### (.+)$/gm, '<h3 style="margin-top: 1em; margin-bottom: 0.3em; color: #2c3e50; font-size: 1.1em; font-weight: 600;">$1</h3>');
+        formatted = formatted.replace(/^## (.+)$/gm, '<h2 style="margin-top: 1em; margin-bottom: 0.3em; color: #1a252f; font-size: 1.2em; font-weight: 600;">$1</h2>');
+        formatted = formatted.replace(/^# (.+)$/gm, '<h1 style="margin-top: 1em; margin-bottom: 0.3em; color: #1a252f; font-size: 1.3em; font-weight: 600;">$1</h1>');
+        
+        // Convert bold markdown **text** to <strong> - but only for headings and key terms
+        formatted = formatted.replace(/\*\*([A-Z][^*]*[A-Z][^*]*)\*\*/g, '<strong>$1</strong>'); // Headings with multiple caps
+        formatted = formatted.replace(/\*\*([^*]{1,30}:)\*\*/g, '<strong>$1</strong>'); // Short text ending with colon (labels)
+        formatted = formatted.replace(/\*\*Formula:\*\*/g, '<strong>Formula:</strong>'); // Keep Formula bold
+        
+        // Convert numbered lists consistently
+        // Handle decimal numbering (1.1, 2.3, etc.) - keep on same line
+        formatted = formatted.replace(/^(\d+\.\d+)\s+(.+)$/gm, '<strong>$1</strong> $2');
+        
+        // Convert simple numbered lists (e.g., "1. ", "2. ", etc.)
         formatted = formatted.replace(/^(\d+)\.\s+(.+)$/gm, '<strong>$1.</strong> $2');
         
         // Convert bullet points at start of line
