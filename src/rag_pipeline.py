@@ -466,8 +466,9 @@ class RAGPipeline:
                 
                 response = await self._generate_response(query, retrieved_docs, user_context, conversation_history)
                 
-                # Post-process response to fix citation format
+                # Post-process response to fix citation format and clean up text
                 response = self._fix_citation_format(response, retrieved_docs)
+                response = self._basic_text_cleanup(response)
                 
                 citations = self._extract_citations(retrieved_docs, query)
                 confidence = self._calculate_confidence(retrieved_docs, response)
@@ -974,11 +975,22 @@ Provide a comprehensive response using all the information in the documents abov
 
 FORMATTING REQUIREMENTS:
 - Use **bold** ONLY for section headings and key terms (NO # symbols)
-- Each numbered item must be on its OWN line with line break after:
 
-1. First item
+🚨 CRITICAL NUMBERED LIST FORMATTING (FOLLOW EXACTLY):
+Never write title**1.**content or text**2.**moretext on same line.
 
-2. Second item
+❌ WRONG: "Universal Life Policy in ULSG**1.**Determine the Adjusted"
+✅ CORRECT: "Universal Life Policy in ULSG
+
+**1.** Determine the Adjusted"
+
+ALWAYS separate numbered items from preceding text:
+
+1. First item content here
+
+2. Second item content here  
+
+3. Third item content here
 
 - Use bullet points (-) with proper spacing:
 
@@ -987,8 +999,8 @@ FORMATTING REQUIREMENTS:
 - Second bullet point
 
 - Regular text should NOT be bold
-- Add two line breaks between major sections
-- CRITICAL: Always add line breaks between list items
+- Add two line breaks between major sections  
+- CRITICAL: Never concatenate numbered items with preceding text
 - Include all formulas, calculations, and requirements found"""
         
         response = self.llm.complete(prompt)
@@ -999,7 +1011,31 @@ FORMATTING REQUIREMENTS:
         if len(response_parts) == 1:
             return response_parts[0]
         
-        merge_prompt = f"""Combine these related responses into a single, well-organized answer to: {query}
+        merge_prompt = f"""===== CRITICAL FORMATTING REQUIREMENTS =====
+FOLLOW THESE FORMATTING RULES EXACTLY:
+
+1. **NUMBERED LISTS MUST HAVE LINE BREAKS**:
+   - Put blank line BEFORE each numbered item: **1.**
+   - NEVER write: text**1.** or NPR)**1.**
+   - ALWAYS write:
+     
+     **1.** First item
+     
+     **2.** Second item
+
+2. **SUB-LISTS**: 
+   - Format as: a. Text (not -a.** or a.**)
+   - Put blank line before sub-lists
+
+3. **PRESERVE ALL FORMULAS AND CALCULATIONS**:
+   - Keep EXACT formulas from all parts
+   - Maintain mathematical expressions and percentage calculations 
+   - Preserve specific values like 90%, $2.50 per $1,000, etc.
+   - Keep ALL calculation methods and procedures
+
+===== END FORMATTING REQUIREMENTS =====
+
+Combine these related responses into a single, well-organized answer to: {query}
 
 Response parts to merge:
 {chr(10).join([f"PART {i+1}:\n{part}\n" for i, part in enumerate(response_parts)])}
@@ -1007,16 +1043,8 @@ Response parts to merge:
 Create a cohesive response that:
 1. Eliminates any redundancy between parts
 2. Organizes information logically with clear headings
-3. Maintains all technical details from each part
+3. Maintains all technical details, formulas, and calculations from each part
 4. Flows naturally as a complete answer
-
-FORMATTING REQUIREMENTS:
-- Use **bold** ONLY for section headings and key terms (NO # symbols)
-- Put each numbered list item on its own line (1. on one line, 2. on next line, etc.)
-- Use proper line breaks between sections for readability
-- Regular text should NOT be bold
-- Add blank lines between major sections
-- Use bullet points (-) with proper spacing
 
 Final merged response:"""
         
@@ -1341,34 +1369,37 @@ Structure your response to systematically cover every major topic found in the s
         def process_group(group_index: int, doc_group: List[Dict]) -> str:
             group_context = "\n\n".join([f"[Doc {i+1}]\n{doc['content']}" for i, doc in enumerate(doc_group)])
             
-            group_prompt = f"""You are answering: {query}
+            group_prompt = f"""===== CRITICAL FORMATTING REQUIREMENTS =====
+FOLLOW THESE FORMATTING RULES EXACTLY:
+
+1. **NUMBERED LISTS MUST HAVE LINE BREAKS**:
+   - Put blank line BEFORE each numbered item: **1.**
+   - NEVER write: text**1.** or NPR)**1.**
+   - ALWAYS write:
+     
+     **1.** First item
+     
+     **2.** Second item
+
+2. **SUB-LISTS**: 
+   - Format as: a. Text (not -a.** or a.**)
+   - Put blank line before sub-lists
+
+3. **INCLUDE ALL FORMULAS AND CALCULATIONS**:
+   - Copy EXACT formulas from documents
+   - Include mathematical expressions and percentage calculations 
+   - Show specific values like 90%, $2.50 per $1,000, etc.
+   - Include ALL calculation methods and procedures
+
+===== END FORMATTING REQUIREMENTS =====
+
+You are answering: {query}
 
 This is document group {group_index} of {len(document_groups)}. Focus on these documents:
 
 {group_context}
 
-Provide detailed response covering all information that relates to the question.
-
-FORMATTING REQUIREMENTS:
-- Use **bold** ONLY for section headings and key terms (NO # symbols)
-- Each numbered item must be on its OWN line with line break after:
-
-1. First item
-
-2. Second item
-
-3. Third item
-
-- Add two line breaks between major sections
-- Regular text should NOT be bold
-- Use bullet points (-) with proper spacing:
-
-- First bullet point
-
-- Second bullet point
-
-- Include all formulas, calculations, and requirements found
-- CRITICAL: Always add line breaks between list items"""
+Provide detailed response covering all information that relates to the question. INCLUDE ALL FORMULAS, CALCULATIONS, MATHEMATICAL EXPRESSIONS, AND SPECIFIC NUMERICAL VALUES found in the documents."""
             
             group_response = self.llm.complete(group_prompt)
             logger.info(f"Processed group {group_index}/{len(document_groups)}")
@@ -3255,6 +3286,19 @@ Generate an enhanced response that combines the original information with the ex
                 fixed_response = fixed_response.replace(doc_ref, proper_ref)
         
         return fixed_response
+    
+    def _basic_text_cleanup(self, response: str) -> str:
+        """Basic text cleanup - minimal whitespace normalization only"""
+        import re
+        
+        # Only do minimal cleanup - no hardcoded patterns
+        # Clean up excessive newlines (but keep double newlines for spacing)
+        cleaned = re.sub(r'\n{4,}', '\n\n\n', response)
+        
+        # Clean up whitespace at start and end
+        cleaned = cleaned.strip()
+        
+        return cleaned
     
     def clear_cache(self):
         """Clear the response cache to force fresh responses"""
