@@ -1,0 +1,593 @@
+2025-09-11 01:41:56 [info     ] Google Cloud Vision not available - install with: pip install google-cloud-vision
+2025-09-11 01:41:56 [info     ] Using Enhanced Tesseract OCR processor
+2025-09-11 01:41:56 [info     ] Using Enhanced Document Processor with shape-aware extraction
+{"event": "Tesseract not available: tesseract is not installed or it's not in your PATH. See README file for more information.", "level": "warning", "logger": "src.ocr_processor_tesseract"}
+{"event": "\u26a0\ufe0f LLM client not available - shape-aware processing disabled", "level": "warning", "logger": "src.document_processor"}
+{"event": "FRED API key not found in environment variables", "level": "warning", "logger": "src.external_apis"}
+{"event": "\u274c AuthManager class not available", "level": "warning", "logger": "__main__"}
+2025-09-11 01:41:57,462 - uvicorn.error - INFO - Started server process [90475]
+2025-09-11 01:41:57,462 - uvicorn.error - INFO - Waiting for application startup.
+2025-09-11 01:41:57,462 - uvicorn.error - INFO - Application startup complete.
+2025-09-11 01:41:57,462 - uvicorn.error - INFO - Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+/Users/shijuprakash/AAIRE/main.py:449: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+  "timestamp": datetime.utcnow().isoformat(),
+2025-09-11 01:42:02,393 - uvicorn.access - INFO - 127.0.0.1:65370 - "GET /health HTTP/1.1" 200
+2025-09-11 01:43:09,788 - uvicorn.access - INFO - 134.128.197.84:0 - "GET / HTTP/1.1" 200
+2025-09-11 01:43:09,927 - uvicorn.access - INFO - 134.128.197.84:0 - "GET /static/js/app.js?v=37&t=20250911-consistent-numbering HTTP/1.1" 200
+2025-09-11 01:43:10,035 - uvicorn.access - INFO - 134.128.197.84:0 - "POST /api/v1/debug/clear-cache HTTP/1.1" 200
+2025-09-11 01:43:10,040 - uvicorn.access - INFO - 134.128.197.84:0 - "GET /health HTTP/1.1" 200
+2025-09-11 01:43:10,091 - __main__ - INFO - {"event": "\ud83d\udd04 Debug: Clearing application state", "level": "info", "logger": "__main__"}
+2025-09-11 01:43:10,092 - uvicorn.access - INFO - 134.128.197.84:0 - "POST /api/v1/debug/restart-state HTTP/1.1" 200
+2025-09-11 01:43:10,095 - uvicorn.error - INFO - 134.128.197.84:0 - "WebSocket /api/v1/chat/ws" [accepted]
+2025-09-11 01:43:10,096 - uvicorn.error - INFO - connection open
+2025-09-11 01:43:19,444 - __main__ - INFO - {"filename": "2025 Edition - Valuation Manual.pdf", "content_type": "application/pdf", "metadata": "{\"title\":\"2025 Edition - Valuation Manual\",\"source_type\":\"COMPANY\",\"effective_date\":\"2025-09-11\",\"document_type\":\"uploaded_document\",\"uploaded_by\":\"web_interface\"}", "event": "Upload request received", "level": "info", "logger": "__main__"}
+2025-09-11 01:43:19,454 - src.document_processor - INFO - {"job_id": "4e9844fb-dc2d-4bd3-b08c-0e60cb31b4ac", "filename": "2025 Edition - Valuation Manual.pdf", "user_id": "demo-user", "event": "Document upload queued", "level": "info", "logger": "src.document_processor"}
+2025-09-11 01:43:19,454 - src.audit_logger - INFO - {"audit_event_id": "7ba5bbef-eecb-4ca5-a327-87bac6a48ff1", "event_type": "document_uploaded", "user_id": "demo-user", "data": {"filename": "2025 Edition - Valuation Manual.pdf", "job_id": "4e9844fb-dc2d-4bd3-b08c-0e60cb31b4ac"}, "ip_address": null, "risk_level": "low", "event": "Audit event", "level": "info", "logger": "src.audit_logger"}
+2025-09-11 01:43:19,454 - src.enhanced_document_processor - INFO - {"event": "Enhanced PDF extraction starting for: data/uploads/4e9844fb-dc2d-4bd3-b08c-0e60cb31b4ac.pdf", "level": "info", "logger": "src.enhanced_document_processor"}
+2025-09-11 01:43:19,455 - src.shape_aware_processor - INFO - {"event": "Processing document with shape-aware extraction: data/uploads/4e9844fb-dc2d-4bd3-b08c-0e60cb31b4ac.pdf", "level": "info", "logger": "src.shape_aware_processor"}
+2025-09-11 01:43:19,599 - src.shape_aware_processor - WARNING - {"event": "Spatial extraction failed: No module named 'advanced_org_parser'", "level": "warning", "logger": "src.shape_aware_processor"}
+2025-09-11 01:43:19,599 - src.shape_aware_processor - INFO - {"event": "Attempting intelligent extraction", "level": "info", "logger": "src.shape_aware_processor"}
+2025-09-11 01:43:19,600 - src.intelligent_extractor - INFO - {"event": "Detected document type: DocumentType.GENERAL", "level": "info", "logger": "src.intelligent_extractor"}
+2025-09-11 01:43:21,111 - httpx - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-09-11 01:43:21,126 - src.intelligent_extractor - ERROR - {"event": "Error in general extraction: Expecting value: line 1 column 1 (char 0)", "level": "error", "logger": "src.intelligent_extractor"}
+2025-09-11 01:43:21,127 - src.shape_aware_processor - WARNING - {"event": "Intelligent extraction failed: 'ExtractionResult' object has no attribute 'confidence'", "level": "warning", "logger": "src.shape_aware_processor"}
+2025-09-11 01:43:21,127 - src.shape_aware_processor - WARNING - {"event": "All extraction methods failed, using basic text extraction", "level": "warning", "logger": "src.shape_aware_processor"}
+2025-09-11 01:43:21,127 - src.enhanced_document_processor - INFO - {"event": "Shape-aware extraction did not produce organizational data, falling back", "level": "info", "logger": "src.enhanced_document_processor"}
+2025-09-11 01:43:21,127 - src.enhanced_document_processor - INFO - {"event": "Using standard PDF extraction as fallback", "level": "info", "logger": "src.enhanced_document_processor"}
+2025-09-11 01:43:21,127 - src.document_processor - INFO - {"event": "\ud83d\udd0d Using shape-aware extraction for PDF: 4e9844fb-dc2d-4bd3-b08c-0e60cb31b4ac.pdf", "level": "info", "logger": "src.document_processor"}
+2025-09-11 01:43:21,128 - src.shape_aware_processor - INFO - {"event": "Processing document with shape-aware extraction: data/uploads/4e9844fb-dc2d-4bd3-b08c-0e60cb31b4ac.pdf", "level": "info", "logger": "src.shape_aware_processor"}
+2025-09-11 01:43:21,129 - src.shape_aware_processor - WARNING - {"event": "Spatial extraction failed: No module named 'advanced_org_parser'", "level": "warning", "logger": "src.shape_aware_processor"}
+2025-09-11 01:43:21,129 - src.shape_aware_processor - INFO - {"event": "Attempting intelligent extraction", "level": "info", "logger": "src.shape_aware_processor"}
+2025-09-11 01:43:21,129 - src.intelligent_extractor - INFO - {"event": "Detected document type: DocumentType.GENERAL", "level": "info", "logger": "src.intelligent_extractor"}
+2025-09-11 01:43:22,739 - httpx - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-09-11 01:43:22,740 - src.intelligent_extractor - ERROR - {"event": "Error in general extraction: Expecting value: line 1 column 1 (char 0)", "level": "error", "logger": "src.intelligent_extractor"}
+2025-09-11 01:43:22,740 - src.shape_aware_processor - WARNING - {"event": "Intelligent extraction failed: 'ExtractionResult' object has no attribute 'confidence'", "level": "warning", "logger": "src.shape_aware_processor"}
+2025-09-11 01:43:22,740 - src.shape_aware_processor - WARNING - {"event": "All extraction methods failed, using basic text extraction", "level": "warning", "logger": "src.shape_aware_processor"}
+2025-09-11 01:43:22,740 - src.document_processor - WARNING - {"event": "\u26a0\ufe0f Shape-aware extraction failed: 'ProcessingResult' object has no attribute 'structured_content' - falling back to basic extraction", "level": "warning", "logger": "src.document_processor"}
+2025-09-11 01:43:22,740 - src.document_processor - INFO - {"event": "\ud83d\udcc4 Using basic PDF extraction for: 4e9844fb-dc2d-4bd3-b08c-0e60cb31b4ac.pdf", "level": "info", "logger": "src.document_processor"}
+2025-09-11 01:43:28,996 - httpx - INFO - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2025-09-11 01:43:30,325 - httpx - INFO - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2025-09-11 01:43:31,789 - httpx - INFO - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2025-09-11 01:43:33,835 - httpx - INFO - HTTP Request: PUT https://ce8b5f05-c0a2-47b1-a761-c2f9e6f73817.europe-west3-0.gcp.cloud.qdrant.io:6333/collections/aaire-documents/points?wait=true "HTTP/1.1 200 OK"
+2025-09-11 01:43:34,202 - httpx - INFO - HTTP Request: PUT https://ce8b5f05-c0a2-47b1-a761-c2f9e6f73817.europe-west3-0.gcp.cloud.qdrant.io:6333/collections/aaire-documents/points?wait=true "HTTP/1.1 200 OK"
+2025-09-11 01:43:34,478 - httpx - INFO - HTTP Request: PUT https://ce8b5f05-c0a2-47b1-a761-c2f9e6f73817.europe-west3-0.gcp.cloud.qdrant.io:6333/collections/aaire-documents/points?wait=true "HTTP/1.1 200 OK"
+2025-09-11 01:43:34,828 - httpx - INFO - HTTP Request: PUT https://ce8b5f05-c0a2-47b1-a761-c2f9e6f73817.europe-west3-0.gcp.cloud.qdrant.io:6333/collections/aaire-documents/points?wait=true "HTTP/1.1 200 OK"
+2025-09-11 01:43:34,974 - httpx - INFO - HTTP Request: PUT https://ce8b5f05-c0a2-47b1-a761-c2f9e6f73817.europe-west3-0.gcp.cloud.qdrant.io:6333/collections/aaire-documents/points?wait=true "HTTP/1.1 200 OK"
+2025-09-11 01:43:35,046 - src.rag_pipeline - INFO - {"event": "\u2705 BM25 index updated with 283 documents", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:43:35,047 - src.rag_pipeline - INFO - {"doc_type": "company", "total_nodes": 283, "bm25_documents": 283, "event": "Added 1 documents to index", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:43:48,347 - httpx - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-09-11 01:43:48,478 - src.document_processor - INFO - {"job_id": "4e9844fb-dc2d-4bd3-b08c-0e60cb31b4ac", "confidence": 0.85, "event": "Document summary generated", "level": "info", "logger": "src.document_processor"}
+2025-09-11 01:43:48,478 - src.document_processor - INFO - {"job_id": "4e9844fb-dc2d-4bd3-b08c-0e60cb31b4ac", "chunks_created": 283, "event": "Document processing completed", "level": "info", "logger": "src.document_processor"}
+/Users/shijuprakash/AAIRE/main.py:449: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+  "timestamp": datetime.utcnow().isoformat(),
+2025-09-11 01:43:48,479 - uvicorn.access - INFO - 134.128.197.84:0 - "POST /api/v1/upload HTTP/1.1" 200
+2025-09-11 01:43:48,479 - uvicorn.access - INFO - 134.128.197.84:0 - "GET /health HTTP/1.1" 200
+2025-09-11 01:43:48,537 - uvicorn.access - INFO - 134.128.197.84:0 - "GET /api/v1/documents/4e9844fb-dc2d-4bd3-b08c-0e60cb31b4ac/status HTTP/1.1" 200
+2025-09-11 01:44:10,364 - __main__ - INFO - {"event": "WebSocket using RAG pipeline for query: how do I calculate the reserves for a universal life policy in usstat", "level": "info", "logger": "__main__"}
+2025-09-11 01:44:10,365 - __main__ - INFO - {"user": "Bill Johnson", "role": "Senior Accountant", "query": "how do I calculate the reserves for a universal li...", "event": "WebSocket query from Accounting department", "level": "info", "logger": "__main__"}
+2025-09-11 01:44:10,367 - src.rag_pipeline - INFO - {"query": "how do I calculate the reserves for a universal life policy in usstat", "session_id": "session_1757569450331_7vmy9iluj", "event": "Enhanced query processing started", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:44:10,369 - src.enhanced_query_handler - INFO - {"event": "Query analysis: 'how do I calculate the reserves for a universal life policy in usstat' -> extraction_needed=False, type=standard, confidence=0.0", "level": "info", "logger": "src.enhanced_query_handler"}
+2025-09-11 01:44:10,369 - src.enhanced_query_handler - INFO - {"extraction_type": "standard", "confidence": 0.0, "event": "Query routing decision: standard_rag", "level": "info", "logger": "src.enhanced_query_handler"}
+2025-09-11 01:44:10,369 - src.rag_pipeline - INFO - {"method": "standard_rag", "extraction_type": "standard", "confidence": 0.0, "event": "Query routing decision made", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:44:10,369 - src.rag_pipeline - INFO - {"event": "Using standard RAG processing", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:44:10,717 - httpx - INFO - HTTP Request: GET https://ce8b5f05-c0a2-47b1-a761-c2f9e6f73817.europe-west3-0.gcp.cloud.qdrant.io:6333/collections/aaire-documents "HTTP/1.1 200 OK"
+2025-09-11 01:44:10,718 - src.rag_pipeline - INFO - {"event": "\ud83d\udd0d Classifying query topic: 'how do I calculate the reserves for a universal li...'", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:44:10,719 - src.rag_pipeline - INFO - {"event": "\ud83d\udccb Starting topic classification for: 'how do I calculate the reserve...'", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:44:10,719 - src.rag_pipeline - INFO - {"event": "\ud83c\udfaf Topic classification result: {'is_relevant': True, 'confidence': 0.9}", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:44:10,719 - src.rag_pipeline - INFO - {"query": "how do I calculate the reserves for a universal li...", "threshold": 0.7, "reason": "neutral query", "event": "Adaptive threshold selected", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:44:10,720 - src.rag_pipeline - INFO - {"event": "Dynamic document limit: 50 (base: 20, +30 from query analysis)", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:44:11,081 - httpx - INFO - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2025-09-11 01:44:11,309 - httpx - INFO - HTTP Request: POST https://ce8b5f05-c0a2-47b1-a761-c2f9e6f73817.europe-west3-0.gcp.cloud.qdrant.io:6333/collections/aaire-documents/points/search "HTTP/1.1 200 OK"
+2025-09-11 01:44:11,551 - src.rag_pipeline - INFO - {"event": "BM25 keyword search found 50 results", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:44:11,551 - src.rag_pipeline - INFO - {"event": "Buffer approach: Retrieved 50 vector + 50 keyword results, target limit: 50", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:44:12,310 - httpx - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-09-11 01:44:12,313 - src.relevance_engine - INFO - {"event": "\ud83e\udd16 AI-classified domain: 'insurance' for query: 'how do I calculate the reserves for a universal li...'", "level": "info", "logger": "src.relevance_engine"}
+2025-09-11 01:44:12,314 - src.relevance_engine - INFO - {"query_type": "procedural", "entities": [], "domain": "insurance", "specificity": 0.25, "event": "Query analysis completed", "level": "info", "logger": "src.relevance_engine"}
+2025-09-11 01:44:12,323 - src.relevance_engine - INFO - {"top_3": [["2025 Edition - Valuation Manual.pdf", 14.550255833240382], ["2025 Edition - Valuation Manual.pdf", 13.942849714721381], ["2025 Edition - Valuation Manual.pdf", 12.395796140495852]], "event": "Top ranked documents:", "level": "info", "logger": "src.relevance_engine"}
+2025-09-11 01:44:12,323 - src.rag_pipeline - INFO - {"event": "Trimming combined results from 99 to 50", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:44:12,324 - src.rag_pipeline - INFO - {"event": "Found 50 relevant documents for query: 'how do I calculate the reserves for a universal li...'", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:44:12,324 - src.rag_pipeline - INFO - {"event": "Top document sources with scores: [('2025 Edition - Valuation Manual.pdf', 14.550255833240382), ('2025 Edition - Valuation Manual.pdf', 13.942849714721381), ('2025 Edition - Valuation Manual.pdf', 12.395796140495852), ('2025 Edition - Valuation Manual.pdf', 12.283834834012614), ('2025 Edition - Valuation Manual.pdf', 12.26718366915422)]", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:44:12,324 - src.rag_pipeline - INFO - {"event": "\ud83d\udd0d DIVERSE SELECTION DEBUG: Input=50, Output=50 (returning all)", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:44:12,324 - src.rag_pipeline - INFO - {"event": "\ud83d\udcda Processing 50 diverse documents (out of 50 total)", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:44:16,201 - httpx - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-09-11 01:44:16,204 - src.rag_pipeline - INFO - {"event": "\ud83d\udcca SEMANTIC GROUPING RESULT:\nGroup 1: Doc 1, Doc 3, Doc 12 (theme: [Claims processing and actuarial calculations related to life insurance policies. These documents discuss the handling of death claims, the aggregation of risk profiles, and the actuarial present value of benefits and expenses.])\n\nGroup 2: Doc 4, Doc 6, Doc 8 (theme: [Policy guarantees and classifications. These documents focus on secondary guarantees in life insurance policies, classifications of term plans, and certification methods for policies with specific characteristics.])\n\nGroup 3: Doc 2, Doc 5, Doc 11 (theme: [Actuarial methodologies and calculations. These documents provide guidance on lapse rates, net premium reserves, and hedging cash flows, emphasizing the mathematical and statistical approaches used in actuarial science.])\n\nGroup 4: Doc 9, Doc 10, Doc 13 (theme: [Regulatory compliance and standards in life insurance. These documents outline conditions for exemptions, certification requirements for actuaries, and the use of mortality tables for valuation standards in life insurance policies.])", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:44:16,205 - src.rag_pipeline - INFO - {"event": "\ud83d\udcda Created 4 semantic document groups:", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:44:16,205 - src.rag_pipeline - INFO - {"event": "  Group 1: 12 documents", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:44:16,205 - src.rag_pipeline - INFO - {"event": "  Group 2: 12 documents", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:44:16,205 - src.rag_pipeline - INFO - {"event": "  Group 3: 12 documents", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:44:16,205 - src.rag_pipeline - INFO - {"event": "  Group 4: 11 documents", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:44:42,722 - httpx - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-09-11 01:44:42,724 - src.rag_pipeline - INFO - {"event": "Processed group 1/4", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:44:58,873 - httpx - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-09-11 01:44:58,875 - src.rag_pipeline - INFO - {"event": "Processed group 2/4", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:45:12,282 - httpx - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-09-11 01:45:12,287 - src.rag_pipeline - INFO - {"event": "Processed group 3/4", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:45:24,974 - httpx - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-09-11 01:45:24,991 - src.rag_pipeline - INFO - {"event": "Processed group 4/4", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:45:39,759 - httpx - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-09-11 01:45:49,385 - httpx - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-09-11 01:45:49,387 - src.rag_pipeline - INFO - {"event": "\ud83d\udd0d COMPLETENESS CHECK RESULT: 1. **Pending Death Claims**: The response does not mention that pending death claims at the end of the observation period but paid during the subsequent six months should be included in the data submi...", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:45:49,388 - src.rag_pipeline - INFO - {"event": "\ud83d\udd0d DEBUG: missing_content length: 2506", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:45:49,388 - src.rag_pipeline - INFO - {"event": "\ud83d\udd0d DEBUG: missing_content truthy: True", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:45:49,388 - src.rag_pipeline - INFO - {"event": "\ud83d\udd0d DEBUG: 'COMPLETE' in upper: False", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:45:49,388 - src.rag_pipeline - INFO - {"event": "\u2705 Missing content identified, enhancing response", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,565 - httpx - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-09-11 01:46:15,569 - src.rag_pipeline - INFO - {"event": "\u2705 Added missing content via completeness check", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,570 - src.rag_pipeline - INFO - {"event": "\ud83c\udfaf CITATION EXTRACTION: Processing 50 documents", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,570 - src.rag_pipeline - INFO - {"event": "\ud83d\udccb All retrieved documents:", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,570 - src.rag_pipeline - INFO - {"event": "  Doc 1: 2025 Edition - Valuation Manual.pdf - relevance: 14.550", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,570 - src.rag_pipeline - INFO - {"event": "  Doc 2: 2025 Edition - Valuation Manual.pdf - relevance: 13.943", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,570 - src.rag_pipeline - INFO - {"event": "  Doc 3: 2025 Edition - Valuation Manual.pdf - relevance: 12.396", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,570 - src.rag_pipeline - INFO - {"event": "  Doc 4: 2025 Edition - Valuation Manual.pdf - relevance: 12.284", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,570 - src.rag_pipeline - INFO - {"event": "  Doc 5: 2025 Edition - Valuation Manual.pdf - relevance: 12.267", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,570 - src.rag_pipeline - INFO - {"event": "  Doc 6: 2025 Edition - Valuation Manual.pdf - relevance: 12.116", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,570 - src.rag_pipeline - INFO - {"event": "  Doc 7: 2025 Edition - Valuation Manual.pdf - relevance: 12.084", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,570 - src.rag_pipeline - INFO - {"event": "  Doc 8: 2025 Edition - Valuation Manual.pdf - relevance: 12.060", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,570 - src.rag_pipeline - INFO - {"event": "  Doc 9: 2025 Edition - Valuation Manual.pdf - relevance: 11.959", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,570 - src.rag_pipeline - INFO - {"event": "  Doc 10: 2025 Edition - Valuation Manual.pdf - relevance: 11.718", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,570 - src.rag_pipeline - INFO - {"event": "  Doc 11: 2025 Edition - Valuation Manual.pdf - relevance: 11.653", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,571 - src.rag_pipeline - INFO - {"event": "  Doc 12: 2025 Edition - Valuation Manual.pdf - relevance: 11.579", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,571 - src.rag_pipeline - INFO - {"event": "  Doc 13: 2025 Edition - Valuation Manual.pdf - relevance: 11.542", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,571 - src.rag_pipeline - INFO - {"event": "  Doc 14: 2025 Edition - Valuation Manual.pdf - relevance: 11.510", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,571 - src.rag_pipeline - INFO - {"event": "  Doc 15: 2025 Edition - Valuation Manual.pdf - relevance: 11.447", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,571 - src.rag_pipeline - INFO - {"event": "  Doc 16: 2025 Edition - Valuation Manual.pdf - relevance: 11.434", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,571 - src.rag_pipeline - INFO - {"event": "  Doc 17: 2025 Edition - Valuation Manual.pdf - relevance: 11.420", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,571 - src.rag_pipeline - INFO - {"event": "  Doc 18: 2025 Edition - Valuation Manual.pdf - relevance: 11.397", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,571 - src.rag_pipeline - INFO - {"event": "  Doc 19: 2025 Edition - Valuation Manual.pdf - relevance: 11.393", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,571 - src.rag_pipeline - INFO - {"event": "  Doc 20: 2025 Edition - Valuation Manual.pdf - relevance: 11.382", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,571 - src.rag_pipeline - INFO - {"event": "  Doc 21: 2025 Edition - Valuation Manual.pdf - relevance: 11.372", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,571 - src.rag_pipeline - INFO - {"event": "  Doc 22: 2025 Edition - Valuation Manual.pdf - relevance: 11.359", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,571 - src.rag_pipeline - INFO - {"event": "  Doc 23: 2025 Edition - Valuation Manual.pdf - relevance: 11.266", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,571 - src.rag_pipeline - INFO - {"event": "  Doc 24: 2025 Edition - Valuation Manual.pdf - relevance: 11.197", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,572 - src.rag_pipeline - INFO - {"event": "  Doc 25: 2025 Edition - Valuation Manual.pdf - relevance: 11.119", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,572 - src.rag_pipeline - INFO - {"event": "  Doc 26: 2025 Edition - Valuation Manual.pdf - relevance: 11.107", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,572 - src.rag_pipeline - INFO - {"event": "  Doc 27: 2025 Edition - Valuation Manual.pdf - relevance: 11.067", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,572 - src.rag_pipeline - INFO - {"event": "  Doc 28: 2025 Edition - Valuation Manual.pdf - relevance: 11.064", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,572 - src.rag_pipeline - INFO - {"event": "  Doc 29: 2025 Edition - Valuation Manual.pdf - relevance: 11.006", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,572 - src.rag_pipeline - INFO - {"event": "  Doc 30: 2025 Edition - Valuation Manual.pdf - relevance: 10.978", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,572 - src.rag_pipeline - INFO - {"event": "  Doc 31: 2025 Edition - Valuation Manual.pdf - relevance: 10.951", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,572 - src.rag_pipeline - INFO - {"event": "  Doc 32: 2025 Edition - Valuation Manual.pdf - relevance: 10.871", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,572 - src.rag_pipeline - INFO - {"event": "  Doc 33: 2025 Edition - Valuation Manual.pdf - relevance: 10.848", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,572 - src.rag_pipeline - INFO - {"event": "  Doc 34: 2025 Edition - Valuation Manual.pdf - relevance: 10.807", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,572 - src.rag_pipeline - INFO - {"event": "  Doc 35: 2025 Edition - Valuation Manual.pdf - relevance: 10.793", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,572 - src.rag_pipeline - INFO - {"event": "  Doc 36: 2025 Edition - Valuation Manual.pdf - relevance: 10.774", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,572 - src.rag_pipeline - INFO - {"event": "  Doc 37: 2025 Edition - Valuation Manual.pdf - relevance: 10.767", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,572 - src.rag_pipeline - INFO - {"event": "  Doc 38: 2025 Edition - Valuation Manual.pdf - relevance: 10.724", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,572 - src.rag_pipeline - INFO - {"event": "  Doc 39: 2025 Edition - Valuation Manual.pdf - relevance: 10.667", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,573 - src.rag_pipeline - INFO - {"event": "  Doc 40: 2025 Edition - Valuation Manual.pdf - relevance: 10.654", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,573 - src.rag_pipeline - INFO - {"event": "  Doc 41: 2025 Edition - Valuation Manual.pdf - relevance: 10.637", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,573 - src.rag_pipeline - INFO - {"event": "  Doc 42: 2025 Edition - Valuation Manual.pdf - relevance: 10.633", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,573 - src.rag_pipeline - INFO - {"event": "  Doc 43: 2025 Edition - Valuation Manual.pdf - relevance: 10.619", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,573 - src.rag_pipeline - INFO - {"event": "  Doc 44: 2025 Edition - Valuation Manual.pdf - relevance: 10.578", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,573 - src.rag_pipeline - INFO - {"event": "  Doc 45: 2025 Edition - Valuation Manual.pdf - relevance: 10.556", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,573 - src.rag_pipeline - INFO - {"event": "  Doc 46: 2025 Edition - Valuation Manual.pdf - relevance: 10.527", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,573 - src.rag_pipeline - INFO - {"event": "  Doc 47: 2025 Edition - Valuation Manual.pdf - relevance: 10.520", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,573 - src.rag_pipeline - INFO - {"event": "  Doc 48: 2025 Edition - Valuation Manual.pdf - relevance: 10.513", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,573 - src.rag_pipeline - INFO - {"event": "  Doc 49: 2025 Edition - Valuation Manual.pdf - relevance: 10.508", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,573 - src.rag_pipeline - INFO - {"event": "  Doc 50: 2025 Edition - Valuation Manual.pdf - relevance: 10.496", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,573 - src.rag_pipeline - INFO - {"event": "\ud83d\udcc4 Processing citation 1: 2025 Edition - Valuation Manual.pdf, relevance_score=14.550", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,573 - src.rag_pipeline - INFO - {"event": "\u2705 ADDED citation from: 2025 Edition - Valuation Manual.pdf (relevance: 14.550)", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,574 - src.rag_pipeline - INFO - {"event": "\ud83d\udcc4 Processing citation 2: 2025 Edition - Valuation Manual.pdf, relevance_score=13.943", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,574 - src.rag_pipeline - INFO - {"event": "\u2705 ADDED citation from: 2025 Edition - Valuation Manual.pdf (relevance: 13.943)", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,574 - src.rag_pipeline - INFO - {"event": "\ud83d\udcc4 Processing citation 3: 2025 Edition - Valuation Manual.pdf, relevance_score=12.396", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,574 - src.rag_pipeline - INFO - {"event": "\u2705 ADDED citation from: 2025 Edition - Valuation Manual.pdf (relevance: 12.396)", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,574 - src.rag_pipeline - INFO - {"event": "\ud83c\udfaf FINAL RESULT: Generated 3 citations from 50 retrieved documents", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,574 - src.rag_pipeline - INFO - {"event": "Citation 1: source=2025 Edition - Valuation Manual.pdf, confidence=14.55", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,574 - src.rag_pipeline - INFO - {"event": "Citation 2: source=2025 Edition - Valuation Manual.pdf, confidence=13.943", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,574 - src.rag_pipeline - INFO - {"event": "Citation 3: source=2025 Edition - Valuation Manual.pdf, confidence=12.396", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,574 - src.rag_pipeline - INFO - {"event": "\ud83e\uddee Cleaning formula formatting for better readability", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,577 - src.rag_pipeline - INFO - {"event": "\u2705 Formula formatting cleaned successfully", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:15,581 - src.rag_pipeline - INFO - {"event": "\ud83d\udcca Content analysis extracted: 4 content elements", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:18,470 - httpx - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-09-11 01:46:18,472 - src.rag_pipeline - INFO - {"event": "\ud83c\udfaf AI generated follow-up questions: 1. \"In the context of calculating reserves, how should pending death claims be accounted for in the data submission, particularly regarding the six-month run-out period mentioned on Page 318 of the Valuation Manual?\"\n\n2. \"Can you elaborate on how the level annual lapse rate of 1% impacts the calculations in Sections 3.B.5.c.i.2 and 3.B.5.c.i.3, as referenced in the Valuation Manual, and what implications this has for reserve estimation?\"\n\n3. \"What specific adjustments or considerations should be made when evaluating Lx+t in Section 3.B.5.d.ii.3, given that it may not be equal to the previous valuation date for the same policy?\"", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:18,474 - src.rag_pipeline - INFO - {"event": "\ud83d\udd0d Question validation: 'In the context of calculating reserves, how should pending death claims be accounted for in the data submission, particularly regarding the six-month run-out period mentioned on Page 318 of the Valuation Manual?' -> \u2705", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:18,475 - src.rag_pipeline - INFO - {"event": "\ud83d\udd0d Question validation: 'Can you elaborate on how the level annual lapse rate of 1% impacts the calculations in Sections 3.B.5.c.i.2 and 3.B.5.c.i.3, as referenced in the Valuation Manual, and what implications this has for reserve estimation?' -> \u2705", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:18,476 - src.rag_pipeline - INFO - {"event": "\ud83d\udd0d Question validation: 'What specific adjustments or considerations should be made when evaluating Lx+t in Section 3.B.5.d.ii.3, given that it may not be equal to the previous valuation date for the same policy?' -> \u2705", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:18,477 - src.rag_pipeline - INFO - {"overall_quality": 3.6821726471899727, "citation_coverage": 0.06, "keyword_relevance": 0.75, "source_quality": 16.123363235949864, "event": "Response quality metrics calculated", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:46:18,477 - __main__ - INFO - {"event": "WebSocket RAG response citations: [{'id': 1, 'text': 'Death claims pending at the end of the observation period but paid during the subsequent six months following the observation year are to be included in the data submission. Claims that are still pend...', 'source': '2025 Edition - Valuation Manual.pdf', 'source_type': 'company', 'confidence': 14.55}, {'id': 2, 'text': 'Guidance Note: By similar logic, it follows (from ASGx+t being 0 when t=0) that the level annual lapse rate to be used in the calculations in Section 3.B.5.c.i.2 and 3.B.5.c.i.3 is 1%. On the other ha...', 'source': '2025 Edition - Valuation Manual.pdf', 'source_type': 'company', 'confidence': 13.943}, {'id': 3, 'text': 'In determining the SR, the company shall determine the number and composition of subgroups for aggregation purposes in a manner that is consistent with how the company manages risks across products wi...', 'source': '2025 Edition - Valuation Manual.pdf', 'source_type': 'company', 'confidence': 12.396}]", "level": "info", "logger": "__main__"}
+2025-09-11 01:46:18,480 - uvicorn.access - INFO - 134.128.197.84:0 - "GET /health HTTP/1.1" 200
+2025-09-11 01:46:48,557 - uvicorn.access - INFO - 134.128.197.84:0 - "GET /health HTTP/1.1" 200
+2025-09-11 01:47:18,704 - uvicorn.access - INFO - 134.128.197.84:0 - "GET /health HTTP/1.1" 200
+2025-09-11 01:47:48,862 - uvicorn.access - INFO - 134.128.197.84:0 - "GET /health HTTP/1.1" 200
+2025-09-11 01:48:18,972 - uvicorn.access - INFO - 134.128.197.84:0 - "GET /health HTTP/1.1" 200
+2025-09-11 01:48:49,140 - uvicorn.access - INFO - 134.128.197.84:0 - "GET /health HTTP/1.1" 200
+2025-09-11 01:49:19,228 - uvicorn.access - INFO - 134.128.197.84:0 - "GET /health HTTP/1.1" 200
+2025-09-11 01:49:49,382 - uvicorn.access - INFO - 134.128.197.84:0 - "GET /health HTTP/1.1" 200
+2025-09-11 01:50:19,537 - uvicorn.access - INFO - 134.128.197.84:0 - "GET /health HTTP/1.1" 200
+2025-09-11 01:50:49,675 - uvicorn.access - INFO - 134.128.197.84:0 - "GET /health HTTP/1.1" 200
+2025-09-11 01:51:19,845 - uvicorn.access - INFO - 134.128.197.84:0 - "GET /health HTTP/1.1" 200
+2025-09-11 01:51:50,000 - uvicorn.access - INFO - 134.128.197.84:0 - "GET /health HTTP/1.1" 200
+2025-09-11 01:52:11,468 - uvicorn.access - INFO - 134.128.197.84:0 - "GET / HTTP/1.1" 200
+2025-09-11 01:52:11,547 - __main__ - INFO - {"event": "WebSocket client disconnected", "level": "info", "logger": "__main__"}
+2025-09-11 01:52:11,547 - uvicorn.error - INFO - connection closed
+2025-09-11 01:52:11,569 - uvicorn.access - INFO - 134.128.197.84:0 - "GET /static/js/app.js?v=37&t=20250911-consistent-numbering HTTP/1.1" 200
+2025-09-11 01:52:11,676 - uvicorn.access - INFO - 134.128.197.84:0 - "POST /api/v1/debug/clear-cache HTTP/1.1" 200
+2025-09-11 01:52:11,680 - uvicorn.access - INFO - 134.128.197.84:0 - "GET /health HTTP/1.1" 200
+2025-09-11 01:52:11,730 - __main__ - INFO - {"event": "\ud83d\udd04 Debug: Clearing application state", "level": "info", "logger": "__main__"}
+2025-09-11 01:52:11,730 - uvicorn.access - INFO - 134.128.197.84:0 - "POST /api/v1/debug/restart-state HTTP/1.1" 200
+2025-09-11 01:52:11,743 - uvicorn.error - INFO - 134.128.197.84:0 - "WebSocket /api/v1/chat/ws" [accepted]
+2025-09-11 01:52:11,744 - uvicorn.error - INFO - connection open
+2025-09-11 01:52:41,816 - uvicorn.access - INFO - 134.128.197.84:0 - "GET /health HTTP/1.1" 200
+2025-09-11 01:52:50,722 - __main__ - INFO - {"filename": "2025 Edition - Valuation Manual.pdf", "content_type": "application/pdf", "metadata": "{\"title\":\"2025 Edition - Valuation Manual\",\"source_type\":\"COMPANY\",\"effective_date\":\"2025-09-11\",\"document_type\":\"uploaded_document\",\"uploaded_by\":\"web_interface\"}", "event": "Upload request received", "level": "info", "logger": "__main__"}
+2025-09-11 01:52:50,731 - src.document_processor - INFO - {"job_id": "28885de7-17b7-45a9-a629-e286bc1569fd", "filename": "2025 Edition - Valuation Manual.pdf", "user_id": "demo-user", "event": "Document upload queued", "level": "info", "logger": "src.document_processor"}
+2025-09-11 01:52:50,731 - src.audit_logger - INFO - {"audit_event_id": "5e8b9078-4168-4411-9196-5de5ab61ae7c", "event_type": "document_uploaded", "user_id": "demo-user", "data": {"filename": "2025 Edition - Valuation Manual.pdf", "job_id": "28885de7-17b7-45a9-a629-e286bc1569fd"}, "ip_address": null, "risk_level": "low", "event": "Audit event", "level": "info", "logger": "src.audit_logger"}
+2025-09-11 01:52:50,732 - src.enhanced_document_processor - INFO - {"event": "Enhanced PDF extraction starting for: data/uploads/28885de7-17b7-45a9-a629-e286bc1569fd.pdf", "level": "info", "logger": "src.enhanced_document_processor"}
+2025-09-11 01:52:50,732 - src.shape_aware_processor - INFO - {"event": "Processing document with shape-aware extraction: data/uploads/28885de7-17b7-45a9-a629-e286bc1569fd.pdf", "level": "info", "logger": "src.shape_aware_processor"}
+2025-09-11 01:52:50,734 - src.shape_aware_processor - WARNING - {"event": "Spatial extraction failed: No module named 'advanced_org_parser'", "level": "warning", "logger": "src.shape_aware_processor"}
+2025-09-11 01:52:50,734 - src.shape_aware_processor - INFO - {"event": "Attempting intelligent extraction", "level": "info", "logger": "src.shape_aware_processor"}
+2025-09-11 01:52:50,734 - src.intelligent_extractor - INFO - {"event": "Detected document type: DocumentType.GENERAL", "level": "info", "logger": "src.intelligent_extractor"}
+2025-09-11 01:52:52,486 - httpx - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-09-11 01:52:52,495 - src.intelligent_extractor - ERROR - {"event": "Error in general extraction: Expecting value: line 1 column 1 (char 0)", "level": "error", "logger": "src.intelligent_extractor"}
+2025-09-11 01:52:52,495 - src.shape_aware_processor - WARNING - {"event": "Intelligent extraction failed: 'ExtractionResult' object has no attribute 'confidence'", "level": "warning", "logger": "src.shape_aware_processor"}
+2025-09-11 01:52:52,496 - src.shape_aware_processor - WARNING - {"event": "All extraction methods failed, using basic text extraction", "level": "warning", "logger": "src.shape_aware_processor"}
+2025-09-11 01:52:52,496 - src.enhanced_document_processor - INFO - {"event": "Shape-aware extraction did not produce organizational data, falling back", "level": "info", "logger": "src.enhanced_document_processor"}
+2025-09-11 01:52:52,496 - src.enhanced_document_processor - INFO - {"event": "Using standard PDF extraction as fallback", "level": "info", "logger": "src.enhanced_document_processor"}
+2025-09-11 01:52:52,496 - src.document_processor - INFO - {"event": "\ud83d\udd0d Using shape-aware extraction for PDF: 28885de7-17b7-45a9-a629-e286bc1569fd.pdf", "level": "info", "logger": "src.document_processor"}
+2025-09-11 01:52:52,496 - src.shape_aware_processor - INFO - {"event": "Processing document with shape-aware extraction: data/uploads/28885de7-17b7-45a9-a629-e286bc1569fd.pdf", "level": "info", "logger": "src.shape_aware_processor"}
+2025-09-11 01:52:52,498 - src.shape_aware_processor - WARNING - {"event": "Spatial extraction failed: No module named 'advanced_org_parser'", "level": "warning", "logger": "src.shape_aware_processor"}
+2025-09-11 01:52:52,498 - src.shape_aware_processor - INFO - {"event": "Attempting intelligent extraction", "level": "info", "logger": "src.shape_aware_processor"}
+2025-09-11 01:52:52,498 - src.intelligent_extractor - INFO - {"event": "Detected document type: DocumentType.GENERAL", "level": "info", "logger": "src.intelligent_extractor"}
+2025-09-11 01:52:53,733 - httpx - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-09-11 01:52:53,733 - src.intelligent_extractor - ERROR - {"event": "Error in general extraction: Expecting value: line 1 column 1 (char 0)", "level": "error", "logger": "src.intelligent_extractor"}
+2025-09-11 01:52:53,733 - src.shape_aware_processor - WARNING - {"event": "Intelligent extraction failed: 'ExtractionResult' object has no attribute 'confidence'", "level": "warning", "logger": "src.shape_aware_processor"}
+2025-09-11 01:52:53,733 - src.shape_aware_processor - WARNING - {"event": "All extraction methods failed, using basic text extraction", "level": "warning", "logger": "src.shape_aware_processor"}
+2025-09-11 01:52:53,733 - src.document_processor - WARNING - {"event": "\u26a0\ufe0f Shape-aware extraction failed: 'ProcessingResult' object has no attribute 'structured_content' - falling back to basic extraction", "level": "warning", "logger": "src.document_processor"}
+2025-09-11 01:52:53,733 - src.document_processor - INFO - {"event": "\ud83d\udcc4 Using basic PDF extraction for: 28885de7-17b7-45a9-a629-e286bc1569fd.pdf", "level": "info", "logger": "src.document_processor"}
+2025-09-11 01:52:59,370 - httpx - INFO - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2025-09-11 01:53:00,598 - httpx - INFO - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2025-09-11 01:53:01,722 - httpx - INFO - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2025-09-11 01:53:03,421 - httpx - INFO - HTTP Request: PUT https://ce8b5f05-c0a2-47b1-a761-c2f9e6f73817.europe-west3-0.gcp.cloud.qdrant.io:6333/collections/aaire-documents/points?wait=true "HTTP/1.1 200 OK"
+2025-09-11 01:53:03,923 - httpx - INFO - HTTP Request: PUT https://ce8b5f05-c0a2-47b1-a761-c2f9e6f73817.europe-west3-0.gcp.cloud.qdrant.io:6333/collections/aaire-documents/points?wait=true "HTTP/1.1 200 OK"
+2025-09-11 01:53:04,487 - httpx - INFO - HTTP Request: PUT https://ce8b5f05-c0a2-47b1-a761-c2f9e6f73817.europe-west3-0.gcp.cloud.qdrant.io:6333/collections/aaire-documents/points?wait=true "HTTP/1.1 200 OK"
+2025-09-11 01:53:04,988 - httpx - INFO - HTTP Request: PUT https://ce8b5f05-c0a2-47b1-a761-c2f9e6f73817.europe-west3-0.gcp.cloud.qdrant.io:6333/collections/aaire-documents/points?wait=true "HTTP/1.1 200 OK"
+2025-09-11 01:53:05,207 - httpx - INFO - HTTP Request: PUT https://ce8b5f05-c0a2-47b1-a761-c2f9e6f73817.europe-west3-0.gcp.cloud.qdrant.io:6333/collections/aaire-documents/points?wait=true "HTTP/1.1 200 OK"
+2025-09-11 01:53:05,311 - src.rag_pipeline - INFO - {"event": "\u2705 BM25 index updated with 565 documents", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:53:05,313 - src.rag_pipeline - INFO - {"doc_type": "company", "total_nodes": 282, "bm25_documents": 565, "event": "Added 1 documents to index", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:53:20,154 - httpx - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-09-11 01:53:20,284 - src.document_processor - INFO - {"job_id": "28885de7-17b7-45a9-a629-e286bc1569fd", "confidence": 0.85, "event": "Document summary generated", "level": "info", "logger": "src.document_processor"}
+2025-09-11 01:53:20,284 - src.document_processor - INFO - {"job_id": "28885de7-17b7-45a9-a629-e286bc1569fd", "chunks_created": 282, "event": "Document processing completed", "level": "info", "logger": "src.document_processor"}
+2025-09-11 01:53:20,285 - uvicorn.access - INFO - 134.128.197.84:0 - "POST /api/v1/upload HTTP/1.1" 200
+2025-09-11 01:53:20,285 - uvicorn.access - INFO - 134.128.197.84:0 - "GET /health HTTP/1.1" 200
+2025-09-11 01:53:20,342 - uvicorn.access - INFO - 134.128.197.84:0 - "GET /api/v1/documents/28885de7-17b7-45a9-a629-e286bc1569fd/status HTTP/1.1" 200
+2025-09-11 01:53:23,382 - __main__ - INFO - {"event": "WebSocket using RAG pipeline for query: how do I calculate the reserves for a universal life policy in usstat", "level": "info", "logger": "__main__"}
+2025-09-11 01:53:23,382 - __main__ - INFO - {"user": "Bill Johnson", "role": "Senior Accountant", "query": "how do I calculate the reserves for a universal li...", "event": "WebSocket query from Accounting department", "level": "info", "logger": "__main__"}
+2025-09-11 01:53:23,382 - src.rag_pipeline - INFO - {"query": "how do I calculate the reserves for a universal life policy in usstat", "session_id": "session_1757570003349_jifvehod2", "event": "Enhanced query processing started", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:53:23,383 - src.enhanced_query_handler - INFO - {"event": "Query analysis: 'how do I calculate the reserves for a universal life policy in usstat' -> extraction_needed=False, type=standard, confidence=0.0", "level": "info", "logger": "src.enhanced_query_handler"}
+2025-09-11 01:53:23,383 - src.enhanced_query_handler - INFO - {"extraction_type": "standard", "confidence": 0.0, "event": "Query routing decision: standard_rag", "level": "info", "logger": "src.enhanced_query_handler"}
+2025-09-11 01:53:23,383 - src.rag_pipeline - INFO - {"method": "standard_rag", "extraction_type": "standard", "confidence": 0.0, "event": "Query routing decision made", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:53:23,383 - src.rag_pipeline - INFO - {"event": "Using standard RAG processing", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:53:23,721 - httpx - INFO - HTTP Request: GET https://ce8b5f05-c0a2-47b1-a761-c2f9e6f73817.europe-west3-0.gcp.cloud.qdrant.io:6333/collections/aaire-documents "HTTP/1.1 200 OK"
+2025-09-11 01:53:23,722 - src.rag_pipeline - INFO - {"event": "\ud83d\udd0d Classifying query topic: 'how do I calculate the reserves for a universal li...'", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:53:23,723 - src.rag_pipeline - INFO - {"event": "\ud83d\udccb Starting topic classification for: 'how do I calculate the reserve...'", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:53:23,723 - src.rag_pipeline - INFO - {"event": "\ud83c\udfaf Topic classification result: {'is_relevant': True, 'confidence': 0.9}", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:53:23,723 - src.rag_pipeline - INFO - {"query": "how do I calculate the reserves for a universal li...", "threshold": 0.7, "reason": "neutral query", "event": "Adaptive threshold selected", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:53:23,723 - src.rag_pipeline - INFO - {"event": "Dynamic document limit: 50 (base: 20, +30 from query analysis)", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:53:23,902 - httpx - INFO - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2025-09-11 01:53:24,116 - httpx - INFO - HTTP Request: POST https://ce8b5f05-c0a2-47b1-a761-c2f9e6f73817.europe-west3-0.gcp.cloud.qdrant.io:6333/collections/aaire-documents/points/search "HTTP/1.1 200 OK"
+2025-09-11 01:53:24,337 - src.rag_pipeline - INFO - {"event": "BM25 keyword search found 50 results", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:53:24,338 - src.rag_pipeline - INFO - {"event": "Buffer approach: Retrieved 50 vector + 50 keyword results, target limit: 50", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:53:24,755 - httpx - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-09-11 01:53:24,761 - src.relevance_engine - INFO - {"event": "\ud83e\udd16 AI-classified domain: 'insurance' for query: 'how do I calculate the reserves for a universal li...'", "level": "info", "logger": "src.relevance_engine"}
+2025-09-11 01:53:24,761 - src.relevance_engine - INFO - {"query_type": "procedural", "entities": [], "domain": "insurance", "specificity": 0.25, "event": "Query analysis completed", "level": "info", "logger": "src.relevance_engine"}
+2025-09-11 01:53:24,773 - src.relevance_engine - INFO - {"top_3": [["2025 Edition - Valuation Manual.pdf", 14.789718698225451], ["2025 Edition - Valuation Manual.pdf", 14.789718698225451], ["2025 Edition - Valuation Manual.pdf", 14.181036113930778]], "event": "Top ranked documents:", "level": "info", "logger": "src.relevance_engine"}
+2025-09-11 01:53:24,774 - src.rag_pipeline - INFO - {"event": "Trimming combined results from 98 to 50", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:53:24,774 - src.rag_pipeline - INFO - {"event": "Found 50 relevant documents for query: 'how do I calculate the reserves for a universal li...'", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:53:24,774 - src.rag_pipeline - INFO - {"event": "Top document sources with scores: [('2025 Edition - Valuation Manual.pdf', 14.789718698225451), ('2025 Edition - Valuation Manual.pdf', 14.789718698225451), ('2025 Edition - Valuation Manual.pdf', 14.181036113930778), ('2025 Edition - Valuation Manual.pdf', 14.181036113930778), ('2025 Edition - Valuation Manual.pdf', 12.61845409841727)]", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:53:24,774 - src.rag_pipeline - INFO - {"event": "\ud83d\udd0d DIVERSE SELECTION DEBUG: Input=50, Output=50 (returning all)", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:53:24,774 - src.rag_pipeline - INFO - {"event": "\ud83d\udcda Processing 50 diverse documents (out of 50 total)", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:53:28,347 - httpx - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-09-11 01:53:28,350 - src.rag_pipeline - INFO - {"event": "\ud83d\udcca SEMANTIC GROUPING RESULT:\nGroup 1: Doc 1, Doc 2 (theme: [Death claims processing and reporting guidelines])  \nGroup 2: Doc 3, Doc 4 (theme: [Lapse rate calculations and actuarial guidance])  \nGroup 3: Doc 5, Doc 6 (theme: [Risk management and subgroup composition for aggregation])  \nGroup 4: Doc 7, Doc 8 (theme: [Definitions and conditions of secondary guarantees in insurance policies])  \nGroup 5: Doc 9, Doc 10 (theme: [Net premium reserve calculations for insurance policies])  \nGroup 6: Doc 11 (theme: [Model parameter consistency and market price of risk])  \nGroup 7: Doc 12, Doc 13 (theme: [Classification of term plans in insurance])  \nGroup 8: Doc 14, Doc 15 (theme: [Universal life plans and guarantees])", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:53:28,350 - src.rag_pipeline - INFO - {"event": "\ud83d\udcda Created 8 semantic document groups:", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:53:28,350 - src.rag_pipeline - INFO - {"event": "  Group 1: 7 documents", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:53:28,350 - src.rag_pipeline - INFO - {"event": "  Group 2: 7 documents", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:53:28,350 - src.rag_pipeline - INFO - {"event": "  Group 3: 6 documents", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:53:28,350 - src.rag_pipeline - INFO - {"event": "  Group 4: 6 documents", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:53:28,350 - src.rag_pipeline - INFO - {"event": "  Group 5: 6 documents", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:53:28,350 - src.rag_pipeline - INFO - {"event": "  Group 6: 6 documents", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:53:28,350 - src.rag_pipeline - INFO - {"event": "  Group 7: 6 documents", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:53:28,350 - src.rag_pipeline - INFO - {"event": "  Group 8: 6 documents", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:53:40,226 - httpx - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-09-11 01:53:40,228 - src.rag_pipeline - INFO - {"event": "Processed group 1/8", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:53:50,374 - httpx - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-09-11 01:53:50,378 - src.rag_pipeline - INFO - {"event": "Processed group 2/8", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:54:03,982 - httpx - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-09-11 01:54:03,985 - src.rag_pipeline - INFO - {"event": "Processed group 3/8", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:54:17,806 - httpx - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-09-11 01:54:17,814 - src.rag_pipeline - INFO - {"event": "Processed group 4/8", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:54:32,859 - httpx - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-09-11 01:54:32,862 - src.rag_pipeline - INFO - {"event": "Processed group 5/8", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:54:47,988 - httpx - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-09-11 01:54:47,996 - src.rag_pipeline - INFO - {"event": "Processed group 6/8", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:54:55,798 - httpx - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-09-11 01:54:55,800 - src.rag_pipeline - INFO - {"event": "Processed group 7/8", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:55:08,599 - httpx - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-09-11 01:55:08,602 - src.rag_pipeline - INFO - {"event": "Processed group 8/8", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:55:29,266 - httpx - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-09-11 01:55:37,372 - httpx - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-09-11 01:55:37,374 - src.rag_pipeline - INFO - {"event": "\ud83d\udd0d COMPLETENESS CHECK RESULT: Missing content:\n\n1. **Pending Death Claims**: The response does not mention the requirement to include death claims pending at the end of the observation period but paid during the subsequent six mon...", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:55:37,374 - src.rag_pipeline - INFO - {"event": "\ud83d\udd0d DEBUG: missing_content length: 2176", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:55:37,375 - src.rag_pipeline - INFO - {"event": "\ud83d\udd0d DEBUG: missing_content truthy: True", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:55:37,375 - src.rag_pipeline - INFO - {"event": "\ud83d\udd0d DEBUG: 'COMPLETE' in upper: False", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:55:37,375 - src.rag_pipeline - INFO - {"event": "\u2705 Missing content identified, enhancing response", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,228 - httpx - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-09-11 01:56:01,231 - src.rag_pipeline - INFO - {"event": "\u2705 Added missing content via completeness check", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,231 - src.rag_pipeline - INFO - {"event": "\ud83c\udfaf CITATION EXTRACTION: Processing 50 documents", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,231 - src.rag_pipeline - INFO - {"event": "\ud83d\udccb All retrieved documents:", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,231 - src.rag_pipeline - INFO - {"event": "  Doc 1: 2025 Edition - Valuation Manual.pdf - relevance: 14.790", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,232 - src.rag_pipeline - INFO - {"event": "  Doc 2: 2025 Edition - Valuation Manual.pdf - relevance: 14.790", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,232 - src.rag_pipeline - INFO - {"event": "  Doc 3: 2025 Edition - Valuation Manual.pdf - relevance: 14.181", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,232 - src.rag_pipeline - INFO - {"event": "  Doc 4: 2025 Edition - Valuation Manual.pdf - relevance: 14.181", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,232 - src.rag_pipeline - INFO - {"event": "  Doc 5: 2025 Edition - Valuation Manual.pdf - relevance: 12.618", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,232 - src.rag_pipeline - INFO - {"event": "  Doc 6: 2025 Edition - Valuation Manual.pdf - relevance: 12.618", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,232 - src.rag_pipeline - INFO - {"event": "  Doc 7: 2025 Edition - Valuation Manual.pdf - relevance: 12.515", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,232 - src.rag_pipeline - INFO - {"event": "  Doc 8: 2025 Edition - Valuation Manual.pdf - relevance: 12.515", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,232 - src.rag_pipeline - INFO - {"event": "  Doc 9: 2025 Edition - Valuation Manual.pdf - relevance: 12.511", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,232 - src.rag_pipeline - INFO - {"event": "  Doc 10: 2025 Edition - Valuation Manual.pdf - relevance: 12.511", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,232 - src.rag_pipeline - INFO - {"event": "  Doc 11: 2025 Edition - Valuation Manual.pdf - relevance: 12.466", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,232 - src.rag_pipeline - INFO - {"event": "  Doc 12: 2025 Edition - Valuation Manual.pdf - relevance: 12.306", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,232 - src.rag_pipeline - INFO - {"event": "  Doc 13: 2025 Edition - Valuation Manual.pdf - relevance: 12.306", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,232 - src.rag_pipeline - INFO - {"event": "  Doc 14: 2025 Edition - Valuation Manual.pdf - relevance: 12.289", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,233 - src.rag_pipeline - INFO - {"event": "  Doc 15: 2025 Edition - Valuation Manual.pdf - relevance: 12.289", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,233 - src.rag_pipeline - INFO - {"event": "  Doc 16: 2025 Edition - Valuation Manual.pdf - relevance: 12.287", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,233 - src.rag_pipeline - INFO - {"event": "  Doc 17: 2025 Edition - Valuation Manual.pdf - relevance: 12.287", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,233 - src.rag_pipeline - INFO - {"event": "  Doc 18: 2025 Edition - Valuation Manual.pdf - relevance: 12.194", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,233 - src.rag_pipeline - INFO - {"event": "  Doc 19: 2025 Edition - Valuation Manual.pdf - relevance: 12.194", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,233 - src.rag_pipeline - INFO - {"event": "  Doc 20: 2025 Edition - Valuation Manual.pdf - relevance: 12.096", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,233 - src.rag_pipeline - INFO - {"event": "  Doc 21: 2025 Edition - Valuation Manual.pdf - relevance: 11.927", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,233 - src.rag_pipeline - INFO - {"event": "  Doc 22: 2025 Edition - Valuation Manual.pdf - relevance: 11.927", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,233 - src.rag_pipeline - INFO - {"event": "  Doc 23: 2025 Edition - Valuation Manual.pdf - relevance: 11.830", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,233 - src.rag_pipeline - INFO - {"event": "  Doc 24: 2025 Edition - Valuation Manual.pdf - relevance: 11.830", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,233 - src.rag_pipeline - INFO - {"event": "  Doc 25: 2025 Edition - Valuation Manual.pdf - relevance: 11.798", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,233 - src.rag_pipeline - INFO - {"event": "  Doc 26: 2025 Edition - Valuation Manual.pdf - relevance: 11.798", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,233 - src.rag_pipeline - INFO - {"event": "  Doc 27: 2025 Edition - Valuation Manual.pdf - relevance: 11.768", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,233 - src.rag_pipeline - INFO - {"event": "  Doc 28: 2025 Edition - Valuation Manual.pdf - relevance: 11.768", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,234 - src.rag_pipeline - INFO - {"event": "  Doc 29: 2025 Edition - Valuation Manual.pdf - relevance: 11.738", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,234 - src.rag_pipeline - INFO - {"event": "  Doc 30: 2025 Edition - Valuation Manual.pdf - relevance: 11.738", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,234 - src.rag_pipeline - INFO - {"event": "  Doc 31: 2025 Edition - Valuation Manual.pdf - relevance: 11.654", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,234 - src.rag_pipeline - INFO - {"event": "  Doc 32: 2025 Edition - Valuation Manual.pdf - relevance: 11.645", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,234 - src.rag_pipeline - INFO - {"event": "  Doc 33: 2025 Edition - Valuation Manual.pdf - relevance: 11.645", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,234 - src.rag_pipeline - INFO - {"event": "  Doc 34: 2025 Edition - Valuation Manual.pdf - relevance: 11.639", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,234 - src.rag_pipeline - INFO - {"event": "  Doc 35: 2025 Edition - Valuation Manual.pdf - relevance: 11.639", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,234 - src.rag_pipeline - INFO - {"event": "  Doc 36: 2025 Edition - Valuation Manual.pdf - relevance: 11.621", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,234 - src.rag_pipeline - INFO - {"event": "  Doc 37: 2025 Edition - Valuation Manual.pdf - relevance: 11.621", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,234 - src.rag_pipeline - INFO - {"event": "  Doc 38: 2025 Edition - Valuation Manual.pdf - relevance: 11.599", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,234 - src.rag_pipeline - INFO - {"event": "  Doc 39: 2025 Edition - Valuation Manual.pdf - relevance: 11.599", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,234 - src.rag_pipeline - INFO - {"event": "  Doc 40: 2025 Edition - Valuation Manual.pdf - relevance: 11.579", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,234 - src.rag_pipeline - INFO - {"event": "  Doc 41: 2025 Edition - Valuation Manual.pdf - relevance: 11.579", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,234 - src.rag_pipeline - INFO - {"event": "  Doc 42: 2025 Edition - Valuation Manual.pdf - relevance: 11.577", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,234 - src.rag_pipeline - INFO - {"event": "  Doc 43: 2025 Edition - Valuation Manual.pdf - relevance: 11.576", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,235 - src.rag_pipeline - INFO - {"event": "  Doc 44: 2025 Edition - Valuation Manual.pdf - relevance: 11.513", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,235 - src.rag_pipeline - INFO - {"event": "  Doc 45: 2025 Edition - Valuation Manual.pdf - relevance: 11.483", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,235 - src.rag_pipeline - INFO - {"event": "  Doc 46: 2025 Edition - Valuation Manual.pdf - relevance: 11.449", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,235 - src.rag_pipeline - INFO - {"event": "  Doc 47: 2025 Edition - Valuation Manual.pdf - relevance: 11.401", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,235 - src.rag_pipeline - INFO - {"event": "  Doc 48: 2025 Edition - Valuation Manual.pdf - relevance: 11.397", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,235 - src.rag_pipeline - INFO - {"event": "  Doc 49: 2025 Edition - Valuation Manual.pdf - relevance: 11.397", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,235 - src.rag_pipeline - INFO - {"event": "  Doc 50: 2025 Edition - Valuation Manual.pdf - relevance: 11.345", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,235 - src.rag_pipeline - INFO - {"event": "\ud83d\udcc4 Processing citation 1: 2025 Edition - Valuation Manual.pdf, relevance_score=14.790", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,235 - src.rag_pipeline - INFO - {"event": "\u2705 ADDED citation from: 2025 Edition - Valuation Manual.pdf (relevance: 14.790)", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,235 - src.rag_pipeline - INFO - {"event": "\ud83d\udcc4 Processing citation 2: 2025 Edition - Valuation Manual.pdf, relevance_score=14.790", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,235 - src.rag_pipeline - INFO - {"event": "\u2705 ADDED citation from: 2025 Edition - Valuation Manual.pdf (relevance: 14.790)", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,235 - src.rag_pipeline - INFO - {"event": "\ud83d\udcc4 Processing citation 3: 2025 Edition - Valuation Manual.pdf, relevance_score=14.181", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,236 - src.rag_pipeline - INFO - {"event": "\u2705 ADDED citation from: 2025 Edition - Valuation Manual.pdf (relevance: 14.181)", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,236 - src.rag_pipeline - INFO - {"event": "\ud83c\udfaf FINAL RESULT: Generated 3 citations from 50 retrieved documents", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,236 - src.rag_pipeline - INFO - {"event": "Citation 1: source=2025 Edition - Valuation Manual.pdf, confidence=14.79", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,236 - src.rag_pipeline - INFO - {"event": "Citation 2: source=2025 Edition - Valuation Manual.pdf, confidence=14.79", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,236 - src.rag_pipeline - INFO - {"event": "Citation 3: source=2025 Edition - Valuation Manual.pdf, confidence=14.181", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,236 - src.rag_pipeline - INFO - {"event": "\ud83e\uddee Cleaning formula formatting for better readability", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,238 - src.rag_pipeline - INFO - {"event": "\u2705 Formula formatting cleaned successfully", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:01,239 - src.rag_pipeline - INFO - {"event": "\ud83d\udcca Content analysis extracted: 2 content elements", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:03,886 - httpx - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-09-11 01:56:03,889 - src.rag_pipeline - INFO - {"event": "\ud83c\udfaf AI generated follow-up questions: 1. \"In the context of calculating reserves for a universal life policy, how should pending death claims that are still unresolved at the end of the six-month run-out period be factored into the reserve calculations as per the guidelines in the Valuation Manual?\"\n\n2. \"Can you elaborate on how the inclusion of death claims pending at the end of the observation period, as mentioned on page 318 of the Valuation Manual, affects the overall reserve calculation for universal life policies?\"\n\n3. \"What specific methodologies or adjustments are recommended in the Valuation Manual for accounting for death claims that are paid during the six months following the observation year when calculating reserves?\"", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:03,890 - src.rag_pipeline - INFO - {"event": "\ud83d\udd0d Question validation: 'In the context of calculating reserves for a universal life policy, how should pending death claims that are still unresolved at the end of the six-month run-out period be factored into the reserve calculations as per the guidelines in the Valuation Manual?' -> \u2705", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:03,891 - src.rag_pipeline - INFO - {"event": "\ud83d\udd0d Question validation: 'Can you elaborate on how the inclusion of death claims pending at the end of the observation period, as mentioned on page 318 of the Valuation Manual, affects the overall reserve calculation for universal life policies?' -> \u2705", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:03,892 - src.rag_pipeline - INFO - {"event": "\ud83d\udd0d Question validation: 'What specific methodologies or adjustments are recommended in the Valuation Manual for accounting for death claims that are paid during the six months following the observation year when calculating reserves?' -> \u2705", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:03,893 - src.rag_pipeline - INFO - {"overall_quality": 3.910199366389925, "citation_coverage": 0.06, "keyword_relevance": 0.75, "source_quality": 17.263496831949624, "event": "Response quality metrics calculated", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 01:56:03,893 - __main__ - INFO - {"event": "WebSocket RAG response citations: [{'id': 1, 'text': 'Death claims pending at the end of the observation period but paid during the subsequent six months following the observation year are to be included in the data submission. Claims that are still pend...', 'source': '2025 Edition - Valuation Manual.pdf', 'source_type': 'company', 'confidence': 14.79}, {'id': 2, 'text': 'Death claims pending at the end of the observation period but paid during the subsequent six months following the observation year are to be included in the data submission. Claims that are still pend...', 'source': '2025 Edition - Valuation Manual.pdf', 'source_type': 'company', 'confidence': 14.79}, {'id': 3, 'text': 'Guidance Note: By similar logic, it follows (from ASGx+t being 0 when t=0) that the level annual lapse rate to be used in the calculations in Section 3.B.5.c.i.2 and 3.B.5.c.i.3 is 1%. On the other ha...', 'source': '2025 Edition - Valuation Manual.pdf', 'source_type': 'company', 'confidence': 14.181}]", "level": "info", "logger": "__main__"}
+2025-09-11 01:56:03,896 - uvicorn.access - INFO - 134.128.197.84:0 - "GET /health HTTP/1.1" 200
+2025-09-11 01:56:33,965 - uvicorn.access - INFO - 134.128.197.84:0 - "GET /health HTTP/1.1" 200
+2025-09-11 01:57:04,026 - uvicorn.access - INFO - 134.128.197.84:0 - "GET /health HTTP/1.1" 200
+2025-09-11 01:57:34,135 - uvicorn.access - INFO - 134.128.197.84:0 - "GET /health HTTP/1.1" 200
+2025-09-11 01:58:04,289 - uvicorn.access - INFO - 134.128.197.84:0 - "GET /health HTTP/1.1" 200
+2025-09-11 01:58:34,446 - uvicorn.access - INFO - 134.128.197.84:0 - "GET /health HTTP/1.1" 200
+2025-09-11 01:59:04,594 - uvicorn.access - INFO - 134.128.197.84:0 - "GET /health HTTP/1.1" 200
+2025-09-11 01:59:34,720 - uvicorn.access - INFO - 134.128.197.84:0 - "GET /health HTTP/1.1" 200
+2025-09-11 02:00:04,859 - uvicorn.access - INFO - 134.128.197.84:0 - "GET /health HTTP/1.1" 200
+2025-09-11 02:00:34,993 - uvicorn.access - INFO - 134.128.197.84:0 - "GET /health HTTP/1.1" 200
+2025-09-11 02:01:05,154 - uvicorn.access - INFO - 134.128.197.84:0 - "GET /health HTTP/1.1" 200
+2025-09-11 02:01:35,358 - uvicorn.access - INFO - 134.128.197.84:0 - "GET /health HTTP/1.1" 200
+2025-09-11 02:02:05,546 - uvicorn.access - INFO - 134.128.197.84:0 - "GET /health HTTP/1.1" 200
+2025-09-11 02:02:35,705 - uvicorn.access - INFO - 134.128.197.84:0 - "GET /health HTTP/1.1" 200
+2025-09-11 02:03:05,865 - uvicorn.access - INFO - 134.128.197.84:0 - "GET /health HTTP/1.1" 200
+2025-09-11 02:03:35,973 - uvicorn.access - INFO - 134.128.197.84:0 - "GET /health HTTP/1.1" 200
+2025-09-11 02:04:16,166 - __main__ - INFO - {"event": "WebSocket client disconnected", "level": "info", "logger": "__main__"}
+2025-09-11 02:04:16,167 - uvicorn.error - INFO - connection closed
+2025-09-11 02:04:20,971 - uvicorn.error - INFO - 134.128.197.84:0 - "WebSocket /api/v1/chat/ws" [accepted]
+2025-09-11 02:04:20,972 - uvicorn.error - INFO - connection open
+2025-09-11 02:04:34,743 - uvicorn.access - INFO - 134.128.197.84:0 - "GET /health HTTP/1.1" 200
+2025-09-11 02:19:54,137 - __main__ - INFO - {"event": "WebSocket client disconnected", "level": "info", "logger": "__main__"}
+2025-09-11 02:19:54,138 - uvicorn.error - INFO - connection closed
+2025-09-11 02:20:02,941 - uvicorn.access - INFO - 134.128.197.84:0 - "GET /health HTTP/1.1" 200
+2025-09-11 02:20:33,176 - uvicorn.access - INFO - 134.128.197.84:0 - "GET /health HTTP/1.1" 200
+2025-09-11 09:52:12,541 - uvicorn.access - INFO - 2605:8d80:680:681d:c403:a748:2c11:e50:0 - "GET / HTTP/1.1" 200
+2025-09-11 09:52:13,178 - uvicorn.access - INFO - 2605:8d80:680:681d:c403:a748:2c11:e50:0 - "GET /static/js/app.js?v=37&t=20250911-consistent-numbering HTTP/1.1" 200
+2025-09-11 09:52:13,736 - uvicorn.access - INFO - 2605:8d80:680:681d:c403:a748:2c11:e50:0 - "POST /api/v1/debug/clear-cache HTTP/1.1" 200
+2025-09-11 09:52:13,740 - uvicorn.access - INFO - 2605:8d80:680:681d:c403:a748:2c11:e50:0 - "GET /health HTTP/1.1" 200
+2025-09-11 09:52:13,934 - __main__ - INFO - {"event": "\ud83d\udd04 Debug: Clearing application state", "level": "info", "logger": "__main__"}
+2025-09-11 09:52:13,935 - uvicorn.access - INFO - 2605:8d80:680:681d:c403:a748:2c11:e50:0 - "POST /api/v1/debug/restart-state HTTP/1.1" 200
+2025-09-11 09:52:13,951 - uvicorn.error - INFO - 2605:8d80:680:681d:c403:a748:2c11:e50:0 - "WebSocket /api/v1/chat/ws" [accepted]
+2025-09-11 09:52:13,953 - uvicorn.error - INFO - connection open
+2025-09-11 09:52:23,702 - __main__ - INFO - {"filename": "2025 Edition - Valuation Manual.pdf", "content_type": "application/pdf", "metadata": "{\"title\":\"2025 Edition - Valuation Manual\",\"source_type\":\"COMPANY\",\"effective_date\":\"2025-09-11\",\"document_type\":\"uploaded_document\",\"uploaded_by\":\"web_interface\"}", "event": "Upload request received", "level": "info", "logger": "__main__"}
+2025-09-11 09:52:23,710 - src.document_processor - INFO - {"job_id": "875ac8f5-6991-4590-853e-fa68793fa90a", "filename": "2025 Edition - Valuation Manual.pdf", "user_id": "demo-user", "event": "Document upload queued", "level": "info", "logger": "src.document_processor"}
+2025-09-11 09:52:23,711 - src.audit_logger - INFO - {"audit_event_id": "3f1fc9e3-5bd7-442b-91d6-11dee5ee2785", "event_type": "document_uploaded", "user_id": "demo-user", "data": {"filename": "2025 Edition - Valuation Manual.pdf", "job_id": "875ac8f5-6991-4590-853e-fa68793fa90a"}, "ip_address": null, "risk_level": "low", "event": "Audit event", "level": "info", "logger": "src.audit_logger"}
+2025-09-11 09:52:23,712 - src.enhanced_document_processor - INFO - {"event": "Enhanced PDF extraction starting for: data/uploads/875ac8f5-6991-4590-853e-fa68793fa90a.pdf", "level": "info", "logger": "src.enhanced_document_processor"}
+2025-09-11 09:52:23,712 - src.shape_aware_processor - INFO - {"event": "Processing document with shape-aware extraction: data/uploads/875ac8f5-6991-4590-853e-fa68793fa90a.pdf", "level": "info", "logger": "src.shape_aware_processor"}
+2025-09-11 09:52:23,717 - src.shape_aware_processor - WARNING - {"event": "Spatial extraction failed: No module named 'advanced_org_parser'", "level": "warning", "logger": "src.shape_aware_processor"}
+2025-09-11 09:52:23,717 - src.shape_aware_processor - INFO - {"event": "Attempting intelligent extraction", "level": "info", "logger": "src.shape_aware_processor"}
+2025-09-11 09:52:23,717 - src.intelligent_extractor - INFO - {"event": "Detected document type: DocumentType.GENERAL", "level": "info", "logger": "src.intelligent_extractor"}
+2025-09-11 09:52:25,967 - httpx - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-09-11 09:52:25,971 - src.intelligent_extractor - ERROR - {"event": "Error in general extraction: Expecting value: line 1 column 1 (char 0)", "level": "error", "logger": "src.intelligent_extractor"}
+2025-09-11 09:52:25,972 - src.shape_aware_processor - WARNING - {"event": "Intelligent extraction failed: 'ExtractionResult' object has no attribute 'confidence'", "level": "warning", "logger": "src.shape_aware_processor"}
+2025-09-11 09:52:25,972 - src.shape_aware_processor - WARNING - {"event": "All extraction methods failed, using basic text extraction", "level": "warning", "logger": "src.shape_aware_processor"}
+2025-09-11 09:52:25,972 - src.enhanced_document_processor - INFO - {"event": "Shape-aware extraction did not produce organizational data, falling back", "level": "info", "logger": "src.enhanced_document_processor"}
+2025-09-11 09:52:25,972 - src.enhanced_document_processor - INFO - {"event": "Using standard PDF extraction as fallback", "level": "info", "logger": "src.enhanced_document_processor"}
+2025-09-11 09:52:25,972 - src.document_processor - INFO - {"event": "\ud83d\udd0d Using shape-aware extraction for PDF: 875ac8f5-6991-4590-853e-fa68793fa90a.pdf", "level": "info", "logger": "src.document_processor"}
+2025-09-11 09:52:25,972 - src.shape_aware_processor - INFO - {"event": "Processing document with shape-aware extraction: data/uploads/875ac8f5-6991-4590-853e-fa68793fa90a.pdf", "level": "info", "logger": "src.shape_aware_processor"}
+2025-09-11 09:52:25,974 - src.shape_aware_processor - WARNING - {"event": "Spatial extraction failed: No module named 'advanced_org_parser'", "level": "warning", "logger": "src.shape_aware_processor"}
+2025-09-11 09:52:25,974 - src.shape_aware_processor - INFO - {"event": "Attempting intelligent extraction", "level": "info", "logger": "src.shape_aware_processor"}
+2025-09-11 09:52:25,974 - src.intelligent_extractor - INFO - {"event": "Detected document type: DocumentType.GENERAL", "level": "info", "logger": "src.intelligent_extractor"}
+2025-09-11 09:52:29,498 - httpx - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-09-11 09:52:29,503 - src.intelligent_extractor - ERROR - {"event": "Error in general extraction: Expecting value: line 1 column 1 (char 0)", "level": "error", "logger": "src.intelligent_extractor"}
+2025-09-11 09:52:29,504 - src.shape_aware_processor - WARNING - {"event": "Intelligent extraction failed: 'ExtractionResult' object has no attribute 'confidence'", "level": "warning", "logger": "src.shape_aware_processor"}
+2025-09-11 09:52:29,504 - src.shape_aware_processor - WARNING - {"event": "All extraction methods failed, using basic text extraction", "level": "warning", "logger": "src.shape_aware_processor"}
+2025-09-11 09:52:29,504 - src.document_processor - WARNING - {"event": "\u26a0\ufe0f Shape-aware extraction failed: 'ProcessingResult' object has no attribute 'structured_content' - falling back to basic extraction", "level": "warning", "logger": "src.document_processor"}
+2025-09-11 09:52:29,504 - src.document_processor - INFO - {"event": "\ud83d\udcc4 Using basic PDF extraction for: 875ac8f5-6991-4590-853e-fa68793fa90a.pdf", "level": "info", "logger": "src.document_processor"}
+2025-09-11 09:52:35,576 - httpx - INFO - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2025-09-11 09:52:37,671 - httpx - INFO - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2025-09-11 09:52:39,634 - httpx - INFO - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2025-09-11 09:52:41,639 - httpx - INFO - HTTP Request: PUT https://ce8b5f05-c0a2-47b1-a761-c2f9e6f73817.europe-west3-0.gcp.cloud.qdrant.io:6333/collections/aaire-documents/points?wait=true "HTTP/1.1 200 OK"
+2025-09-11 09:52:43,759 - httpx - INFO - HTTP Request: PUT https://ce8b5f05-c0a2-47b1-a761-c2f9e6f73817.europe-west3-0.gcp.cloud.qdrant.io:6333/collections/aaire-documents/points?wait=true "HTTP/1.1 200 OK"
+2025-09-11 09:52:45,699 - httpx - INFO - HTTP Request: PUT https://ce8b5f05-c0a2-47b1-a761-c2f9e6f73817.europe-west3-0.gcp.cloud.qdrant.io:6333/collections/aaire-documents/points?wait=true "HTTP/1.1 200 OK"
+2025-09-11 09:52:47,830 - httpx - INFO - HTTP Request: PUT https://ce8b5f05-c0a2-47b1-a761-c2f9e6f73817.europe-west3-0.gcp.cloud.qdrant.io:6333/collections/aaire-documents/points?wait=true "HTTP/1.1 200 OK"
+2025-09-11 09:52:48,467 - httpx - INFO - HTTP Request: PUT https://ce8b5f05-c0a2-47b1-a761-c2f9e6f73817.europe-west3-0.gcp.cloud.qdrant.io:6333/collections/aaire-documents/points?wait=true "HTTP/1.1 200 OK"
+2025-09-11 09:52:48,621 - src.rag_pipeline - INFO - {"event": "\u2705 BM25 index updated with 847 documents", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:52:48,624 - src.rag_pipeline - INFO - {"doc_type": "company", "total_nodes": 282, "bm25_documents": 847, "event": "Added 1 documents to index", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:53:18,650 - httpx - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-09-11 09:53:18,781 - src.document_processor - INFO - {"job_id": "875ac8f5-6991-4590-853e-fa68793fa90a", "confidence": 0.85, "event": "Document summary generated", "level": "info", "logger": "src.document_processor"}
+2025-09-11 09:53:18,782 - src.document_processor - INFO - {"job_id": "875ac8f5-6991-4590-853e-fa68793fa90a", "chunks_created": 282, "event": "Document processing completed", "level": "info", "logger": "src.document_processor"}
+2025-09-11 09:53:18,783 - uvicorn.access - INFO - 2605:8d80:680:681d:c403:a748:2c11:e50:0 - "POST /api/v1/upload HTTP/1.1" 200
+2025-09-11 09:53:18,783 - uvicorn.access - INFO - 2605:8d80:680:681d:c403:a748:2c11:e50:0 - "GET /health HTTP/1.1" 200
+2025-09-11 09:53:18,968 - uvicorn.access - INFO - 2605:8d80:680:681d:c403:a748:2c11:e50:0 - "GET /api/v1/documents/875ac8f5-6991-4590-853e-fa68793fa90a/status HTTP/1.1" 200
+2025-09-11 09:53:49,005 - uvicorn.access - INFO - 2605:8d80:680:681d:c403:a748:2c11:e50:0 - "GET /health HTTP/1.1" 200
+2025-09-11 09:53:53,716 - __main__ - INFO - {"event": "WebSocket using RAG pipeline for query: how do I calculate the reserves for a universal life policy in usstat", "level": "info", "logger": "__main__"}
+2025-09-11 09:53:53,716 - __main__ - INFO - {"user": "Bill Johnson", "role": "Senior Accountant", "query": "how do I calculate the reserves for a universal li...", "event": "WebSocket query from Accounting department", "level": "info", "logger": "__main__"}
+2025-09-11 09:53:53,716 - src.rag_pipeline - INFO - {"query": "how do I calculate the reserves for a universal life policy in usstat", "session_id": "session_1757598833601_3b5jsriwe", "event": "Enhanced query processing started", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:53:53,717 - src.enhanced_query_handler - INFO - {"event": "Query analysis: 'how do I calculate the reserves for a universal life policy in usstat' -> extraction_needed=False, type=standard, confidence=0.0", "level": "info", "logger": "src.enhanced_query_handler"}
+2025-09-11 09:53:53,717 - src.enhanced_query_handler - INFO - {"extraction_type": "standard", "confidence": 0.0, "event": "Query routing decision: standard_rag", "level": "info", "logger": "src.enhanced_query_handler"}
+2025-09-11 09:53:53,717 - src.rag_pipeline - INFO - {"method": "standard_rag", "extraction_type": "standard", "confidence": 0.0, "event": "Query routing decision made", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:53:53,717 - src.rag_pipeline - INFO - {"event": "Using standard RAG processing", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:53:54,154 - httpx - INFO - HTTP Request: GET https://ce8b5f05-c0a2-47b1-a761-c2f9e6f73817.europe-west3-0.gcp.cloud.qdrant.io:6333/collections/aaire-documents "HTTP/1.1 200 OK"
+2025-09-11 09:53:54,158 - src.rag_pipeline - INFO - {"event": "\ud83d\udd0d Classifying query topic: 'how do I calculate the reserves for a universal li...'", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:53:54,158 - src.rag_pipeline - INFO - {"event": "\ud83d\udccb Starting topic classification for: 'how do I calculate the reserve...'", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:53:54,159 - src.rag_pipeline - INFO - {"event": "\ud83c\udfaf Topic classification result: {'is_relevant': True, 'confidence': 0.9}", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:53:54,159 - src.rag_pipeline - INFO - {"query": "how do I calculate the reserves for a universal li...", "threshold": 0.7, "reason": "neutral query", "event": "Adaptive threshold selected", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:53:54,159 - src.rag_pipeline - INFO - {"event": "Dynamic document limit: 50 (base: 20, +30 from query analysis)", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:53:54,860 - httpx - INFO - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2025-09-11 09:53:55,178 - httpx - INFO - HTTP Request: POST https://ce8b5f05-c0a2-47b1-a761-c2f9e6f73817.europe-west3-0.gcp.cloud.qdrant.io:6333/collections/aaire-documents/points/search "HTTP/1.1 200 OK"
+2025-09-11 09:53:55,457 - src.rag_pipeline - INFO - {"event": "BM25 keyword search found 50 results", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:53:55,458 - src.rag_pipeline - INFO - {"event": "Buffer approach: Retrieved 50 vector + 50 keyword results, target limit: 50", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:53:56,886 - httpx - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-09-11 09:53:56,890 - src.relevance_engine - INFO - {"event": "\ud83e\udd16 AI-classified domain: 'insurance' for query: 'how do I calculate the reserves for a universal li...'", "level": "info", "logger": "src.relevance_engine"}
+2025-09-11 09:53:56,890 - src.relevance_engine - INFO - {"query_type": "procedural", "entities": [], "domain": "insurance", "specificity": 0.25, "event": "Query analysis completed", "level": "info", "logger": "src.relevance_engine"}
+2025-09-11 09:53:56,899 - src.relevance_engine - INFO - {"top_3": [["2025 Edition - Valuation Manual.pdf", 14.86464205595561], ["2025 Edition - Valuation Manual.pdf", 14.86464205595561], ["2025 Edition - Valuation Manual.pdf", 14.86464205595561]], "event": "Top ranked documents:", "level": "info", "logger": "src.relevance_engine"}
+2025-09-11 09:53:56,899 - src.rag_pipeline - INFO - {"event": "Trimming combined results from 97 to 50", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:53:56,899 - src.rag_pipeline - INFO - {"event": "Found 50 relevant documents for query: 'how do I calculate the reserves for a universal li...'", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:53:56,899 - src.rag_pipeline - INFO - {"event": "Top document sources with scores: [('2025 Edition - Valuation Manual.pdf', 14.86464205595561), ('2025 Edition - Valuation Manual.pdf', 14.86464205595561), ('2025 Edition - Valuation Manual.pdf', 14.86464205595561), ('2025 Edition - Valuation Manual.pdf', 14.260323074600008), ('2025 Edition - Valuation Manual.pdf', 14.260323074600008)]", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:53:56,899 - src.rag_pipeline - INFO - {"event": "\ud83d\udd0d DIVERSE SELECTION DEBUG: Input=50, Output=50 (returning all)", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:53:56,899 - src.rag_pipeline - INFO - {"event": "\ud83d\udcda Processing 50 diverse documents (out of 50 total)", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:53:59,815 - httpx - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-09-11 09:53:59,818 - src.rag_pipeline - INFO - {"event": "\ud83d\udcca SEMANTIC GROUPING RESULT:\nGroup 1: Doc 1, Doc 2, Doc 3 (theme: [Death claims processing and reporting guidelines])  \nGroup 2: Doc 4, Doc 5, Doc 6 (theme: [Lapse rate calculations and actuarial guidance])  \nGroup 3: Doc 7, Doc 8, Doc 9 (theme: [Subgroup determination for risk management])  \nGroup 4: Doc 10, Doc 11, Doc 12 (theme: [Net premium reserve calculations for insurance policies])  \nGroup 5: Doc 13, Doc 14, Doc 15 (theme: [Definitions and conditions of secondary guarantees in insurance policies])", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:53:59,818 - src.rag_pipeline - INFO - {"event": "\ud83d\udcda Created 5 semantic document groups:", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:53:59,818 - src.rag_pipeline - INFO - {"event": "  Group 1: 10 documents", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:53:59,819 - src.rag_pipeline - INFO - {"event": "  Group 2: 10 documents", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:53:59,819 - src.rag_pipeline - INFO - {"event": "  Group 3: 10 documents", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:53:59,819 - src.rag_pipeline - INFO - {"event": "  Group 4: 10 documents", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:53:59,819 - src.rag_pipeline - INFO - {"event": "  Group 5: 10 documents", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:54:19,326 - httpx - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-09-11 09:54:19,361 - src.rag_pipeline - INFO - {"event": "Processed group 1/5", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:54:39,570 - httpx - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-09-11 09:54:39,573 - src.rag_pipeline - INFO - {"event": "Processed group 2/5", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:55:06,134 - httpx - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-09-11 09:55:06,137 - src.rag_pipeline - INFO - {"event": "Processed group 3/5", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:55:26,436 - httpx - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-09-11 09:55:26,439 - src.rag_pipeline - INFO - {"event": "Processed group 4/5", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:55:44,448 - httpx - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-09-11 09:55:44,450 - src.rag_pipeline - INFO - {"event": "Processed group 5/5", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:56:23,656 - httpx - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-09-11 09:56:33,299 - httpx - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-09-11 09:56:33,302 - src.rag_pipeline - INFO - {"event": "\ud83d\udd0d COMPLETENESS CHECK RESULT: 1. **Pending Death Claims**: The response does not mention the treatment of pending death claims at the end of the observation period, which should be included in the reserve calculations as per the s...", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:56:33,302 - src.rag_pipeline - INFO - {"event": "\ud83d\udd0d DEBUG: missing_content length: 2187", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:56:33,302 - src.rag_pipeline - INFO - {"event": "\ud83d\udd0d DEBUG: missing_content truthy: True", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:56:33,302 - src.rag_pipeline - INFO - {"event": "\ud83d\udd0d DEBUG: 'COMPLETE' in upper: False", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:56:33,302 - src.rag_pipeline - INFO - {"event": "\u2705 Missing content identified, enhancing response", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,892 - httpx - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-09-11 09:57:10,894 - src.rag_pipeline - INFO - {"event": "\u2705 Added missing content via completeness check", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,895 - src.rag_pipeline - INFO - {"event": "\ud83c\udfaf CITATION EXTRACTION: Processing 50 documents", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,895 - src.rag_pipeline - INFO - {"event": "\ud83d\udccb All retrieved documents:", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,895 - src.rag_pipeline - INFO - {"event": "  Doc 1: 2025 Edition - Valuation Manual.pdf - relevance: 14.865", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,895 - src.rag_pipeline - INFO - {"event": "  Doc 2: 2025 Edition - Valuation Manual.pdf - relevance: 14.865", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,895 - src.rag_pipeline - INFO - {"event": "  Doc 3: 2025 Edition - Valuation Manual.pdf - relevance: 14.865", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,895 - src.rag_pipeline - INFO - {"event": "  Doc 4: 2025 Edition - Valuation Manual.pdf - relevance: 14.260", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,895 - src.rag_pipeline - INFO - {"event": "  Doc 5: 2025 Edition - Valuation Manual.pdf - relevance: 14.260", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,895 - src.rag_pipeline - INFO - {"event": "  Doc 6: 2025 Edition - Valuation Manual.pdf - relevance: 14.260", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,895 - src.rag_pipeline - INFO - {"event": "  Doc 7: 2025 Edition - Valuation Manual.pdf - relevance: 12.691", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,896 - src.rag_pipeline - INFO - {"event": "  Doc 8: 2025 Edition - Valuation Manual.pdf - relevance: 12.691", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,896 - src.rag_pipeline - INFO - {"event": "  Doc 9: 2025 Edition - Valuation Manual.pdf - relevance: 12.691", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,896 - src.rag_pipeline - INFO - {"event": "  Doc 10: 2025 Edition - Valuation Manual.pdf - relevance: 12.593", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,896 - src.rag_pipeline - INFO - {"event": "  Doc 11: 2025 Edition - Valuation Manual.pdf - relevance: 12.593", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,896 - src.rag_pipeline - INFO - {"event": "  Doc 12: 2025 Edition - Valuation Manual.pdf - relevance: 12.593", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,896 - src.rag_pipeline - INFO - {"event": "  Doc 13: 2025 Edition - Valuation Manual.pdf - relevance: 12.592", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,896 - src.rag_pipeline - INFO - {"event": "  Doc 14: 2025 Edition - Valuation Manual.pdf - relevance: 12.592", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,896 - src.rag_pipeline - INFO - {"event": "  Doc 15: 2025 Edition - Valuation Manual.pdf - relevance: 12.592", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,896 - src.rag_pipeline - INFO - {"event": "  Doc 16: 2025 Edition - Valuation Manual.pdf - relevance: 12.538", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,896 - src.rag_pipeline - INFO - {"event": "  Doc 17: 2025 Edition - Valuation Manual.pdf - relevance: 12.538", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,896 - src.rag_pipeline - INFO - {"event": "  Doc 18: 2025 Edition - Valuation Manual.pdf - relevance: 12.370", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,896 - src.rag_pipeline - INFO - {"event": "  Doc 19: 2025 Edition - Valuation Manual.pdf - relevance: 12.370", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,896 - src.rag_pipeline - INFO - {"event": "  Doc 20: 2025 Edition - Valuation Manual.pdf - relevance: 12.370", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,896 - src.rag_pipeline - INFO - {"event": "  Doc 21: 2025 Edition - Valuation Manual.pdf - relevance: 12.363", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,897 - src.rag_pipeline - INFO - {"event": "  Doc 22: 2025 Edition - Valuation Manual.pdf - relevance: 12.363", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,897 - src.rag_pipeline - INFO - {"event": "  Doc 23: 2025 Edition - Valuation Manual.pdf - relevance: 12.363", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,897 - src.rag_pipeline - INFO - {"event": "  Doc 24: 2025 Edition - Valuation Manual.pdf - relevance: 12.356", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,897 - src.rag_pipeline - INFO - {"event": "  Doc 25: 2025 Edition - Valuation Manual.pdf - relevance: 12.356", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,897 - src.rag_pipeline - INFO - {"event": "  Doc 26: 2025 Edition - Valuation Manual.pdf - relevance: 12.356", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,897 - src.rag_pipeline - INFO - {"event": "  Doc 27: 2025 Edition - Valuation Manual.pdf - relevance: 12.276", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,897 - src.rag_pipeline - INFO - {"event": "  Doc 28: 2025 Edition - Valuation Manual.pdf - relevance: 12.276", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,897 - src.rag_pipeline - INFO - {"event": "  Doc 29: 2025 Edition - Valuation Manual.pdf - relevance: 12.276", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,897 - src.rag_pipeline - INFO - {"event": "  Doc 30: 2025 Edition - Valuation Manual.pdf - relevance: 12.151", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,897 - src.rag_pipeline - INFO - {"event": "  Doc 31: 2025 Edition - Valuation Manual.pdf - relevance: 12.151", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,897 - src.rag_pipeline - INFO - {"event": "  Doc 32: 2025 Edition - Valuation Manual.pdf - relevance: 11.988", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,897 - src.rag_pipeline - INFO - {"event": "  Doc 33: 2025 Edition - Valuation Manual.pdf - relevance: 11.988", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,897 - src.rag_pipeline - INFO - {"event": "  Doc 34: 2025 Edition - Valuation Manual.pdf - relevance: 11.988", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,897 - src.rag_pipeline - INFO - {"event": "  Doc 35: 2025 Edition - Valuation Manual.pdf - relevance: 11.889", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,897 - src.rag_pipeline - INFO - {"event": "  Doc 36: 2025 Edition - Valuation Manual.pdf - relevance: 11.889", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,898 - src.rag_pipeline - INFO - {"event": "  Doc 37: 2025 Edition - Valuation Manual.pdf - relevance: 11.889", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,898 - src.rag_pipeline - INFO - {"event": "  Doc 38: 2025 Edition - Valuation Manual.pdf - relevance: 11.865", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,898 - src.rag_pipeline - INFO - {"event": "  Doc 39: 2025 Edition - Valuation Manual.pdf - relevance: 11.865", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,898 - src.rag_pipeline - INFO - {"event": "  Doc 40: 2025 Edition - Valuation Manual.pdf - relevance: 11.865", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,898 - src.rag_pipeline - INFO - {"event": "  Doc 41: 2025 Edition - Valuation Manual.pdf - relevance: 11.848", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,898 - src.rag_pipeline - INFO - {"event": "  Doc 42: 2025 Edition - Valuation Manual.pdf - relevance: 11.848", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,898 - src.rag_pipeline - INFO - {"event": "  Doc 43: 2025 Edition - Valuation Manual.pdf - relevance: 11.848", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,898 - src.rag_pipeline - INFO - {"event": "  Doc 44: 2025 Edition - Valuation Manual.pdf - relevance: 11.814", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,898 - src.rag_pipeline - INFO - {"event": "  Doc 45: 2025 Edition - Valuation Manual.pdf - relevance: 11.814", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,898 - src.rag_pipeline - INFO - {"event": "  Doc 46: 2025 Edition - Valuation Manual.pdf - relevance: 11.814", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,898 - src.rag_pipeline - INFO - {"event": "  Doc 47: 2025 Edition - Valuation Manual.pdf - relevance: 11.724", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,898 - src.rag_pipeline - INFO - {"event": "  Doc 48: 2025 Edition - Valuation Manual.pdf - relevance: 11.724", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,898 - src.rag_pipeline - INFO - {"event": "  Doc 49: 2025 Edition - Valuation Manual.pdf - relevance: 11.724", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,898 - src.rag_pipeline - INFO - {"event": "  Doc 50: 2025 Edition - Valuation Manual.pdf - relevance: 11.722", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,899 - src.rag_pipeline - INFO - {"event": "\ud83d\udcc4 Processing citation 1: 2025 Edition - Valuation Manual.pdf, relevance_score=14.865", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,901 - src.rag_pipeline - INFO - {"event": "\u2705 ADDED citation from: 2025 Edition - Valuation Manual.pdf (relevance: 14.865)", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,902 - src.rag_pipeline - INFO - {"event": "\ud83d\udcc4 Processing citation 2: 2025 Edition - Valuation Manual.pdf, relevance_score=14.865", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,902 - src.rag_pipeline - INFO - {"event": "\u2705 ADDED citation from: 2025 Edition - Valuation Manual.pdf (relevance: 14.865)", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,902 - src.rag_pipeline - INFO - {"event": "\ud83d\udcc4 Processing citation 3: 2025 Edition - Valuation Manual.pdf, relevance_score=14.865", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,902 - src.rag_pipeline - INFO - {"event": "\u2705 ADDED citation from: 2025 Edition - Valuation Manual.pdf (relevance: 14.865)", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,902 - src.rag_pipeline - INFO - {"event": "\ud83c\udfaf FINAL RESULT: Generated 3 citations from 50 retrieved documents", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,902 - src.rag_pipeline - INFO - {"event": "Citation 1: source=2025 Edition - Valuation Manual.pdf, confidence=14.865", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,902 - src.rag_pipeline - INFO - {"event": "Citation 2: source=2025 Edition - Valuation Manual.pdf, confidence=14.865", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,902 - src.rag_pipeline - INFO - {"event": "Citation 3: source=2025 Edition - Valuation Manual.pdf, confidence=14.865", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,902 - src.rag_pipeline - INFO - {"event": "\ud83e\uddee Cleaning formula formatting for better readability", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,905 - src.rag_pipeline - INFO - {"event": "\u2705 Formula formatting cleaned successfully", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:10,906 - src.rag_pipeline - INFO - {"event": "\ud83d\udcca Content analysis extracted: 2 content elements", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:15,139 - httpx - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-09-11 09:57:15,141 - src.rag_pipeline - INFO - {"event": "\ud83c\udfaf AI generated follow-up questions: 1. \"In the context of calculating reserves, how should we account for the death claims that are pending at the end of the observation period, as mentioned in Document 1, particularly regarding their inclusion in the data submission for the subsequent six months?\"\n\n2. \"Can you elaborate on how the treatment of pending claims, as outlined on page 318 of the Valuation Manual, affects the overall reserve calculations for universal life policies, especially in relation to the timing of claims payments?\"\n\n3. \"What specific methodologies or formulas should be applied to ensure compliance with the Valuation Manual's requirements for including pending claims in reserve calculations, as referenced in the excerpts from Document 2?\"", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:15,142 - src.rag_pipeline - INFO - {"event": "\ud83d\udd0d Question validation: 'In the context of calculating reserves, how should we account for the death claims that are pending at the end of the observation period, as mentioned in Document 1, particularly regarding their inclusion in the data submission for the subsequent six months?' -> \u2705", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:15,143 - src.rag_pipeline - INFO - {"event": "\ud83d\udd0d Question validation: 'Can you elaborate on how the treatment of pending claims, as outlined on page 318 of the Valuation Manual, affects the overall reserve calculations for universal life policies, especially in relation to the timing of claims payments?' -> \u2705", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:15,143 - src.rag_pipeline - INFO - {"event": "\ud83d\udd0d Question validation: 'What specific methodologies or formulas should be applied to ensure compliance with the Valuation Manual's requirements for including pending claims in reserve calculations, as referenced in the excerpts from Document 2?' -> \u2705", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:15,144 - src.rag_pipeline - INFO - {"overall_quality": 4.016079912961281, "citation_coverage": 0.06, "keyword_relevance": 0.75, "source_quality": 17.792899564806408, "event": "Response quality metrics calculated", "level": "info", "logger": "src.rag_pipeline"}
+2025-09-11 09:57:15,144 - __main__ - INFO - {"event": "WebSocket RAG response citations: [{'id': 1, 'text': 'Death claims pending at the end of the observation period but paid during the subsequent six months following the observation year are to be included in the data submission. Claims that are still pend...', 'source': '2025 Edition - Valuation Manual.pdf', 'source_type': 'company', 'confidence': 14.865}, {'id': 2, 'text': 'Death claims pending at the end of the observation period but paid during the subsequent six months following the observation year are to be included in the data submission. Claims that are still pend...', 'source': '2025 Edition - Valuation Manual.pdf', 'source_type': 'company', 'confidence': 14.865}, {'id': 3, 'text': 'Death claims pending at the end of the observation period but paid during the subsequent six months following the observation year are to be included in the data submission. Claims that are still pend...', 'source': '2025 Edition - Valuation Manual.pdf', 'source_type': 'company', 'confidence': 14.865}]", "level": "info", "logger": "__main__"}
+2025-09-11 09:57:15,147 - uvicorn.access - INFO - 2605:8d80:680:681d:c403:a748:2c11:e50:0 - "GET /health HTTP/1.1" 200
+2025-09-11 09:57:45,399 - uvicorn.access - INFO - 2605:8d80:680:681d:c403:a748:2c11:e50:0 - "GET /health HTTP/1.1" 200
+2025-09-11 09:58:15,626 - uvicorn.access - INFO - 2605:8d80:680:681d:c403:a748:2c11:e50:0 - "GET /health HTTP/1.1" 200
+2025-09-11 09:58:45,859 - uvicorn.access - INFO - 2605:8d80:680:681d:c403:a748:2c11:e50:0 - "GET /health HTTP/1.1" 200
+2025-09-11 09:59:16,099 - uvicorn.access - INFO - 2605:8d80:680:681d:c403:a748:2c11:e50:0 - "GET /health HTTP/1.1" 200
+2025-09-11 09:59:46,427 - uvicorn.access - INFO - 2605:8d80:680:681d:c403:a748:2c11:e50:0 - "GET /health HTTP/1.1" 200
+2025-09-11 10:03:21,604 - __main__ - INFO - {"event": "WebSocket client disconnected", "level": "info", "logger": "__main__"}
+2025-09-11 10:03:21,605 - uvicorn.error - INFO - connection closed

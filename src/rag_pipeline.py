@@ -625,11 +625,17 @@ class RAGPipeline:
         return doc_types if doc_types else None
     
     async def _retrieve_documents(self, query: str, doc_type_filter: Optional[List[str]], similarity_threshold: Optional[float] = None, filters: Optional[Dict[str, Any]] = None) -> List[Dict]:
-        """Hybrid retrieval: combines vector search with BM25 keyword search"""
+        """Hybrid retrieval: combines vector search with BM25 keyword search using buffer approach"""
         
-        # Get results from both search methods
-        vector_results = await self._vector_search(query, doc_type_filter, similarity_threshold, filters)
-        keyword_results = await self._keyword_search(query, doc_type_filter, filters)
+        # Get the target document limit
+        doc_limit = self._get_document_limit(query)
+        
+        # Use buffer approach: both searches get the full limit to ensure we don't miss important documents
+        # This allows the best documents from either method to compete fairly
+        vector_results = await self._vector_search(query, doc_type_filter, similarity_threshold, filters, buffer_limit=doc_limit)
+        keyword_results = await self._keyword_search(query, doc_type_filter, filters, buffer_limit=doc_limit)
+        
+        logger.info(f"Buffer approach: Retrieved {len(vector_results)} vector + {len(keyword_results)} keyword results, target limit: {doc_limit}")
         
         # Combine results using advanced relevance engine
         all_results = vector_results + keyword_results
@@ -652,24 +658,29 @@ class RAGPipeline:
         combined_results = self.relevance_engine.rank_documents(query, list(unique_results.values()))
         
         # Apply the document limit to the final combined results
-        doc_limit = self._get_document_limit(query)
         if len(combined_results) > doc_limit:
             logger.info(f"Trimming combined results from {len(combined_results)} to {doc_limit}")
             combined_results = combined_results[:doc_limit]
         
         return combined_results
     
-    async def _vector_search(self, query: str, doc_type_filter: Optional[List[str]], similarity_threshold: Optional[float] = None, filters: Optional[Dict[str, Any]] = None) -> List[Dict]:
+    async def _vector_search(self, query: str, doc_type_filter: Optional[List[str]], similarity_threshold: Optional[float] = None, filters: Optional[Dict[str, Any]] = None, buffer_limit: Optional[int] = None) -> List[Dict]:
         """Original vector-based semantic search with filtering support"""
         all_results = []
         
         try:
-            # Get dynamic document limit based on query
-            doc_limit = self._get_document_limit(query)
+            # Use buffer limit if provided (for combined ranking), otherwise use dynamic calculation
+            if buffer_limit is not None:
+                vector_limit = buffer_limit
+            else:
+                # Get dynamic document limit based on query
+                doc_limit = self._get_document_limit(query)
+                # For standalone search, allocate 70% to vector search
+                vector_limit = int(doc_limit * 0.7)
             
             # Create retriever from single index with dynamic limit
             retriever = self.index.as_retriever(
-                similarity_top_k=doc_limit
+                similarity_top_k=vector_limit
             )
             
             # Retrieve documents
@@ -706,10 +717,10 @@ class RAGPipeline:
         
         # Sort by relevance score
         all_results.sort(key=lambda x: x['score'], reverse=True)
-        # Note: doc_limit is already applied in retriever, but trimming here for safety
-        return all_results[:doc_limit] if 'doc_limit' in locals() else all_results
+        # Note: vector_limit is already applied in retriever, but trimming here for safety
+        return all_results[:vector_limit] if 'vector_limit' in locals() else all_results
     
-    async def _keyword_search(self, query: str, doc_type_filter: Optional[List[str]], filters: Optional[Dict[str, Any]] = None) -> List[Dict]:
+    async def _keyword_search(self, query: str, doc_type_filter: Optional[List[str]], filters: Optional[Dict[str, Any]] = None, buffer_limit: Optional[int] = None) -> List[Dict]:
         """BM25-based keyword search"""
         results = []
         
@@ -718,8 +729,14 @@ class RAGPipeline:
                 logger.info("BM25 index not available, skipping keyword search")
                 return results
             
-            # Get dynamic document limit
-            doc_limit = self._get_document_limit(query)
+            # Use buffer limit if provided (for combined ranking), otherwise use dynamic calculation
+            if buffer_limit is not None:
+                keyword_limit = buffer_limit
+            else:
+                # Get dynamic document limit based on query
+                doc_limit = self._get_document_limit(query)
+                # For standalone search, allocate 30% to keyword search
+                keyword_limit = int(doc_limit * 0.3)
             
             # Tokenize query for BM25
             query_tokens = self._tokenize_text(query)
@@ -755,7 +772,7 @@ class RAGPipeline:
             
             # Sort by BM25 score and take top results
             results.sort(key=lambda x: x['score'], reverse=True)
-            results = results[:doc_limit]
+            results = results[:keyword_limit]
             
             logger.info(f"BM25 keyword search found {len(results)} results")
             
@@ -954,7 +971,25 @@ Documents:
 {context}
 
 Provide a comprehensive response using all the information in the documents above.
-Use clear headings and include all formulas, calculations, and requirements found."""
+
+FORMATTING REQUIREMENTS:
+- Use **bold** ONLY for section headings and key terms (NO # symbols)
+- Each numbered item must be on its OWN line with line break after:
+
+1. First item
+
+2. Second item
+
+- Use bullet points (-) with proper spacing:
+
+- First bullet point
+
+- Second bullet point
+
+- Regular text should NOT be bold
+- Add two line breaks between major sections
+- CRITICAL: Always add line breaks between list items
+- Include all formulas, calculations, and requirements found"""
         
         response = self.llm.complete(prompt)
         return response.text.strip()
@@ -975,6 +1010,14 @@ Create a cohesive response that:
 3. Maintains all technical details from each part
 4. Flows naturally as a complete answer
 
+FORMATTING REQUIREMENTS:
+- Use **bold** ONLY for section headings and key terms (NO # symbols)
+- Put each numbered list item on its own line (1. on one line, 2. on next line, etc.)
+- Use proper line breaks between sections for readability
+- Regular text should NOT be bold
+- Add blank lines between major sections
+- Use bullet points (-) with proper spacing
+
 Final merged response:"""
         
         response = self.llm.complete(merge_prompt)
@@ -983,11 +1026,17 @@ Final merged response:"""
     def _completeness_check(self, query: str, response: str, documents: List[Dict]) -> str:
         """Check if response missed important content and add it"""
         try:
-            # Create condensed view of all document content
+            # Optimize: Only check top 20 most relevant documents for completeness
+            # These contain the most important information and reduce processing time
+            top_docs = documents[:20] if len(documents) > 20 else documents
+            
+            # Create condensed view of top document content
             all_content_snippets = []
-            for i, doc in enumerate(documents, 1):
+            for i, doc in enumerate(top_docs, 1):
                 snippet = doc['content'][:500].replace('\n', ' ')
                 all_content_snippets.append(f"Doc {i}: {snippet}...")
+            
+            logger.info(f"Completeness check: Analyzing {len(top_docs)} top documents (out of {len(documents)} total)")
             
             check_prompt = f"""Compare this response against the source documents to identify missing content.
 
@@ -1032,7 +1081,14 @@ Missing Content to Add:
 {missing_content}
 
 Create an enhanced response that includes the original content plus the missing information.
-Organize it clearly with appropriate headings.
+
+FORMATTING REQUIREMENTS:
+- Use **bold** ONLY for section headings and key terms (NO # symbols)
+- Put each numbered list item on its own line (1. on one line, 2. on next line, etc.)
+- Use proper line breaks between sections for readability
+- Regular text should NOT be bold
+- Add blank lines between major sections
+- Use bullet points (-) with proper spacing
 
 Enhanced Response:"""
                     
@@ -1184,7 +1240,7 @@ Assessment:"""
             logger.warning(f"Formula preservation failed: {str(e)}")
             return response
     
-    def _process_with_chunked_enhancement(self, query: str, retrieved_docs: List[Dict], conversation_context: str) -> str:
+    async def _process_with_chunked_enhancement(self, query: str, retrieved_docs: List[Dict], conversation_context: str) -> str:
         """Main processing method that combines all our enhancements"""
         try:
             # Get diverse documents for processing
@@ -1201,7 +1257,7 @@ Assessment:"""
                 response = self._generate_enhanced_single_pass(query, diverse_docs, conversation_context)
             else:
                 # Large document set - semantic chunking
-                response = self._generate_chunked_response(query, diverse_docs, conversation_context)
+                response = await self._generate_chunked_response(query, diverse_docs, conversation_context)
             
             # Apply enhancements
             enhanced_response = self._completeness_check(query, response, diverse_docs)
@@ -1260,7 +1316,10 @@ REQUIRED COVERAGE:
 - Address ALL distinct concepts and methodologies mentioned
 - Preserve ALL technical details and specific requirements
 - Convert complex mathematical notation to readable text format (e.g., 𝐸𝑥+𝑡 = 𝑉𝑁𝑃𝑅⦁𝑎̈𝑥+𝑡:𝑣−𝑡| becomes E(x+t) = VNPR × annuity(x+t):v-t)
-- Use clear headings and logical organization
+- Use **bold** ONLY for section headings and key terms (NO # symbols)  
+- Use proper line breaks for numbered lists: each item on a new line
+- Regular text should NOT be bold
+- Use clear logical organization with proper spacing
 
 FORMULA SIMPLIFICATION:
 - Replace complex Unicode symbols with readable text
@@ -1272,14 +1331,14 @@ Structure your response to systematically cover every major topic found in the s
         response = self.llm.complete(prompt)
         return response.text.strip()
     
-    def _generate_chunked_response(self, query: str, documents: List[Dict], conversation_context: str) -> str:
+    async def _generate_chunked_response(self, query: str, documents: List[Dict], conversation_context: str) -> str:
         """Generate response using semantic chunking for large document sets"""
         # Create semantic groups
         document_groups = self._create_semantic_document_groups(documents)
         response_parts = []
         
-        # Process each group
-        for group_index, doc_group in enumerate(document_groups, 1):
+        # Process all groups in parallel using threading for faster response
+        def process_group(group_index: int, doc_group: List[Dict]) -> str:
             group_context = "\n\n".join([f"[Doc {i+1}]\n{doc['content']}" for i, doc in enumerate(doc_group)])
             
             group_prompt = f"""You are answering: {query}
@@ -1289,11 +1348,37 @@ This is document group {group_index} of {len(document_groups)}. Focus on these d
 {group_context}
 
 Provide detailed response covering all information that relates to the question.
-Use clear headings and include all formulas, calculations, and requirements found."""
+
+FORMATTING REQUIREMENTS:
+- Use **bold** ONLY for section headings and key terms (NO # symbols)
+- Each numbered item must be on its OWN line with line break after:
+
+1. First item
+
+2. Second item
+
+3. Third item
+
+- Add two line breaks between major sections
+- Regular text should NOT be bold
+- Use bullet points (-) with proper spacing:
+
+- First bullet point
+
+- Second bullet point
+
+- Include all formulas, calculations, and requirements found
+- CRITICAL: Always add line breaks between list items"""
             
             group_response = self.llm.complete(group_prompt)
-            response_parts.append(group_response.text.strip())
             logger.info(f"Processed group {group_index}/{len(document_groups)}")
+            return group_response.text.strip()
+        
+        # Process all groups concurrently using ThreadPoolExecutor
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            futures = [executor.submit(process_group, i+1, doc_group) for i, doc_group in enumerate(document_groups)]
+            response_parts = [future.result() for future in concurrent.futures.as_completed(futures)]
         
         # Merge all parts
         return self._merge_response_parts(query, response_parts)
@@ -1362,7 +1447,7 @@ Instructions:
 Response:"""
         else:
             # Use dynamic chunked processing for all non-general queries
-            return self._process_with_chunked_enhancement(query, retrieved_docs, conversation_context)
+            return await self._process_with_chunked_enhancement(query, retrieved_docs, conversation_context)
         
         # General knowledge response
         response = self.llm.complete(prompt)
@@ -2140,42 +2225,61 @@ Answer:"""
         return threshold
     
     def _get_document_limit(self, query: str) -> int:
-        """Dynamically determine document limit based on query characteristics"""
+        """Dynamically determine document limit based on query complexity"""
         
-        # Base limit - start higher than before
-        limit = 30
+        # Get config
+        config = self.config.get('retrieval_config', {})
+        base_limit = config.get('base_document_limit', 25)
+        standard_limit = config.get('standard_document_limit', 35)  
+        complex_limit = config.get('complex_document_limit', 45)
+        max_limit = config.get('max_document_limit', 60)
         
-        # Add based on query length (longer = more complex)
-        word_count = len(query.split())
+        # Analyze query complexity
+        query_lower = query.lower()
+        words = query_lower.split()
+        word_count = len(words)
+        
+        # Initialize complexity score
+        complexity_score = 0
+        
+        # Word count indicator
         if word_count > 15:
-            limit += 15
+            complexity_score += 2  # Very long query
         elif word_count > 10:
-            limit += 10
-        elif word_count > 7:
-            limit += 5
+            complexity_score += 1  # Long query
         
-        # Add for procedural/comprehensive queries
-        comprehensive_indicators = [
-            'how', 'calculate', 'determine', 'process', 'method',
-            'step', 'procedure', 'explain', 'describe', 'detail',
-            'comprehensive', 'all', 'types', 'various', 'different'
-        ]
-        matches = sum(1 for word in comprehensive_indicators if word in query.lower())
-        limit += matches * 5  # Each indicator adds 5 docs
+        # Question complexity indicators  
+        comprehensive_words = ['how', 'why', 'what', 'explain', 'describe', 'discuss']
+        if any(word in words for word in comprehensive_words):
+            complexity_score += 1
         
-        # Add for technical depth (domain-specific terms)
-        technical_indicators = [
-            'reserve', 'statutory', 'gaap', 'ifrs', 'actuarial',
-            'premium', 'policy', 'valuation', 'assumption', 'mortality',
-            'vm-20', 'universal life', 'deterministic', 'stochastic', 'usstat'
-        ]
-        tech_matches = sum(1 for word in technical_indicators if word in query.lower())
-        limit += tech_matches * 3  # Each technical term adds 3 docs
+        # Technical procedure indicators
+        technical_words = ['calculate', 'determine', 'implement', 'process', 'analyze', 'evaluate']
+        if any(word in words for word in technical_words):
+            complexity_score += 1
         
-        # Cap at reasonable maximum
-        final_limit = min(limit, 75)
+        # Multi-part query indicators
+        multi_indicators = ['and', 'also', 'additionally', 'furthermore', 'moreover', 'including']
+        if sum(1 for word in multi_indicators if word in words) >= 2:
+            complexity_score += 1  # Multiple aspects to address
         
-        logger.info(f"Dynamic document limit: {final_limit} (base: 30, +{final_limit-30} from query analysis)")
+        # Regulatory/compliance complexity (generic patterns)
+        import re
+        if len(re.findall(r'\b[A-Z]{2,}\b', query)) > 2:  # Multiple acronyms
+            complexity_score += 1
+        
+        # Choose limit based on complexity score
+        if complexity_score >= 4:
+            final_limit = min(complex_limit, max_limit)  # Complex: 45 docs
+            complexity_name = "Complex"
+        elif complexity_score >= 2:
+            final_limit = min(standard_limit, max_limit)  # Standard: 35 docs  
+            complexity_name = "Standard"
+        else:
+            final_limit = min(base_limit, max_limit)      # Simple: 25 docs
+            complexity_name = "Simple"
+        
+        logger.info(f"Dynamic document limit: {final_limit} ({complexity_name} query, complexity score: {complexity_score})")
         
         return final_limit
     

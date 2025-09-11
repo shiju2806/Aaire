@@ -52,7 +52,13 @@ retrieval_config:
   cache_ttl: 3600
   reranking_enabled: false  # Disabled for MVP
   
-  # Dynamic limits are now calculated in code based on query analysis
+  # Dynamic document limit configuration
+  base_document_limit: 25     # Starting point for simple queries
+  standard_document_limit: 35 # Standard queries (default)
+  complex_document_limit: 45  # Complex multi-part queries
+  max_document_limit: 60      # Maximum to prevent performance issues
+  
+  # Dynamic limits are calculated in code based on query analysis
   # See _get_document_limit() in rag_pipeline.py for implementation
 
 # LLM Configuration
