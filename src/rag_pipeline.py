@@ -3513,22 +3513,55 @@ Reply with just: VALID or NEEDS_FIXING"""
             return True  # Default to assuming it's valid
     
     def _normalize_spacing(self, response: str) -> str:
-        """Minimal spacing normalization - no complex regex"""
+        """Enhanced formatting fixes for common issues"""
+        import re
+        
+        # Step 1: Fix numbered items with missing line breaks
+        # Pattern: text**1.** or NPR)**1.** -> 
+        # Result: text\n\n**1.**
+        response = re.sub(r'([a-zA-Z\)])(\*\*\d+\.\*\*)', r'\1\n\n\2', response)
+        
+        # Step 2: Fix numbered items that run together
+        # Pattern: item**2.** -> item\n\n**2.**
+        response = re.sub(r'([^\n])(\*\*\d+\.\*\*)', r'\1\n\n\2', response)
+        
+        # Step 3: Remove excessive bold formatting from regular text
+        # Keep bold only for headers, numbered items, and section titles
         lines = response.split('\n')
+        processed_lines = []
         
-        # Remove excessive blank lines (more than 2)
-        cleaned = []
-        blank_count = 0
         for line in lines:
-            if line.strip() == '':
-                blank_count += 1
-                if blank_count <= 2:
-                    cleaned.append(line)
+            line_stripped = line.strip()
+            
+            # Keep bold for these patterns:
+            # - **1.**, **2.**, etc. (numbered items)
+            # - **Section Title** (short titles)
+            # - Single bold words/phrases
+            if (re.match(r'\*\*\d+\.\*\*', line_stripped) or  # **1.**
+                re.match(r'\*\*[A-Z][^*]{1,50}\*\*$', line_stripped) or  # **Short Title**
+                re.match(r'^[\w\s]{1,3}\*\*[\w\s]{1,30}\*\*[\w\s]{1,3}$', line_stripped)):  # Short bold phrases
+                processed_lines.append(line)
             else:
-                blank_count = 0
-                cleaned.append(line)
+                # Remove bold from long text paragraphs
+                if '**' in line and len(line.replace('*', '')) > 100:
+                    # This is likely a paragraph that shouldn't be all bold
+                    cleaned_line = re.sub(r'\*\*(.*?)\*\*', r'\1', line)
+                    processed_lines.append(cleaned_line)
+                else:
+                    processed_lines.append(line)
         
-        return '\n'.join(cleaned).strip()
+        response = '\n'.join(processed_lines)
+        
+        # Step 4: Ensure proper spacing around numbered items
+        response = re.sub(r'\n(\*\*\d+\.\*\*)', r'\n\n\1', response)
+        
+        # Step 5: Clean up excessive newlines (more than 2)
+        response = re.sub(r'\n{4,}', '\n\n\n', response)
+        
+        # Step 6: Clean up whitespace
+        response = response.strip()
+        
+        return response
     
     def clear_cache(self):
         """Clear the response cache to force fresh responses"""
