@@ -961,6 +961,374 @@ class RAGPipeline:
             # Fallback to vector results only
             return vector_results[:self.config['retrieval_config']['max_results']]
     
+    
+    def _get_diverse_context_documents(self, documents: List[Dict]) -> List[Dict]:
+        """Select diverse documents for context to ensure comprehensive coverage"""
+        # FIXED: Return all documents for maximum comprehensive coverage
+        # The issue was complex deduplication logic that was too aggressive
+        logger.info(f"🔍 DIVERSE SELECTION DEBUG: Input={len(documents)}, Output={len(documents)} (returning all)")
+        return documents
+    
+    def _create_semantic_document_groups(self, documents: List[Dict]) -> List[List[Dict]]:
+        """Group documents by semantic similarity without hard-coded topics"""
+        try:
+            # Use LLM to analyze document themes and create groups
+            doc_summaries = []
+            for i, doc in enumerate(documents[:15], 1):  # Limit for analysis efficiency
+                content_sample = doc['content'][:300].replace('\n', ' ')
+                doc_summaries.append(f"Doc {i}: {content_sample}...")
+            
+            grouping_prompt = f"""Analyze these document excerpts and identify natural groupings based on their content themes.
+
+Documents:
+{chr(10).join(doc_summaries)}
+
+Create 2-4 logical groups where documents with similar themes are together.
+Output format:
+Group 1: Doc 1, Doc 3, Doc 7 (theme: [describe])
+Group 2: Doc 2, Doc 5, Doc 9 (theme: [describe])
+etc.
+
+Group documents by content similarity:"""
+            
+            response = self.llm.complete(grouping_prompt)
+            grouping_result = response.text.strip()
+            
+            logger.info(f"📊 SEMANTIC GROUPING RESULT:\n{grouping_result}")
+            
+            # Parse the grouping response to create actual groups
+            groups = self._parse_document_groupings(grouping_result, documents[:15])
+            
+            # Add remaining documents to smallest groups
+            if len(documents) > 15:
+                remaining_docs = documents[15:]
+                for doc in remaining_docs:
+                    smallest_group = min(groups, key=len)
+                    smallest_group.append(doc)
+            
+            logger.info(f"📚 Created {len(groups)} semantic document groups:")
+            for i, group in enumerate(groups, 1):
+                logger.info(f"  Group {i}: {len(group)} documents")
+            return groups
+            
+        except Exception as e:
+            logger.warning(f"Failed to create semantic groups, using simple split: {str(e)}")
+            # Fallback: simple split into 3 groups
+            group_size = len(documents) // 3
+            return [
+                documents[:group_size],
+                documents[group_size:2*group_size],
+                documents[2*group_size:]
+            ]
+    
+    def _parse_document_groupings(self, grouping_text: str, documents: List[Dict]) -> List[List[Dict]]:
+        """Parse LLM grouping output into actual document groups"""
+        import re
+        
+        groups = []
+        lines = grouping_text.split('\n')
+        
+        for line in lines:
+            # Look for patterns like "Group 1: Doc 1, Doc 3, Doc 7"
+            match = re.search(r'Group \d+:.*?Doc (\d+(?:, Doc \d+)*)', line)
+            if match:
+                doc_nums_str = match.group(1)
+                doc_nums = [int(num.strip()) for num in re.findall(r'\d+', doc_nums_str)]
+                
+                group_docs = []
+                for doc_num in doc_nums:
+                    if 1 <= doc_num <= len(documents):
+                        group_docs.append(documents[doc_num - 1])
+                
+                if group_docs:
+                    groups.append(group_docs)
+        
+        # Ensure we have at least 2 groups
+        if len(groups) < 2:
+            mid = len(documents) // 2
+            return [documents[:mid], documents[mid:]]
+        
+        return groups
+    
+    def _generate_single_pass_response(self, query: str, documents: List[Dict], conversation_context: str) -> str:
+        """Fallback single-pass response for smaller document sets"""
+        context = "\n\n".join([f"[Doc {i+1}]\n{doc['content']}" for i, doc in enumerate(documents)])
+        
+        prompt = f"""You are AAIRE, an expert in insurance accounting.
+{conversation_context}
+Question: {query}
+
+Documents:
+{context}
+
+Provide a comprehensive response using all the information in the documents above.
+Use clear headings and include all formulas, calculations, and requirements found."""
+        
+        response = self.llm.complete(prompt)
+        return response.text.strip()
+    
+    def _merge_response_parts(self, query: str, response_parts: List[str]) -> str:
+        """Merge multiple response parts into a coherent final response"""
+        if len(response_parts) == 1:
+            return response_parts[0]
+        
+        merge_prompt = f"""Combine these related responses into a single, well-organized answer to: {query}
+
+Response parts to merge:
+{chr(10).join([f"PART {i+1}:\n{part}\n" for i, part in enumerate(response_parts)])}
+
+Create a cohesive response that:
+1. Eliminates any redundancy between parts
+2. Organizes information logically with clear headings
+3. Maintains all technical details from each part
+4. Flows naturally as a complete answer
+
+Final merged response:"""
+        
+        response = self.llm.complete(merge_prompt)
+        return response.text.strip()
+    
+    def _completeness_check(self, query: str, response: str, documents: List[Dict]) -> str:
+        """Check if response missed important content and add it"""
+        try:
+            # Create condensed view of all document content
+            all_content_snippets = []
+            for i, doc in enumerate(documents, 1):
+                snippet = doc['content'][:500].replace('\n', ' ')
+                all_content_snippets.append(f"Doc {i}: {snippet}...")
+            
+            check_prompt = f"""Compare this response against the source documents to identify missing content.
+
+User Question: {query}
+
+Current Response:
+{response[:1500]}...
+
+Source Documents:
+{chr(10).join(all_content_snippets)}
+
+Identify any important concepts, methods, calculations, or considerations mentioned in the documents that are missing from the response.
+Focus on content that would be relevant to answering the user's question.
+
+If significant content is missing, list it. If the response is complete, respond with "COMPLETE".
+
+Missing content:"""
+            
+            missing_check = self.llm.complete(check_prompt)
+            missing_content = missing_check.text.strip()
+            
+            logger.info(f"🔍 COMPLETENESS CHECK RESULT: {missing_content[:200]}...")
+            
+            if missing_content and "COMPLETE" not in missing_content.upper():
+                logger.info("✅ Missing content identified, enhancing response")
+                # Add missing content
+                enhancement_prompt = f"""Enhance this response by adding the missing content identified below.
+
+Original Response:
+{response}
+
+Missing Content to Add:
+{missing_content}
+
+Create an enhanced response that includes the original content plus the missing information.
+Organize it clearly with appropriate headings.
+
+Enhanced Response:"""
+                
+                enhanced = self.llm.complete(enhancement_prompt)
+                logger.info("✅ Added missing content via completeness check")
+                return enhanced.text.strip()
+            else:
+                logger.info("❌ No missing content identified or response marked as COMPLETE")
+            
+            return response
+            
+        except Exception as e:
+            logger.warning(f"Completeness check failed: {str(e)}")
+            return response
+    
+    def _preserve_formulas(self, response: str, documents: List[Dict]) -> str:
+        """Extract and preserve mathematical formulas from documents"""
+        try:
+            # Extract all mathematical content from documents
+            all_content = " ".join([doc['content'] for doc in documents])
+            
+            formula_prompt = f"""Extract ALL mathematical formulas, equations, and calculations from this content.
+
+Content:
+{all_content[:4000]}
+
+Find every formula, equation, calculation method, or mathematical expression.
+Preserve the exact notation including LaTeX markup, variables, subscripts, etc.
+
+Output each formula with a brief description:
+1. [Description]: [Exact formula as written]
+2. [Description]: [Exact formula as written]
+
+If no formulas found, respond with "NO_FORMULAS".
+
+Extracted formulas:"""
+            
+            formula_response = self.llm.complete(formula_prompt)
+            extracted_formulas = formula_response.text.strip()
+            
+            logger.info(f"🧮 FORMULA EXTRACTION RESULT: {extracted_formulas[:300]}...")
+            
+            if extracted_formulas and "NO_FORMULAS" not in extracted_formulas:
+                # Check if formulas are already well-represented in response
+                formula_check_prompt = f"""Are these mathematical formulas adequately represented in the response?
+
+Response:
+{response[:1000]}...
+
+Formulas from documents:
+{extracted_formulas}
+
+If key formulas are missing or oversimplified, respond with "ADD_FORMULAS".
+If formulas are well-represented, respond with "FORMULAS_ADEQUATE".
+
+Assessment:"""
+                
+                formula_check = self.llm.complete(formula_check_prompt)
+                
+                logger.info(f"🧮 FORMULA CHECK RESULT: {formula_check.text.strip()}")
+                
+                if "ADD_FORMULAS" in formula_check.text:
+                    # Add mathematical formulas section
+                    enhanced_response = f"""{response}
+
+## Mathematical Formulas and Calculations
+
+{extracted_formulas}"""
+                    
+                    logger.info("✅ Added mathematical formulas section")
+                    return enhanced_response
+                else:
+                    logger.info("❌ Formulas determined to be adequately represented")
+            else:
+                logger.info("❌ No formulas extracted or NO_FORMULAS returned")
+            
+            return response
+            
+        except Exception as e:
+            logger.warning(f"Formula preservation failed: {str(e)}")
+            return response
+    
+    def _process_with_chunked_enhancement(self, query: str, retrieved_docs: List[Dict], conversation_context: str) -> str:
+        """Main processing method that combines all our enhancements"""
+        try:
+            # Get diverse documents for processing
+            diverse_docs = self._get_diverse_context_documents(retrieved_docs)
+            logger.info(f"📚 Processing {len(diverse_docs)} diverse documents (out of {len(retrieved_docs)} total)")
+            
+            # Check for organizational queries first
+            if self._is_organizational_query(query, diverse_docs):
+                return self._generate_organizational_response(query, diverse_docs, conversation_context)
+            
+            # Use chunked processing for comprehensive coverage
+            if len(diverse_docs) <= 8:
+                # Small document set - enhanced single pass
+                response = self._generate_enhanced_single_pass(query, diverse_docs, conversation_context)
+            else:
+                # Large document set - semantic chunking
+                response = self._generate_chunked_response(query, diverse_docs, conversation_context)
+            
+            # Apply enhancements
+            enhanced_response = self._completeness_check(query, response, diverse_docs)
+            
+            return enhanced_response
+            
+        except Exception as e:
+            logger.error(f"Enhanced processing failed: {str(e)}")
+            # Fallback to simple approach
+            return self._generate_enhanced_single_pass(query, diverse_docs[:5], conversation_context)
+    
+    def _is_organizational_query(self, query: str, documents: List[Dict]) -> bool:
+        """Check if this is an organizational structure query"""
+        org_terms = ['breakdown by job', 'organizational structure', 'job titles', 'hierarchy']
+        has_org_query = any(term in query.lower() for term in org_terms)
+        
+        if has_org_query:
+            # Check if documents contain spatial extraction data
+            sample_content = " ".join([doc['content'][:300] for doc in documents[:3]])
+            return '[SHAPE-AWARE ORGANIZATIONAL EXTRACTION]' in sample_content
+        
+        return False
+    
+    def _generate_organizational_response(self, query: str, documents: List[Dict], conversation_context: str) -> str:
+        """Generate response for organizational structure queries"""
+        context = "\n\n".join([f"[Doc {i+1}]\n{doc['content']}" for i, doc in enumerate(documents)])
+        
+        prompt = f"""You are AAIRE, an expert in insurance accounting and actuarial matters.
+{conversation_context}
+Question: {query}
+
+Organizational data:
+{context}
+
+Provide a clear organizational breakdown based on the spatial extraction data found in the documents.
+Use appropriate headings and structure the information clearly."""
+        
+        response = self.llm.complete(prompt)
+        return response.text.strip()
+    
+    def _generate_enhanced_single_pass(self, query: str, documents: List[Dict], conversation_context: str) -> str:
+        """Enhanced single-pass response for smaller document sets"""
+        context = "\n\n".join([f"[Doc {i+1}]\n{doc['content']}" for i, doc in enumerate(documents)])
+        
+        prompt = f"""You are AAIRE, an expert in insurance accounting.
+{conversation_context}
+Question: {query}
+
+Documents:
+{context}
+
+Create a comprehensive response that addresses ALL aspects covered in the retrieved documents.
+
+REQUIRED COVERAGE:
+- Include ALL relevant regulatory sections, formulas, and calculations
+- Address ALL distinct concepts and methodologies mentioned
+- Preserve ALL technical details and specific requirements
+- Convert complex mathematical notation to readable text format (e.g., 𝐸𝑥+𝑡 = 𝑉𝑁𝑃𝑅⦁𝑎̈𝑥+𝑡:𝑣−𝑡| becomes E(x+t) = VNPR × annuity(x+t):v-t)
+- Use clear headings and logical organization
+
+FORMULA SIMPLIFICATION:
+- Replace complex Unicode symbols with readable text
+- Convert actuarial notation to plain English equivalents
+- Maintain mathematical accuracy while ensuring accessibility
+
+Structure your response to systematically cover every major topic found in the source material."""
+        
+        response = self.llm.complete(prompt)
+        return response.text.strip()
+    
+    def _generate_chunked_response(self, query: str, documents: List[Dict], conversation_context: str) -> str:
+        """Generate response using semantic chunking for large document sets"""
+        # Create semantic groups
+        document_groups = self._create_semantic_document_groups(documents)
+        response_parts = []
+        
+        # Process each group
+        for group_index, doc_group in enumerate(document_groups, 1):
+            group_context = "\n\n".join([f"[Doc {i+1}]\n{doc['content']}" for i, doc in enumerate(doc_group)])
+            
+            group_prompt = f"""You are answering: {query}
+
+This is document group {group_index} of {len(document_groups)}. Focus on these documents:
+
+{group_context}
+
+Provide detailed response covering all information that relates to the question.
+Use clear headings and include all formulas, calculations, and requirements found."""
+            
+            group_response = self.llm.complete(group_prompt)
+            response_parts.append(group_response.text.strip())
+            logger.info(f"Processed group {group_index}/{len(document_groups)}")
+        
+        # Merge all parts
+        return self._merge_response_parts(query, response_parts)
+    
+    
     async def _generate_response(
         self, 
         query: str, 
@@ -1023,104 +1391,12 @@ Instructions:
 
 Response:"""
         else:
-            # Build context from retrieved documents
-            context_parts = []
-            for i, doc in enumerate(retrieved_docs[:5]):  # Use top 5 docs
-                context_parts.append(f"[{i+1}] {doc['content']}")
-            
-            context = "\n\n".join(context_parts)
-            
-            # Check if this is an organizational structure query
-            is_org_query = any(term in query.lower() for term in [
-                'breakdown by job', 'organizational structure', 'job titles', 
-                'reporting structure', 'hierarchy', 'breakdown by title',
-                'financial reporting & tax', 'org chart', 'structure chart'
-            ])
-            
-            # Check if context contains spatial extraction data
-            has_spatial_data = '[SHAPE-AWARE ORGANIZATIONAL EXTRACTION]' in context
-            
-            if is_org_query and has_spatial_data:
-                # Use specialized organizational structure prompt
-                prompt = f"""You are AAIRE, an expert in insurance accounting and actuarial matters.
-You provide accurate information based on US GAAP, IFRS, and company policies.
-{conversation_context}
-Current User Question: {query}
-
-SPATIAL EXTRACTION DATA FROM ORGANIZATIONAL CHARTS:
-{context}
-
-CRITICAL INSTRUCTIONS FOR ORGANIZATIONAL STRUCTURE RESPONSES:
-
-1. **PARSE SPATIAL EXTRACTION FORMAT:**
-   - Look for "[SHAPE-AWARE ORGANIZATIONAL EXTRACTION]" sections
-   - Each person is formatted as: "** Name - Title" with department info
-   - Group people by their actual departments/levels as shown in the extraction
-
-2. **RESPONSE FORMAT:**
-   Use this exact structure:
-   
-   ## [Department Name]
-   
-   ### [Hierarchy Level] (e.g., VP, AVP, Manager)
-   • **[Full Name]** - [Complete Job Title]
-   
-   ### [Next Hierarchy Level]
-   • **[Full Name]** - [Complete Job Title]
-
-3. **HIERARCHY ORDERING:**
-   - MVP (Most Senior)
-   - VP (Vice President) 
-   - AVP (Assistant Vice President)
-   - Manager
-   - Senior [Role]
-   - [Role] (Analyst, Accountant, etc.)
-   - Intern (Most Junior)
-
-4. **KEY REQUIREMENTS:**
-   - Use ONLY the names and titles from the spatial extraction
-   - Group by actual departments (Financial Reporting & Tax, Financial Planning & Analysis, etc.)
-   - Maintain hierarchy order within each department
-   - Show clear organizational structure, not random lists
-   - Don't make up job titles or invent positions
-
-5. **CITATION FORMAT:**
-   Use source names with page numbers: "Finance Structures.pdf, Page 2"
-
-Provide a clear, well-structured organizational breakdown based on the spatial extraction data.
-
-Response:"""
-            else:
-                # Use standard prompt for non-organizational queries
-                prompt = f"""You are AAIRE, an expert in insurance accounting and actuarial matters.
-You provide accurate information based on US GAAP, IFRS, and company policies.
-{conversation_context}
-Current User Question: {query}
-
-Relevant Information from Company Documents:
-{context}
-
-Instructions:
-- Consider the conversation history to provide contextual and relevant answers
-- Provide a comprehensive answer based ONLY on the relevant information provided above
-- When citing sources, use the exact source names with page numbers (e.g., "LICAT.pdf, Page 2" or "Finance Structures.pdf, Page 5") instead of just [1], [2], etc.
-- If page numbers are not available, use descriptive references like "Section 2 of LICAT.pdf" or "Part 3 of the document"
-- If the provided information is insufficient to fully answer the question, clearly state this
-- You may supplement with general accounting knowledge, but clearly distinguish between document-based and general information
-- Never provide tax or legal advice
-- Focus on accounting and actuarial standards
-- Build upon previous conversation context when appropriate
-
-Response:"""
-
-        try:
-            # Generate response using OpenAI
-            response = self.llm.complete(prompt)
-            return response.text.strip()
-            
-        except Exception as e:
-            logger.error("Failed to generate response", error=str(e))
-            return "I apologize, but I'm unable to generate a response at this time. Please try again."
+            # Use dynamic chunked processing for all non-general queries
+            return self._process_with_chunked_enhancement(query, retrieved_docs, conversation_context)
+        
+        # General knowledge response
+        response = self.llm.complete(prompt)
+        return response.text.strip()
     
     def _determine_question_categories(self, query: str, response: str, retrieved_docs: List[Dict]) -> List[str]:
         """Determine appropriate question categories based on context"""

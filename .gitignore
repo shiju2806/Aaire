@@ -73,4 +73,4 @@ htmlcov/
 .cache
 nosetests.xml
 coverage.xml
-*.log
+*.log.env
