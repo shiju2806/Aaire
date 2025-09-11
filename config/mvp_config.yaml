@@ -47,10 +47,13 @@ chunking_strategies:
 # Retrieval Configuration - MVP-FR-014
 retrieval_config:
   similarity_threshold: 0.65
-  max_results: 20
+  max_results: 20  # Fallback limit (rarely used now with dynamic calculation)
   use_cache: true
   cache_ttl: 3600
   reranking_enabled: false  # Disabled for MVP
+  
+  # Dynamic limits are now calculated in code based on query analysis
+  # See _get_document_limit() in rag_pipeline.py for implementation
 
 # LLM Configuration
 llm_config:

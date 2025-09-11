@@ -655,9 +655,12 @@ class RAGPipeline:
         all_results = []
         
         try:
-            # Create retriever from single index
+            # Get dynamic document limit based on query
+            doc_limit = self._get_document_limit(query)
+            
+            # Create retriever from single index with dynamic limit
             retriever = self.index.as_retriever(
-                similarity_top_k=self.config['retrieval_config']['max_results']
+                similarity_top_k=doc_limit
             )
             
             # Retrieve documents
@@ -694,7 +697,8 @@ class RAGPipeline:
         
         # Sort by relevance score
         all_results.sort(key=lambda x: x['score'], reverse=True)
-        return all_results[:self.config['retrieval_config']['max_results']]
+        # Note: doc_limit is already applied in retriever, but trimming here for safety
+        return all_results[:doc_limit] if 'doc_limit' in locals() else all_results
     
     async def _keyword_search(self, query: str, doc_type_filter: Optional[List[str]], filters: Optional[Dict[str, Any]] = None) -> List[Dict]:
         """BM25-based keyword search"""
@@ -704,6 +708,9 @@ class RAGPipeline:
             if not self.bm25_index or not self.bm25_documents:
                 logger.info("BM25 index not available, skipping keyword search")
                 return results
+            
+            # Get dynamic document limit
+            doc_limit = self._get_document_limit(query)
             
             # Tokenize query for BM25
             query_tokens = self._tokenize_text(query)
@@ -739,7 +746,7 @@ class RAGPipeline:
             
             # Sort by BM25 score and take top results
             results.sort(key=lambda x: x['score'], reverse=True)
-            results = results[:self.config['retrieval_config']['max_results']]
+            results = results[:doc_limit]
             
             logger.info(f"BM25 keyword search found {len(results)} results")
             
@@ -817,7 +824,8 @@ class RAGPipeline:
             final_results.sort(key=lambda x: x['combined_score'], reverse=True)
             
             # Take top results and clean up temporary scoring fields
-            final_results = final_results[:self.config['retrieval_config']['max_results']]
+            doc_limit = self._get_document_limit(query)
+            final_results = final_results[:doc_limit]
             for result in final_results:
                 result['score'] = result['combined_score']  # Set final score
                 # Keep detailed scores for debugging but rename
@@ -832,8 +840,9 @@ class RAGPipeline:
             
         except Exception as e:
             logger.error("Failed to combine search results", error=str(e))
-            # Fallback to vector results only
-            return vector_results[:self.config['retrieval_config']['max_results']]
+            # Fallback to vector results only with dynamic limit
+            doc_limit = self._get_document_limit(query)
+            return vector_results[:doc_limit]
     
     
     def _get_diverse_context_documents(self, documents: List[Dict]) -> List[Dict]:
@@ -2093,6 +2102,46 @@ Answer:"""
                    reason=reason)
         
         return threshold
+    
+    def _get_document_limit(self, query: str) -> int:
+        """Dynamically determine document limit based on query characteristics"""
+        
+        # Base limit - start higher than before
+        limit = 30
+        
+        # Add based on query length (longer = more complex)
+        word_count = len(query.split())
+        if word_count > 15:
+            limit += 15
+        elif word_count > 10:
+            limit += 10
+        elif word_count > 7:
+            limit += 5
+        
+        # Add for procedural/comprehensive queries
+        comprehensive_indicators = [
+            'how', 'calculate', 'determine', 'process', 'method',
+            'step', 'procedure', 'explain', 'describe', 'detail',
+            'comprehensive', 'all', 'types', 'various', 'different'
+        ]
+        matches = sum(1 for word in comprehensive_indicators if word in query.lower())
+        limit += matches * 5  # Each indicator adds 5 docs
+        
+        # Add for technical depth (domain-specific terms)
+        technical_indicators = [
+            'reserve', 'statutory', 'gaap', 'ifrs', 'actuarial',
+            'premium', 'policy', 'valuation', 'assumption', 'mortality',
+            'vm-20', 'universal life', 'deterministic', 'stochastic', 'usstat'
+        ]
+        tech_matches = sum(1 for word in technical_indicators if word in query.lower())
+        limit += tech_matches * 3  # Each technical term adds 3 docs
+        
+        # Cap at reasonable maximum
+        final_limit = min(limit, 75)
+        
+        logger.info(f"Dynamic document limit: {final_limit} (base: 30, +{final_limit-30} from query analysis)")
+        
+        return final_limit
     
     def _is_general_knowledge_query(self, query: str) -> bool:
         """Check if query is asking for general knowledge vs specific document content"""
