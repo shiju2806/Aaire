@@ -1416,7 +1416,7 @@ Provide detailed response covering all information that relates to the question.
         try:
             # Build context from documents for structured generation
             context = "\n\n".join([f"[Doc {i+1}]\n{doc['content'][:800]}..." 
-                                 for i, doc in enumerate(retrieved_docs[:20])])  # Use top docs
+                                 for i, doc in enumerate(documents[:20])])  # Use top docs
             
             logger.info("🔧 Attempting structured JSON response generation")
             structured_response = self._generate_structured_response(query, context)
