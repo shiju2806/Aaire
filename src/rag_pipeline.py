@@ -10,6 +10,7 @@ from datetime import datetime
 import asyncio
 import uuid
 import re
+import json
 import numpy as np
 from collections import defaultdict
 from rank_bm25 import BM25Okapi
@@ -1411,8 +1412,33 @@ Provide detailed response covering all information that relates to the question.
             futures = [executor.submit(process_group, i+1, doc_group) for i, doc_group in enumerate(document_groups)]
             response_parts = [future.result() for future in concurrent.futures.as_completed(futures)]
         
-        # Merge all parts
-        return self._merge_response_parts(query, response_parts)
+        # First try structured JSON approach for better formatting
+        try:
+            # Build context from documents for structured generation
+            context = "\n\n".join([f"[Doc {i+1}]\n{doc['content'][:800]}..." 
+                                 for i, doc in enumerate(retrieved_docs[:20])])  # Use top docs
+            
+            logger.info("🔧 Attempting structured JSON response generation")
+            structured_response = self._generate_structured_response(query, context)
+            
+            # Validate formula formatting
+            if self._validate_formula_formatting(structured_response):
+                logger.info("✅ Structured generation successful with valid formulas")
+                return self._normalize_spacing(structured_response)
+            else:
+                logger.info("⚠️ Structured response has formula issues, applying correction")
+                corrected = self._apply_llm_formatting_fix(structured_response, ["Formula formatting issues"])
+                return self._normalize_spacing(corrected)
+                
+        except Exception as e:
+            logger.warning(f"Structured generation failed: {e}, falling back to standard approach")
+            
+            # Fallback to existing chunked approach
+            # Merge all parts
+            merged_response = self._merge_response_parts(query, response_parts)
+            
+            # Apply basic normalization only (no heavy post-processing since structured failed)
+            return self._normalize_spacing(merged_response)
     
     
     async def _generate_response(
@@ -3299,6 +3325,227 @@ Generate an enhanced response that combines the original information with the ex
         cleaned = cleaned.strip()
         
         return cleaned
+    
+    def _validate_and_fix_formatting(self, response: str) -> str:
+        """Validate formatting and fix common issues using LLM-based correction"""
+        try:
+            # Check for common formatting issues
+            issues = []
+            
+            # Check for missing line breaks before numbered items
+            if '**1.' in response and not '\n\n**1.' in response and not response.startswith('**1.'):
+                issues.append("Missing line breaks before numbered items")
+            
+            # Check for run-on formatting
+            if '1. ' in response and '2. ' in response:
+                # Check if numbered items are on same line
+                lines = response.split('\n')
+                for line in lines:
+                    if '1. ' in line and ('2. ' in line or '3. ' in line):
+                        issues.append("Numbered items running together on same line")
+                        break
+            
+            # Check for "Where:" without line break
+            if 'Where: -' in response or 'Where:-' in response:
+                issues.append("Missing line break after 'Where:'")
+                
+            # Check for bold formatting artifacts
+            if '**includes' in response or '**excludes' in response:
+                issues.append("Bold formatting artifacts in text")
+            
+            # If issues found, apply LLM-based correction
+            if issues:
+                logger.info(f"🔧 Formatting issues detected: {issues}")
+                return self._apply_llm_formatting_fix(response, issues)
+            else:
+                logger.info("✅ Response formatting validated - no major issues found")
+                return response
+                
+        except Exception as e:
+            logger.warning(f"Formatting validation failed: {e}")
+            return response
+    
+    def _apply_llm_formatting_fix(self, response: str, detected_issues: list) -> str:
+        """Apply LLM-based formatting correction for detected issues"""
+        
+        issues_description = ', '.join(detected_issues)
+        
+        correction_prompt = f"""Fix the formatting issues in this insurance/actuarial response.
+
+DETECTED ISSUES: {issues_description}
+
+SPECIFIC FIXES NEEDED:
+1. Put blank line BEFORE each **numbered item** (like **1.** or **2.**)
+2. Separate numbered list items (1. 2. 3.) onto different lines  
+3. Add line break after "Where:" before definitions
+4. Fix bold formatting artifacts like **includes or **excludes
+5. Keep ALL formulas and mathematical content intact
+
+EXAMPLE OF CORRECT FORMAT:
+**Section Title**
+
+Regular paragraph text here.
+
+**1.** First numbered point
+
+**2.** Second numbered point
+
+Formula: NPR = APV(Benefits) - APV(Premiums)
+
+Where:
+- NPR = Net Premium Reserve
+- APV = Actuarial Present Value
+
+Original text to fix:
+{response}
+
+Provide the corrected version:"""
+        
+        try:
+            corrected = self.llm.complete(correction_prompt, temperature=0.1)
+            logger.info("🔧 Applied LLM-based formatting correction")
+            return corrected.text.strip()
+        except Exception as e:
+            logger.warning(f"LLM formatting correction failed: {e}")
+            return response
+    
+    def _generate_structured_response(self, query: str, context: str) -> str:
+        """Generate response with structured JSON output for consistent formatting"""
+        
+        structured_prompt = f"""You are AAIRE, an insurance accounting expert.
+        
+Question: {query}
+
+Context: {context}
+
+Generate a response in this EXACT JSON structure (be precise with formulas):
+{{
+    "summary": "Brief 2-3 sentence overview",
+    "sections": [
+        {{
+            "title": "Section heading",
+            "content": "Detailed explanation",
+            "formulas": [
+                {{
+                    "name": "Reserve Calculation",
+                    "latex": "R_t = PV(benefits_t) - PV(premiums_t)",
+                    "readable": "R(t) = PV(benefits at time t) - PV(premiums at time t)",
+                    "components": {{
+                        "R_t": "Reserve at time t",
+                        "PV": "Present Value function"
+                    }}
+                }}
+            ],
+            "numbered_items": ["Step 1 description", "Step 2 description"]
+        }}
+    ],
+    "key_values": {{
+        "rates": ["90% confidence level", "2.5% discount rate"],
+        "references": ["ASC 944-40-25-25", "IFRS 17.32"]
+    }}
+}}
+
+Ensure ALL mathematical notation is included in both latex and readable formats.
+Only return the JSON - no other text."""
+        
+        try:
+            response = self.llm.complete(structured_prompt, temperature=0.2)
+            structured_data = json.loads(response.text.strip())
+            logger.info("✅ Successfully generated structured JSON response")
+            return self._structured_to_markdown(structured_data)
+        except json.JSONDecodeError as e:
+            logger.warning(f"JSON parsing failed: {e}")
+            # Fallback to existing correction method
+            return self._apply_llm_formatting_fix(response.text, ["JSON structure invalid"])
+        except Exception as e:
+            logger.warning(f"Structured generation failed: {e}")
+            raise
+    
+    def _structured_to_markdown(self, data: Dict) -> str:
+        """Convert structured JSON to formatted markdown with proper formula handling"""
+        
+        output = []
+        
+        # Summary
+        if 'summary' in data:
+            output.append(f"{data['summary']}\n")
+        
+        # Process each section
+        for section in data.get('sections', []):
+            # Section title
+            output.append(f"\n**{section['title']}**\n")
+            
+            # Content
+            if 'content' in section:
+                output.append(f"{section['content']}\n")
+            
+            # Formulas - with special handling
+            if 'formulas' in section:
+                output.append("\n**Key Formulas:**\n")
+                for formula in section['formulas']:
+                    # Use readable format as primary
+                    output.append(f"\n• {formula['name']}:\n")
+                    output.append(f"  {formula['readable']}\n")
+                    
+                    # Add component definitions if present
+                    if 'components' in formula:
+                        output.append("  Where:\n")
+                        for var, desc in formula['components'].items():
+                            output.append(f"  - {var} = {desc}\n")
+            
+            # Numbered items with proper spacing
+            if 'numbered_items' in section:
+                output.append("\n")
+                for i, item in enumerate(section['numbered_items'], 1):
+                    output.append(f"**{i}.** {item}\n\n")
+        
+        # Key values
+        if 'key_values' in data:
+            output.append("\n**Important Values:**\n")
+            for category, values in data['key_values'].items():
+                for value in values:
+                    output.append(f"• {value}\n")
+        
+        return ''.join(output)
+    
+    def _validate_formula_formatting(self, response: str) -> bool:
+        """Check if formulas are properly formatted"""
+        
+        validation_prompt = f"""Check if this text has properly formatted formulas:
+
+{response[:1000]}
+
+Look for:
+1. LaTeX notation that wasn't converted (\\sum, \\times, _{{subscript}})
+2. Unreadable mathematical expressions
+3. Complex subscripts not converted to parentheses
+
+Reply with just: VALID or NEEDS_FIXING"""
+        
+        try:
+            result = self.llm.complete(validation_prompt, temperature=0)
+            return "VALID" in result.text.upper()
+        except Exception as e:
+            logger.warning(f"Formula validation failed: {e}")
+            return True  # Default to assuming it's valid
+    
+    def _normalize_spacing(self, response: str) -> str:
+        """Minimal spacing normalization - no complex regex"""
+        lines = response.split('\n')
+        
+        # Remove excessive blank lines (more than 2)
+        cleaned = []
+        blank_count = 0
+        for line in lines:
+            if line.strip() == '':
+                blank_count += 1
+                if blank_count <= 2:
+                    cleaned.append(line)
+            else:
+                blank_count = 0
+                cleaned.append(line)
+        
+        return '\n'.join(cleaned).strip()
     
     def clear_cache(self):
         """Clear the response cache to force fresh responses"""
