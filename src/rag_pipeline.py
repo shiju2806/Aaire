@@ -1174,8 +1174,9 @@ Enhanced Response:"""
             response = response.replace('\\ge', '≥')
             response = response.replace('\\ne', '≠')
             
-            # Clean up extra spaces and formatting
-            response = re.sub(r'\s+', ' ', response)
+            # Clean up extra spaces and formatting (but preserve line breaks!)
+            # Only collapse multiple spaces on same line, NOT newlines
+            response = re.sub(r'[ \t]+', ' ', response)  # Only collapse spaces/tabs, not newlines
             response = re.sub(r'\*\*\s+', '**', response)
             response = re.sub(r'\s+\*\*', '**', response)
             
@@ -3491,6 +3492,7 @@ Reply with just: VALID or NEEDS_FIXING"""
     def _normalize_spacing(self, response: str) -> str:
         """Enhanced cleanup to fix persistent formatting issues: bold headers, line breaks, formulas"""
         import re
+        
         
         # Step 1: Preserve and protect formulas/mathematical content before cleanup
         formula_patterns = [
