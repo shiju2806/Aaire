@@ -1191,6 +1191,17 @@ Enhanced Response:"""
             response = re.sub(r'\*\*([^*]+)\*\*-', r'**\1**\n\n-', response)  # Add line break before bullets
             response = re.sub(r'([a-z]:)-([A-Z])', r'\1 -\2', response)  # Add space after colons before bullets
             
+            # More comprehensive cleanup for professional formatting
+            response = re.sub(r'\*\*\*', '**', response)  # Ensure no triple asterisks remain
+            response = re.sub(r'(\*\*[^*]+\*\*)([A-Z])', r'\1\n\n\2', response)  # Add breaks after headers
+            response = re.sub(r'(\d+\.\s+[A-Za-z][^:]+:)([A-Z])', r'\1\n\n\2', response)  # Break after numbered items
+            response = re.sub(r'([.])([A-Z][^.]*:)', r'\1\n\n\2', response)  # Break before section headers
+            response = re.sub(r'(\*\*[^*]+\*\*)(\*)', r'\1\n\n\2', response)  # Break between header and asterisk
+            
+            # Clean up multiple newlines but preserve intentional spacing
+            response = re.sub(r'\n{4,}', '\n\n\n', response)  # Max 3 newlines
+            response = re.sub(r'\n\n\*\*', '\n\n**', response)  # Ensure proper header spacing
+            
             logger.info("✅ Formula formatting cleaned successfully")
             return response
             
