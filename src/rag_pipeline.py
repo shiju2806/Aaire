@@ -520,6 +520,7 @@ class RAGPipeline:
                     confidence = 0.1  # Very low confidence when we can't find specific content
             
             # Clean up formatting before finalizing
+            response = self._normalize_spacing(response)
             response = self._clean_formulas(response)
             
             # Generate contextual follow-up questions
@@ -3506,70 +3507,105 @@ Reply with just: VALID or NEEDS_FIXING"""
             return True  # Default to assuming it's valid
     
     def _normalize_spacing(self, response: str) -> str:
-        """Enhanced cleanup to fix persistent formatting issues: bold headers, line breaks, formulas"""
+        """Normalize spacing and list structure without changing header styles or formulas.
+
+        - Preserve math blocks (\[...\], \(...\))
+        - Ensure blank lines before headers, bullets, and numbered lists
+        - Separate run-on numbered items
+        - Collapse excessive blank lines
+        """
         import re
-        
-        
-        # Step 1: Preserve and protect formulas/mathematical content before cleanup
-        formula_patterns = [
-            (r'(\$[\d,]+(?:\.\d+)?)', r'FORMULA_DOLLAR_\1_END'),  # Dollar amounts
-            (r'(\d+%)', r'FORMULA_PERCENT_\1_END'),  # Percentages  
-            (r'(\d+\.?\d*\s*[×*]\s*\d+\.?\d*)', r'FORMULA_MULT_\1_END'),  # Multiplication
-            (r'(NPV|PV|FV|PMT|RATE|NPER)', r'FORMULA_FUNC_\1_END'),  # Financial functions
-            (r'(\w+\s*=\s*[\w\d\s\+\-\*/\(\)\.]+)', r'FORMULA_EQ_\1_END'),  # Equations
-            (r'([A-Z]\([^)]+\))', r'FORMULA_NOTATION_\1_END'),  # Function notation like E(x+t)
-        ]
-        
-        formula_map = {}
-        result = response
-        
-        for i, (pattern, template) in enumerate(formula_patterns):
-            matches = re.findall(pattern, result)
-            for j, match in enumerate(matches):
-                placeholder_key = f'FORMULA_{i}_{j}_PLACEHOLDER'
-                formula_map[placeholder_key] = match
-                result = result.replace(match, placeholder_key, 1)
-        
-        # Step 2: Convert **bold headers** to proper markdown headers
-        # Main section headers (longer titles with key words)
-        result = re.sub(r'\*\*(.*?(?:Calculating|Determine|Calculate|Final|Minimum|Step|Method|Example|Overview|Summary|Introduction|Conclusion)[^*]{5,}?)\*\*', r'# \1', result)
-        
-        # Numbered section headers: **1.** -> ## 1.
-        result = re.sub(r'\*\*(\d+\..*?)\*\*', r'## \1', result)
-        
-        # Subsection headers with key terms
-        result = re.sub(r'\*\*((?:Step|Section|Part|Phase|Component|Element|Factor|Requirement|Condition|Assumption|Variable|Formula|Calculation|Procedure|Process|Method)[^*]*?)\*\*', r'### \1', result)
-        
-        # Step 3: Fix line breaks around numbered sections
-        # Ensure space before numbered sections (1., 2., etc.)
-        result = re.sub(r'([^\n])\n(\d+\.)', r'\1\n\n\2', result)
-        result = re.sub(r'(\d+\.)\s*([A-Z])', r'\1 \2', result)  # Ensure space after number
-        
-        # Fix subsection numbering (4.1, 4.2, etc.)
-        result = re.sub(r'([^\n])\n(\d+\.\d+)', r'\1\n\n\2', result)
-        
-        # Step 4: Clean up whitespace
-        result = re.sub(r'[ \t]+', ' ', result)
-        result = re.sub(r'\n{3,}', '\n\n', result)
-        
-        # Step 5: Ensure proper spacing around headers
-        result = re.sub(r'\n(#{1,6}\s)', r'\n\n\1', result)  # Space before headers
-        result = re.sub(r'(#{1,6}[^\n]+)\n([^\n#])', r'\1\n\n\2', result)  # Space after headers
-        
-        # Step 6: Fix list formatting
-        result = re.sub(r'\n(-\s)', r'\n\n- ', result)  # Space before bullet lists
-        result = re.sub(r'\n(\d+\.)\s*([^\n])', r'\n\n\1 \2', result)  # Space before numbered lists
-        
-        # Step 7: Clean up excessive bold formatting in body text
-        # Remove **bold** from short phrases that shouldn't be emphasized
-        result = re.sub(r'\*\*([^*]{1,20})\*\*(?=\s[a-z])', r'\1', result)  # Short bold followed by lowercase
-        
-        # Step 8: Restore preserved formulas
-        for placeholder_key, original_formula in formula_map.items():
-            result = result.replace(placeholder_key, original_formula)
-        
-        result = result.strip()
-        return result
+
+        text = response
+
+        # Protect math blocks
+        math_block_re = re.compile(r"\\\[(.+?)\\\]", re.DOTALL)
+        math_inline_re = re.compile(r"\\\((.+?)\\\)", re.DOTALL)
+
+        math_blocks = []
+        math_inlines = []
+
+        def _store_block(m):
+            idx = len(math_blocks)
+            math_blocks.append(m.group(0))
+            return f"__MATH_BLOCK_{idx}__"
+
+        def _store_inline(m):
+            idx = len(math_inlines)
+            math_inlines.append(m.group(0))
+            return f"__MATH_INLINE_{idx}__"
+
+        text = math_block_re.sub(_store_block, text)
+        text = math_inline_re.sub(_store_inline, text)
+
+        # Normalize newlines
+        text = text.replace('\r\n', '\n').replace('\r', '\n')
+
+        lines = text.split('\n')
+        output_lines = []
+
+        def prev_nonempty_is_list_or_header(out_lines):
+            for i in range(len(out_lines) - 1, -1, -1):
+                l = out_lines[i].strip()
+                if l == '':
+                    continue
+                if l.startswith('**') or l.startswith('- ') or re.match(r'^\d+\.', l):
+                    return True
+                return False
+            return False
+
+        for line in lines:
+            stripped = line.lstrip()
+            is_header = stripped.startswith('**') and not stripped.startswith('**1.')
+            is_numbered = re.match(r'^\d+\.', stripped) or stripped.startswith('**1.')
+            is_bullet = stripped.startswith('- ')
+
+            if (is_header or is_numbered or is_bullet) and output_lines and output_lines[-1].strip() != '':
+                if not prev_nonempty_is_list_or_header(output_lines):
+                    output_lines.append('')
+
+            # Split run-on numbered items like "... 1. text 2. more"
+            if re.search(r'\d+\.\s+.+\s+\d+\.', stripped):
+                parts = re.split(r'(?=(?:^|\s)(\d+\.\s))', stripped)
+                rebuilt = []
+                buffer = ''
+                for p in parts:
+                    if re.match(r'^\d+\.\s$', p or ''):
+                        if buffer:
+                            rebuilt.append(buffer.strip())
+                            buffer = ''
+                        buffer += p
+                    else:
+                        buffer += p or ''
+                if buffer:
+                    rebuilt.append(buffer.strip())
+                for idx, item in enumerate(rebuilt):
+                    if idx > 0:
+                        output_lines.append('')
+                    output_lines.append(item)
+                continue
+
+            output_lines.append(line)
+
+        text = '\n'.join(output_lines)
+
+        # Ensure blank line after headers (bold lines) if followed by text/list
+        text = re.sub(r'(^|\n)(\*\*[^\n]+\*\*)(\n)([^\n\-#\d])', r'\1\2\n\n\4', text)
+
+        # Ensure blank line before bullets and numbered lists at line start
+        text = re.sub(r'([^\n])\n(-\s)', r'\1\n\n- ', text)
+        text = re.sub(r'([^\n])\n(\d+\.)', r'\1\n\n\2', text)
+
+        # Collapse 3+ newlines into 2
+        text = re.sub(r'\n{3,}', '\n\n', text)
+
+        # Restore math
+        for idx, val in enumerate(math_blocks):
+            text = text.replace(f"__MATH_BLOCK_{idx}__", val)
+        for idx, val in enumerate(math_inlines):
+            text = text.replace(f"__MATH_INLINE_{idx}__", val)
+
+        return text.strip()
     
     def clear_cache(self):
         """Clear the response cache to force fresh responses"""
