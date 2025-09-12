@@ -3513,55 +3513,225 @@ Reply with just: VALID or NEEDS_FIXING"""
             return True  # Default to assuming it's valid
     
     def _normalize_spacing(self, response: str) -> str:
-        """Enhanced formatting fixes for common issues"""
+        """Clean-slate formatting approach: Strip all formatting and rebuild with consistent rules"""
         import re
         
-        # Step 1: Fix numbered items with missing line breaks
-        # Pattern: text**1.** or NPR)**1.** -> 
-        # Result: text\n\n**1.**
-        response = re.sub(r'([a-zA-Z\)])(\*\*\d+\.\*\*)', r'\1\n\n\2', response)
+        # PHASE 0: PRESERVE FORMULAS AND SPECIAL CONTENT
+        # Protect formulas and mathematical expressions
+        formula_placeholders = []
+        formula_counter = 0
         
-        # Step 2: Fix numbered items that run together
-        # Pattern: item**2.** -> item\n\n**2.**
-        response = re.sub(r'([^\n])(\*\*\d+\.\*\*)', r'\1\n\n\2', response)
+        # Pattern to detect formulas (things that look mathematical)
+        # Enhanced to handle complex mathematical notation
+        formula_patterns = [
+            # Basic formulas and equations
+            (r'\b[A-Z]{2,}\s*=\s*[^\n]+', 'formula'),  # NPR = something
+            (r'\b\w+\([^)]+\)', 'function'),  # PV(benefits), max(A, B)
+            
+            # Mathematical operations
+            (r'[^/\s]+\s*/\s*[^/\s]+', 'division'),  # A/B, x/n
+            (r'\b\d+\s*[×x*]\s*\d+', 'multiplication'),  # 2 x annual, 3 * 4
+            (r'[+-]?\d*\.?\d+\s*[+-]\s*\d*\.?\d+', 'arithmetic'),  # 2 + 3, x - y
+            
+            # Subscripts and superscripts (various formats)
+            (r'\w+[₀₁₂₃₄₅₆₇₈₉ₓₜₙ]+', 'subscript'),  # x₁, aₓ
+            (r'\w+[⁰¹²³⁴⁵⁶⁷⁸⁹ⁿ]+', 'superscript'),  # x², R²
+            (r'\w+_\{?[0-9a-z]+\}?', 'tex_subscript'),  # x_1, x_{n+1}
+            (r'\w+\^\{?[0-9a-z]+\}?', 'tex_superscript'),  # x^2, x^{n}
+            
+            # Greek letters and special symbols
+            (r'[αβγδεζηθικλμνξοπρστυφχψωΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡΣΤΥΦΧΨΩ]', 'greek'),
+            (r'[∑∏∫∂∇√∞±≈≠≤≥]', 'math_symbol'),
+            
+            # Actuarial notation
+            (r'[aäeëiïöüAÄEËIÏÖÜ][_₀₁₂₃₄₅₆₇₈₉ₓₜₙ]*', 'actuarial'),  # äₓ
+            (r'[₀₁₂₃₄₅₆₇₈₉ₓₜₙ]*[pqd][₀₁₂₃₄₅₆₇₈₉ₓₜₙ]*', 'probability'),  # ₙpₓ
+            (r'P\([^)]+\)', 'probability_function'),  # P(Aₓ)
+            
+            # Financial notation
+            (r'\d+%\s+of\s+[^\n,]+', 'percentage'),  # 2% of salary
+            (r'\$[\d,]+(?:\.\d{2})?', 'currency'),  # $1,000,000 or $2.50
+            (r'[\d,]+(?:\.\d{2})?\s*(?:USD|CAD|EUR|GBP)', 'currency_code'),  # 1,000 USD
+            
+            # Fractions and ratios
+            (r'\d+/\d+', 'fraction'),  # 3/4, 1/2
+            (r'\w+:\w+', 'ratio'),  # 2:1, x:y
+            
+            # Matrix/vector notation
+            (r'\[[^\]]+\]', 'matrix'),  # [A], [x, y, z]
+            (r'\|\|[^|]+\|\|', 'norm'),  # ||x||
+            
+            # References
+            (r'(?:Section|Part|Equation|Formula)\s+\d+(?:\.\w+)*', 'reference'),  # Section 3.B.5.c
+        ]
         
-        # Step 3: Remove excessive bold formatting from regular text
-        # Keep bold only for headers, numbered items, and section titles
-        lines = response.split('\n')
-        processed_lines = []
+        # Replace formulas with placeholders temporarily
+        protected_text = response
+        for pattern, formula_type in formula_patterns:
+            matches = re.finditer(pattern, protected_text)
+            for match in matches:
+                placeholder = f"__FORMULA_{formula_counter}__"
+                formula_placeholders.append({
+                    'placeholder': placeholder,
+                    'content': match.group(),
+                    'type': formula_type
+                })
+                protected_text = protected_text.replace(match.group(), placeholder, 1)
+                formula_counter += 1
+        
+        # PHASE 1: STRIP ALL FORMATTING
+        # Remove all bold markers completely
+        clean_text = protected_text.replace('**', '').replace('__', '')
+        
+        # Remove excessive spaces but keep single spaces
+        clean_text = re.sub(r'[ \t]+', ' ', clean_text)
+        
+        # PHASE 2: IDENTIFY STRUCTURE
+        lines = clean_text.split('\n')
+        structured_content = []
         
         for line in lines:
-            line_stripped = line.strip()
+            line = line.strip()
+            if not line:
+                continue
             
-            # Keep bold for these patterns:
-            # - **1.**, **2.**, etc. (numbered items)
-            # - **Section Title** (short titles)
-            # - Single bold words/phrases
-            if (re.match(r'\*\*\d+\.\*\*', line_stripped) or  # **1.**
-                re.match(r'\*\*[A-Z][^*]{1,50}\*\*$', line_stripped) or  # **Short Title**
-                re.match(r'^[\w\s]{1,3}\*\*[\w\s]{1,30}\*\*[\w\s]{1,3}$', line_stripped)):  # Short bold phrases
-                processed_lines.append(line)
+            # Detect different content types using generic patterns
+            # Pattern 1: Numbered sections (1., 2., 10., etc.)
+            main_section = re.match(r'^(\d+)\.\s+(.+)', line)
+            # Pattern 2: Sub-sections (1.1, 2.3, etc.)
+            sub_section = re.match(r'^(\d+\.\d+)\.\s+(.+)', line)
+            # Pattern 3: Lettered items (a., b., etc.)
+            letter_item = re.match(r'^([a-z])\.\s+(.+)', line)
+            # Pattern 4: Bullet points
+            bullet_item = line.startswith('-') or line.startswith('•') or line.startswith('*')
+            # Pattern 5: Formula lines (containing placeholders)
+            is_formula_line = '__FORMULA_' in line
+            
+            if sub_section:
+                structured_content.append({
+                    'type': 'subsection',
+                    'number': sub_section.group(1),
+                    'content': sub_section.group(2)
+                })
+            elif main_section:
+                structured_content.append({
+                    'type': 'section',
+                    'number': main_section.group(1),
+                    'content': main_section.group(2)
+                })
+            elif letter_item:
+                structured_content.append({
+                    'type': 'letter_item',
+                    'letter': letter_item.group(1),
+                    'content': letter_item.group(2)
+                })
+            elif bullet_item:
+                # Clean the bullet marker
+                clean_bullet = re.sub(r'^[-•*]\s*', '', line)
+                structured_content.append({
+                    'type': 'bullet',
+                    'content': clean_bullet
+                })
+            elif is_formula_line and '=' in line:
+                # This is likely a standalone formula
+                structured_content.append({
+                    'type': 'formula',
+                    'content': line
+                })
             else:
-                # Remove bold from long text paragraphs
-                if '**' in line and len(line.replace('*', '')) > 100:
-                    # This is likely a paragraph that shouldn't be all bold
-                    cleaned_line = re.sub(r'\*\*(.*?)\*\*', r'\1', line)
-                    processed_lines.append(cleaned_line)
+                # Regular paragraph or continuation
+                structured_content.append({
+                    'type': 'paragraph',
+                    'content': line
+                })
+        
+        # PHASE 3: REBUILD WITH CONSISTENT FORMATTING
+        output_lines = []
+        prev_type = None
+        
+        for i, item in enumerate(structured_content):
+            current_type = item['type']
+            
+            # Add spacing based on context
+            if prev_type and current_type in ['section', 'subsection']:
+                # Always add double line break before sections
+                output_lines.append('')
+                
+            if current_type == 'section':
+                # Main sections: Bold with number
+                output_lines.append(f"**{item['number']}. {item['content']}**")
+                output_lines.append('')  # Add blank line after section header
+                
+            elif current_type == 'subsection':
+                # Sub-sections: Bold with number
+                if prev_type != 'section':  # Don't double-space if right after section
+                    output_lines.append('')
+                output_lines.append(f"**{item['number']}. {item['content']}**")
+                output_lines.append('')  # Add blank line after subsection header
+                
+            elif current_type == 'letter_item':
+                # Letter items: Simple format
+                output_lines.append(f"{item['letter']}. {item['content']}")
+                
+            elif current_type == 'bullet':
+                # Bullets: Use consistent dash
+                output_lines.append(f"- {item['content']}")
+                
+            elif current_type == 'formula':
+                # Formulas: Give them space and emphasis
+                if prev_type != 'formula':
+                    output_lines.append('')  # Space before formula
+                output_lines.append(item['content'])
+                # Add space after formula if next item isn't a formula
+                if i < len(structured_content) - 1 and structured_content[i+1]['type'] != 'formula':
+                    output_lines.append('')
+                    
+            else:  # paragraph
+                # Regular text: No formatting
+                # If previous was a bullet and this looks like continuation, don't add extra space
+                if prev_type == 'bullet' and item['content'] and not item['content'][0].isupper():
+                    output_lines.append(f"  {item['content']}")  # Indent continuation
                 else:
-                    processed_lines.append(line)
+                    output_lines.append(item['content'])
+            
+            prev_type = current_type
         
-        response = '\n'.join(processed_lines)
+        # PHASE 4: RESTORE FORMULAS AND SPECIAL CONTENT
+        result = '\n'.join(output_lines)
         
-        # Step 4: Ensure proper spacing around numbered items
-        response = re.sub(r'\n(\*\*\d+\.\*\*)', r'\n\n\1', response)
+        # Restore the actual formula content with appropriate formatting
+        for formula_info in formula_placeholders:
+            placeholder = formula_info['placeholder']
+            content = formula_info['content']
+            formula_type = formula_info['type']
+            
+            # Apply formatting based on formula type
+            if formula_type == 'formula':
+                # Full formulas get emphasis
+                formatted = f"`{content}`"  # Use code formatting for formulas
+            elif formula_type == 'currency':
+                # Currency stays as-is
+                formatted = content
+            elif formula_type == 'percentage':
+                # Percentages stay as-is
+                formatted = content
+            elif formula_type == 'reference':
+                # Section references stay as-is
+                formatted = content
+            else:
+                # Default: preserve as-is
+                formatted = content
+            
+            result = result.replace(placeholder, formatted)
         
-        # Step 5: Clean up excessive newlines (more than 2)
-        response = re.sub(r'\n{4,}', '\n\n\n', response)
+        # PHASE 5: FINAL CLEANUP
+        # Clean up any triple+ line breaks
+        result = re.sub(r'\n{3,}', '\n\n', result)
         
-        # Step 6: Clean up whitespace
-        response = response.strip()
+        # Ensure no trailing/leading whitespace
+        result = result.strip()
         
-        return response
+        return result
     
     def clear_cache(self):
         """Clear the response cache to force fresh responses"""
