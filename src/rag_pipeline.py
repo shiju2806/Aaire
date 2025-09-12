@@ -1177,8 +1177,19 @@ Enhanced Response:"""
             # Clean up extra spaces and formatting (but preserve line breaks!)
             # Only collapse multiple spaces on same line, NOT newlines
             response = re.sub(r'[ \t]+', ' ', response)  # Only collapse spaces/tabs, not newlines
-            response = re.sub(r'\*\*\s+', '**', response)
-            response = re.sub(r'\s+\*\*', '**', response)
+            
+            # Fix excessive asterisk formatting issues
+            response = re.sub(r'\*{3,}', '**', response)  # Replace 3+ asterisks with 2
+            response = re.sub(r'\*\*\s+', '**', response)  # Remove space after **
+            response = re.sub(r'\s+\*\*', '**', response)  # Remove space before **
+            
+            # Fix broken header formatting patterns
+            response = re.sub(r'\*\*([0-9]+\.[0-9]*\s*[A-Za-z])', r'**\1', response)  # Fix "**1.1 Key Terms"
+            response = re.sub(r'\*([0-9]+\.[0-9]*\s*[A-Za-z])', r'**\1', response)   # Fix "*1.2 Additional Terms" 
+            
+            # Ensure proper spacing after headers and bullet points
+            response = re.sub(r'\*\*([^*]+)\*\*-', r'**\1**\n\n-', response)  # Add line break before bullets
+            response = re.sub(r'([a-z]:)-([A-Z])', r'\1 -\2', response)  # Add space after colons before bullets
             
             logger.info("✅ Formula formatting cleaned successfully")
             return response
