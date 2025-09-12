@@ -3489,28 +3489,68 @@ Reply with just: VALID or NEEDS_FIXING"""
             return True  # Default to assuming it's valid
     
     def _normalize_spacing(self, response: str) -> str:
-        """Lightweight cleanup for markdown responses - the LLM now generates proper formatting"""
+        """Enhanced cleanup to fix persistent formatting issues: bold headers, line breaks, formulas"""
         import re
         
-        # Since the LLM now generates proper markdown, we only need minimal cleanup
+        # Step 1: Preserve and protect formulas/mathematical content before cleanup
+        formula_patterns = [
+            (r'(\$[\d,]+(?:\.\d+)?)', r'FORMULA_DOLLAR_\1_END'),  # Dollar amounts
+            (r'(\d+%)', r'FORMULA_PERCENT_\1_END'),  # Percentages  
+            (r'(\d+\.?\d*\s*[×*]\s*\d+\.?\d*)', r'FORMULA_MULT_\1_END'),  # Multiplication
+            (r'(NPV|PV|FV|PMT|RATE|NPER)', r'FORMULA_FUNC_\1_END'),  # Financial functions
+            (r'(\w+\s*=\s*[\w\d\s\+\-\*/\(\)\.]+)', r'FORMULA_EQ_\1_END'),  # Equations
+            (r'([A-Z]\([^)]+\))', r'FORMULA_NOTATION_\1_END'),  # Function notation like E(x+t)
+        ]
         
-        # Clean up excessive whitespace
-        result = re.sub(r'[ \t]+', ' ', response)
+        formula_map = {}
+        result = response
         
-        # Fix any triple+ line breaks to double line breaks  
+        for i, (pattern, template) in enumerate(formula_patterns):
+            matches = re.findall(pattern, result)
+            for j, match in enumerate(matches):
+                placeholder_key = f'FORMULA_{i}_{j}_PLACEHOLDER'
+                formula_map[placeholder_key] = match
+                result = result.replace(match, placeholder_key, 1)
+        
+        # Step 2: Convert **bold headers** to proper markdown headers
+        # Main section headers (longer titles with key words)
+        result = re.sub(r'\*\*(.*?(?:Calculating|Determine|Calculate|Final|Minimum|Step|Method|Example|Overview|Summary|Introduction|Conclusion)[^*]{5,}?)\*\*', r'# \1', result)
+        
+        # Numbered section headers: **1.** -> ## 1.
+        result = re.sub(r'\*\*(\d+\..*?)\*\*', r'## \1', result)
+        
+        # Subsection headers with key terms
+        result = re.sub(r'\*\*((?:Step|Section|Part|Phase|Component|Element|Factor|Requirement|Condition|Assumption|Variable|Formula|Calculation|Procedure|Process|Method)[^*]*?)\*\*', r'### \1', result)
+        
+        # Step 3: Fix line breaks around numbered sections
+        # Ensure space before numbered sections (1., 2., etc.)
+        result = re.sub(r'([^\n])\n(\d+\.)', r'\1\n\n\2', result)
+        result = re.sub(r'(\d+\.)\s*([A-Z])', r'\1 \2', result)  # Ensure space after number
+        
+        # Fix subsection numbering (4.1, 4.2, etc.)
+        result = re.sub(r'([^\n])\n(\d+\.\d+)', r'\1\n\n\2', result)
+        
+        # Step 4: Clean up whitespace
+        result = re.sub(r'[ \t]+', ' ', result)
         result = re.sub(r'\n{3,}', '\n\n', result)
         
-        # Ensure proper spacing around headers
+        # Step 5: Ensure proper spacing around headers
         result = re.sub(r'\n(#{1,6}\s)', r'\n\n\1', result)  # Space before headers
         result = re.sub(r'(#{1,6}[^\n]+)\n([^\n#])', r'\1\n\n\2', result)  # Space after headers
         
-        # Clean up any malformed list formatting (backup cleanup)
+        # Step 6: Fix list formatting
+        result = re.sub(r'\n(-\s)', r'\n\n- ', result)  # Space before bullet lists
         result = re.sub(r'\n(\d+\.)\s*([^\n])', r'\n\n\1 \2', result)  # Space before numbered lists
-        result = re.sub(r'\n(-)\s*([^\n])', r'\n\n- \2', result)  # Space before bullet lists
         
-        # Ensure no trailing/leading whitespace
+        # Step 7: Clean up excessive bold formatting in body text
+        # Remove **bold** from short phrases that shouldn't be emphasized
+        result = re.sub(r'\*\*([^*]{1,20})\*\*(?=\s[a-z])', r'\1', result)  # Short bold followed by lowercase
+        
+        # Step 8: Restore preserved formulas
+        for placeholder_key, original_formula in formula_map.items():
+            result = result.replace(placeholder_key, original_formula)
+        
         result = result.strip()
-        
         return result
     
     def clear_cache(self):
