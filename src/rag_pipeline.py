@@ -1145,62 +1145,53 @@ Enhanced Response:"""
             return response
     
     def _clean_formulas(self, response: str) -> str:
-        """Convert LaTeX notation to readable text format"""
+        """Clean and format mathematical formulas and text structure"""
         import re
         
         try:
             logger.info("🧮 Cleaning formula formatting for better readability")
             
-            # Convert LaTeX display equations \[ ... \] to bold formatting
-            response = re.sub(r'\\\[([^\\]+?)\\\]', r'**\1**', response, flags=re.DOTALL)
-            
-            # Convert \text{} commands to plain text
+            # Clean up LaTeX notation - convert to readable format
+            response = re.sub(r'\\\[([^\\]+?)\\\]', r'\n\n**\1**\n\n', response, flags=re.DOTALL)
             response = re.sub(r'\\text\{([^}]+)\}', r'\1', response)
-            
-            # Convert subscripts like NPR_{future} to NPR(future)
             response = re.sub(r'([A-Z]+)_\{([^}]+)\}', r'\1(\2)', response)
-            
-            # Convert complex mathematical notation to readable format
-            # E(x+t) = VNPR × annuity(x+t):v-t pattern
-            response = re.sub(r'([A-Z]+)([a-z]*)\+([a-z]+)', r'\1(\2+\3)', response)
-            
-            # Clean up any remaining LaTeX commands
             response = re.sub(r'\\([a-zA-Z]+)\{([^}]*)\}', r'\2', response)
             
-            # Convert mathematical operators
+            # Convert mathematical operators to readable symbols
             response = response.replace('\\times', '×')
             response = response.replace('\\cdot', '·')
             response = response.replace('\\le', '≤')
             response = response.replace('\\ge', '≥')
             response = response.replace('\\ne', '≠')
             
-            # Clean up extra spaces and formatting (but preserve line breaks!)
-            # Only collapse multiple spaces on same line, NOT newlines
+            # Remove any broken PLACEHOLDER text that shouldn't be there
+            response = re.sub(r'FORMULA_\d+_\d+_PLACEHOLDER', '[Mathematical Formula]', response)
+            
+            # Clean up spacing (preserve line breaks!)
             response = re.sub(r'[ \t]+', ' ', response)  # Only collapse spaces/tabs, not newlines
             
-            # Fix excessive asterisk formatting issues
-            response = re.sub(r'\*{3,}', '**', response)  # Replace 3+ asterisks with 2
-            response = re.sub(r'\*\*\s+', '**', response)  # Remove space after **
-            response = re.sub(r'\s+\*\*', '**', response)  # Remove space before **
+            # Fix excessive asterisk formatting
+            response = re.sub(r'\*{3,}', '**', response)
+            response = re.sub(r'\*\*\s+', '**', response)
+            response = re.sub(r'\s+\*\*', '**', response)
             
-            # Fix broken header formatting patterns
-            response = re.sub(r'\*\*([0-9]+\.[0-9]*\s*[A-Za-z])', r'**\1', response)  # Fix "**1.1 Key Terms"
-            response = re.sub(r'\*([0-9]+\.[0-9]*\s*[A-Za-z])', r'**\1', response)   # Fix "*1.2 Additional Terms" 
+            # Fix broken header patterns
+            response = re.sub(r'\*\*([0-9]+\.[0-9]*\s*[A-Za-z])', r'**\1', response)
+            response = re.sub(r'\*([0-9]+\.[0-9]*\s*[A-Za-z])', r'**\1', response)
             
             # Ensure proper spacing after headers and bullet points
-            response = re.sub(r'\*\*([^*]+)\*\*-', r'**\1**\n\n-', response)  # Add line break before bullets
-            response = re.sub(r'([a-z]:)-([A-Z])', r'\1 -\2', response)  # Add space after colons before bullets
+            response = re.sub(r'\*\*([^*]+)\*\*-', r'**\1**\n\n-', response)
+            response = re.sub(r'([a-z]:)-([A-Z])', r'\1 -\2', response)
             
-            # More comprehensive cleanup for professional formatting
-            response = re.sub(r'\*\*\*', '**', response)  # Ensure no triple asterisks remain
-            response = re.sub(r'(\*\*[^*]+\*\*)([A-Z])', r'\1\n\n\2', response)  # Add breaks after headers
-            response = re.sub(r'(\d+\.\s+[A-Za-z][^:]+:)([A-Z])', r'\1\n\n\2', response)  # Break after numbered items
-            response = re.sub(r'([.])([A-Z][^.]*:)', r'\1\n\n\2', response)  # Break before section headers
-            response = re.sub(r'(\*\*[^*]+\*\*)(\*)', r'\1\n\n\2', response)  # Break between header and asterisk
+            # Professional formatting cleanup
+            response = re.sub(r'(\*\*[^*]+\*\*)([A-Z])', r'\1\n\n\2', response)
+            response = re.sub(r'(\d+\.\s+[A-Za-z][^:]+:)([A-Z])', r'\1\n\n\2', response)
+            response = re.sub(r'([.])([A-Z][^.]*:)', r'\1\n\n\2', response)
+            response = re.sub(r'(\*\*[^*]+\*\*)(\*)', r'\1\n\n\2', response)
             
-            # Clean up multiple newlines but preserve intentional spacing
-            response = re.sub(r'\n{4,}', '\n\n\n', response)  # Max 3 newlines
-            response = re.sub(r'\n\n\*\*', '\n\n**', response)  # Ensure proper header spacing
+            # Control multiple newlines
+            response = re.sub(r'\n{4,}', '\n\n\n', response)
+            response = re.sub(r'\n\n\*\*', '\n\n**', response)
             
             logger.info("✅ Formula formatting cleaned successfully")
             return response
