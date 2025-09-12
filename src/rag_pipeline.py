@@ -1145,44 +1145,60 @@ Enhanced Response:"""
             return response
     
     def _clean_formulas(self, response: str) -> str:
-        """Convert LaTeX notation to readable text format"""
+        """Normalize LaTeX math for Markdown renderers (KaTeX/MathJax).
+
+        - Preserve existing \[ ... \] and \( ... \) blocks
+        - Convert $$ ... $$ to display math \[ ... \]
+        - Convert inline $ ... $ to \( ... \) while avoiding currency amounts
+        - Do NOT alter LaTeX commands or subscripts inside math
+        """
         import re
-        
+
         try:
-            logger.info("🧮 Cleaning formula formatting for better readability")
-            
-            # Convert LaTeX display equations \[ ... \] to bold formatting
-            response = re.sub(r'\\\[([^\\]+?)\\\]', r'**\1**', response, flags=re.DOTALL)
-            
-            # Convert \text{} commands to plain text
-            response = re.sub(r'\\text\{([^}]+)\}', r'\1', response)
-            
-            # Convert subscripts like NPR_{future} to NPR(future)
-            response = re.sub(r'([A-Z]+)_\{([^}]+)\}', r'\1(\2)', response)
-            
-            # Convert complex mathematical notation to readable format
-            # E(x+t) = VNPR × annuity(x+t):v-t pattern
-            response = re.sub(r'([A-Z]+)([a-z]*)\+([a-z]+)', r'\1(\2+\3)', response)
-            
-            # Clean up any remaining LaTeX commands
-            response = re.sub(r'\\([a-zA-Z]+)\{([^}]*)\}', r'\2', response)
-            
-            # Convert mathematical operators
-            response = response.replace('\\times', '×')
-            response = response.replace('\\cdot', '·')
-            response = response.replace('\\le', '≤')
-            response = response.replace('\\ge', '≥')
-            response = response.replace('\\ne', '≠')
-            
-            # Clean up extra spaces and formatting (but preserve line breaks!)
-            # Only collapse multiple spaces on same line, NOT newlines
-            response = re.sub(r'[ \t]+', ' ', response)  # Only collapse spaces/tabs, not newlines
-            response = re.sub(r'\*\*\s+', '**', response)
-            response = re.sub(r'\s+\*\*', '**', response)
-            
-            logger.info("✅ Formula formatting cleaned successfully")
-            return response
-            
+            logger.info("🧮 Normalizing formula formatting for math rendering")
+
+            text = response
+
+            # 1) Normalize display math: $$...$$ -> \[ ... \]
+            def replace_display(match):
+                content = match.group(1).strip()
+                return f"\\[{content}\\]"
+
+            text = re.sub(r"\$\$(.+?)\$\$", replace_display, text, flags=re.DOTALL)
+
+            # 2) Normalize inline math: $...$ -> \( ... \), avoid currency like $1,000 or $2.5 million
+            inline_pattern = re.compile(r"(?<!\$)\$(?!\$)([^\n$]+?)(?<!\$)\$(?!\$)")
+
+            def is_currency(s: str) -> bool:
+                s_strip = s.strip()
+                # Pure numbers with commas/decimals and optional unit words
+                if re.fullmatch(r"[\d,]+(?:\.\d+)?(?:\s*(?:k|m|bn|million|billion|thousand))?", s_strip, flags=re.IGNORECASE):
+                    return True
+                # Starts or ends with only digits/commas/decimals
+                if re.fullmatch(r"[\d,]+(?:\.\d+)?", s_strip):
+                    return True
+                return False
+
+            def replace_inline(match):
+                content = match.group(1)
+                if is_currency(content):
+                    # Leave as-is (likely currency in prose, not math)
+                    return match.group(0)
+                return f"\\({content.strip()}\\)"
+
+            text = inline_pattern.sub(replace_inline, text)
+
+            # 3) Preserve existing \[ ... \] and \( ... \) blocks as-is; avoid destructive replacements
+
+            # 4) Light whitespace cleanup without touching math delimiters
+            # Collapse spaces but preserve newlines and not inside math delimiters (best-effort global cleanup)
+            text = re.sub(r"[ \t]+", " ", text)
+            text = re.sub(r"\*\*\s+", "**", text)
+            text = re.sub(r"\s+\*\*", "**", text)
+
+            logger.info("✅ Formula normalization complete")
+            return text
+
         except Exception as e:
             logger.warning(f"Formula cleaning failed: {str(e)}")
             return response
