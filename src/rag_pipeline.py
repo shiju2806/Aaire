@@ -1005,69 +1005,156 @@ Focus on providing comprehensive, accurate actuarial content. Don't worry about 
             logger.info("🔧 Pass 2: Starting formatting cleanup")
             logger.info(f"🔍 Pass 2: Input content length: {len(raw_content)} characters")
             logger.info(f"🔍 Pass 2: Content preview: {raw_content[:200]}...")
-            
+
             # Check if self.llm exists and is properly configured
             logger.info(f"🔍 Pass 2: LLM object exists: {self.llm is not None}")
             if hasattr(self.llm, 'client'):
                 logger.info(f"🔍 Pass 2: LLM client exists: {self.llm.client is not None}")
-            
-            format_prompt = f"""You are a formatting specialist. Your ONLY job is to fix formatting issues while keeping ALL content identical.
 
-INPUT TEXT:
+            format_prompt = f"""You are an EXPERT document formatter. Your SOLE PURPOSE is to fix ALL formatting issues while preserving EVERY word, number, and formula exactly.
+
+===== RAW TEXT TO FORMAT =====
 {raw_content}
+===== END RAW TEXT =====
 
-CRITICAL FORMATTING FIXES NEEDED:
-1. REMOVE ALL ** symbols from headers and text
-2. REMOVE ALL # symbols from headers and text  
-3. Fix broken bullet points - put dash and text on SAME line
-4. Remove random commas and asterisks at end of sentences
-5. Clean extra whitespace around formulas
+YOUR MISSION: Transform this into perfectly formatted text by fixing ALL these issues:
 
-EXAMPLES OF FIXES:
-BAD: "**1. Reserve Calculation**" → GOOD: "1. Reserve Calculation"
-BAD: "# 2. Components" → GOOD: "2. Components"
-BAD: "- \\nThe DR is calculated" → GOOD: "- The DR is calculated"
-BAD: "NPR = APV(Benefits),**" → GOOD: "NPR = APV(Benefits)"
-BAD: "Model # 820," → GOOD: "Model 820"
+🔴 CRITICAL ISSUE #1: ORPHANED ASTERISKS
+Search for these EXACT patterns and DELETE them:
+- Any line containing ONLY: **
+- Any line starting with: **<newline>
+- Any occurrence of: **<newline><newline>**
+- Standalone ** not part of bold text
 
-RULES:
-- Keep ALL content, formulas, and calculations EXACTLY the same
-- Only fix formatting, never change substance
-- No ** symbols anywhere
-- No # symbols anywhere
-- Bullets and text on same line
-- Clean professional appearance
+🔴 CRITICAL ISSUE #2: BROKEN LIST FORMATTING
+Transform EVERY instance of these patterns:
 
-Return ONLY the cleaned text:"""
-            
+PATTERN: "-<newline>The text"
+TRANSFORM TO: "• The text"
+
+PATTERN: "- **XXX**=Description" (all on one line)
+TRANSFORM TO: "• **XXX** = Description" (with spaces)
+
+PATTERN: Multiple codes on one line like "-**061**=text-**062**=text-**063**=text"
+TRANSFORM TO: Each on its own line:
+• **061** = text
+• **062** = text  
+• **063** = text
+
+🔴 CRITICAL ISSUE #3: BROKEN HEADERS
+Find and fix:
+- Headers followed by orphaned ** symbols
+- Headers with trailing ** at the end
+- Double asterisks that aren't creating bold text
+
+🔴 CRITICAL ISSUE #4: TRAILING ARTIFACTS
+Remove ALL instances of:
+- ",**" at end of sentences → remove the ,**
+- ")**" at end of parentheses → keep just )
+- Random ** at line ends → delete them
+- Unnecessary commas before line breaks
+
+🔴 CRITICAL ISSUE #5: SPACING AND STRUCTURE
+Ensure:
+- Blank line before and after each header
+- Each list item on its own line
+- Consistent bullet symbol (•) throughout
+- Proper spacing around equals signs in formulas
+
+STEP-BY-STEP PROCESSING ORDER:
+1. Read through the ENTIRE text first
+2. Identify ALL instances of the patterns above
+3. Fix orphaned asterisks FIRST
+4. Fix list formatting SECOND
+5. Fix headers THIRD
+6. Remove trailing artifacts FOURTH
+7. Fix spacing LAST
+
+VALIDATION REQUIREMENTS:
+Before returning the text, verify:
+✓ Zero lines contain only **
+✓ Zero instances of ** at start of lines (unless bold text)
+✓ All bullets use • symbol
+✓ Every list item is on a separate line
+✓ No ",**" or ")**" patterns remain
+✓ Headers are clean without trailing symbols
+✓ Proper spacing between sections
+
+ABSOLUTE REQUIREMENTS:
+1. PRESERVE every word, number, formula, and technical term
+2. NEVER add or remove actual content
+3. ONLY fix formatting issues
+4. Use • for ALL bullet points (not -, *, or •)
+5. Ensure professional, clean output
+
+EXAMPLE TRANSFORMATIONS YOU MUST APPLY:
+
+INPUT: "**2. Additional Considerations**\n\n**\n\nSecondary Guarantees:"
+OUTPUT: "**2. Additional Considerations**\n\nSecondary Guarantees:"
+
+INPUT: "- \nThe adjusted gross premium"  
+OUTPUT: "• The adjusted gross premium"
+
+INPUT: "costs),**"
+OUTPUT: "costs)"
+
+INPUT: "-**061**=Single premium-**062**=Universal life"
+OUTPUT: "• **061** = Single premium\n• **062** = Universal life"
+
+NOW FORMAT THE TEXT - Return ONLY the perfectly formatted version:"""
+
             logger.info(f"🔍 Pass 2: Format prompt length: {len(format_prompt)} characters")
             logger.info("🚀 Pass 2: About to call self.llm.complete()")
-            
+
             # Add timeout and more specific error handling
             import time
             start_time = time.time()
-            
+
             formatted_response = self.llm.complete(format_prompt)
-            
+
             end_time = time.time()
             logger.info(f"🚀 Pass 2: LLM call completed in {end_time - start_time:.2f} seconds")
             logger.info(f"🔍 Pass 2: Response object type: {type(formatted_response)}")
             logger.info(f"🔍 Pass 2: Response has text attribute: {hasattr(formatted_response, 'text')}")
-            
+
             if hasattr(formatted_response, 'text'):
                 logger.info(f"🔍 Pass 2: Response text length: {len(formatted_response.text)} characters")
                 logger.info(f"🔍 Pass 2: Response preview: {formatted_response.text[:200]}...")
-                
+
                 cleaned_text = formatted_response.text.strip()
-                logger.info(f"🔍 Pass 2: Cleaned text length: {len(cleaned_text)} characters")
                 
+                # Optional: Second pass for stubborn issues
+                if "**\n\n**" in cleaned_text or ",**" in cleaned_text or "-**" in cleaned_text:
+                    logger.info("🔄 Pass 2: Detected remaining issues, attempting focused cleanup")
+                    
+                    focused_prompt = f"""The formatting still has issues. Focus ONLY on these specific problems:
+
+TEXT WITH REMAINING ISSUES:
+{cleaned_text}
+
+FIND AND FIX ONLY THESE:
+1. Any "**\\n\\n**" → Delete the orphaned **
+2. Any ",**" → Remove ,**  
+3. Any "-**XXX**=" → Change to "• **XXX** = "
+4. Any line with ONLY ** → Delete entire line
+
+CRITICAL: Keep ALL other content EXACTLY the same.
+
+Return the corrected text:"""
+                    
+                    second_response = self.llm.complete(focused_prompt)
+                    if hasattr(second_response, 'text'):
+                        cleaned_text = second_response.text.strip()
+                        logger.info("✅ Pass 2: Focused cleanup completed")
+                
+                logger.info(f"🔍 Pass 2: Final cleaned text length: {len(cleaned_text)} characters")
                 logger.info("✅ Pass 2: Formatting cleanup completed successfully")
                 return cleaned_text
             else:
                 logger.error("❌ Pass 2: Response object has no 'text' attribute")
                 logger.info("🔄 Pass 2: Falling back to original content")
                 return raw_content
-            
+
         except Exception as e:
             logger.error(f"❌ Pass 2: Formatting cleanup failed with exception: {str(e)}")
             logger.error(f"❌ Pass 2: Exception type: {type(e).__name__}")
