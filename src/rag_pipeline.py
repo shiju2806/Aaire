@@ -46,6 +46,7 @@ import structlog
 from .relevance_engine import RelevanceEngine
 from .intelligent_extractor_simple import IntelligentDocumentExtractor
 from .enhanced_query_handler_simple import EnhancedQueryHandler
+from .conversation_memory import ConversationMemoryManager
 
 logger = structlog.get_logger()
 
@@ -151,9 +152,17 @@ class RAGPipeline:
         # Initialize advanced relevance engine
         self.relevance_engine = RelevanceEngine()
         
+        # Initialize conversation memory manager
+        memory_config = self.config.get('memory_config', {})
+        self.memory_manager = ConversationMemoryManager(
+            redis_client=self.cache,
+            config=memory_config
+        )
+        
         logger.info("RAG Pipeline initialized", 
                    model=self.config['llm_config']['model'],
-                   embedding_model=self.config['embedding_config']['model'])
+                   embedding_model=self.config['embedding_config']['model'],
+                   memory_enabled=self.cache is not None)
     
     def _try_qdrant(self) -> bool:
         """Try to initialize Qdrant vector store"""
@@ -406,6 +415,10 @@ class RAGPipeline:
         if not session_id:
             session_id = str(uuid.uuid4())
         
+        # Record user message in conversation memory
+        if self.memory_manager:
+            await self.memory_manager.add_message(session_id, 'user', query)
+        
         try:
             # Check cache first (but skip cache for debugging if needed)
             cache_key = self._get_cache_key(query, filters)
@@ -465,11 +478,9 @@ class RAGPipeline:
                 if len(unique_sources) > 1:
                     logger.info(f"Multiple document sources found for query, applying strict citation filters")
                 
-                response = await self._generate_response(query, retrieved_docs, user_context, conversation_history)
+                response = await self._generate_response(query, retrieved_docs, user_context, conversation_history, session_id)
                 
-                # Post-process response to fix citation format and clean up text
-                response = self._fix_citation_format(response, retrieved_docs)
-                response = self._basic_text_cleanup(response)
+                # Pass 2: Format the response
                 
                 citations = self._extract_citations(retrieved_docs, query)
                 confidence = self._calculate_confidence(retrieved_docs, response)
@@ -493,7 +504,7 @@ class RAGPipeline:
                 if is_general_query:
                     # Use general knowledge response
                     logger.info(f"No relevant documents found, using general knowledge for: '{query[:50]}...'")
-                    response = await self._generate_response(query, [], user_context, conversation_history)
+                    response = await self._generate_response(query, [], user_context, conversation_history, session_id)
                     response = self._remove_citations_from_response(response)
                     citations = []
                     confidence = 0.3  # Low confidence for general knowledge responses
@@ -519,8 +530,7 @@ class RAGPipeline:
                     citations = []
                     confidence = 0.1  # Very low confidence when we can't find specific content
             
-            # Clean up formatting before finalizing
-            response = self._clean_formulas(response)
+            # Response formatting handled by prompt engineering
             
             # Generate contextual follow-up questions
             follow_up_questions = await self._generate_follow_up_questions(query, response, retrieved_docs)
@@ -544,6 +554,10 @@ class RAGPipeline:
                     self.config['retrieval_config']['cache_ttl'],
                     self._serialize_response(rag_response)
                 )
+            
+            # Record assistant response in conversation memory
+            if self.memory_manager:
+                await self.memory_manager.add_message(session_id, 'assistant', response)
             
             return rag_response
             
@@ -974,38 +988,48 @@ Documents:
 
 Provide a comprehensive response using all the information in the documents above.
 
-FORMATTING REQUIREMENTS:
-- Use **bold** ONLY for section headings and key terms (NO # symbols)
-
-🚨 CRITICAL NUMBERED LIST FORMATTING (FOLLOW EXACTLY):
-Never write title**1.**content or text**2.**moretext on same line.
-
-❌ WRONG: "Universal Life Policy in ULSG**1.**Determine the Adjusted"
-✅ CORRECT: "Universal Life Policy in ULSG
-
-**1.** Determine the Adjusted"
-
-ALWAYS separate numbered items from preceding text:
-
-1. First item content here
-
-2. Second item content here  
-
-3. Third item content here
-
-- Use bullet points (-) with proper spacing:
-
-- First bullet point
-
-- Second bullet point
-
-- Regular text should NOT be bold
-- Add two line breaks between major sections  
-- CRITICAL: Never concatenate numbered items with preceding text
+Focus on providing comprehensive, accurate actuarial content. Don't worry about formatting - that will be handled separately.
 - Include all formulas, calculations, and requirements found"""
         
-        response = self.llm.complete(prompt)
-        return response.text.strip()
+        raw_response = self.llm.complete(prompt)
+        
+        # Pass 2: Format the response
+        formatted_response = self._format_response(raw_response.text.strip())
+        return formatted_response
+    
+    def _format_response(self, raw_content: str) -> str:
+        """Pass 2: Clean formatting of the generated content"""
+        format_prompt = f"""You are a formatting specialist. Your ONLY job is to fix formatting issues while keeping ALL content identical.
+
+INPUT TEXT:
+{raw_content}
+
+CRITICAL FORMATTING FIXES NEEDED:
+1. REMOVE ALL ** symbols from headers and text
+2. REMOVE ALL # symbols from headers and text  
+3. Fix broken bullet points - put dash and text on SAME line
+4. Remove random commas and asterisks at end of sentences
+5. Clean extra whitespace around formulas
+
+EXAMPLES OF FIXES:
+BAD: "**1. Reserve Calculation**" → GOOD: "1. Reserve Calculation"
+BAD: "# 2. Components" → GOOD: "2. Components"
+BAD: "- \\nThe DR is calculated" → GOOD: "- The DR is calculated"
+BAD: "NPR = APV(Benefits),**" → GOOD: "NPR = APV(Benefits)"
+BAD: "Model # 820," → GOOD: "Model 820"
+
+RULES:
+- Keep ALL content, formulas, and calculations EXACTLY the same
+- Only fix formatting, never change substance
+- No ** symbols anywhere
+- No # symbols anywhere
+- Bullets and text on same line
+- Clean professional appearance
+
+Return ONLY the cleaned text:"""
+        
+        formatted_response = self.llm.complete(format_prompt)
+        return formatted_response.text.strip()
     
     def _merge_response_parts(self, query: str, response_parts: List[str]) -> str:
         """Merge multiple response parts into a coherent final response"""
@@ -1144,61 +1168,7 @@ Enhanced Response:"""
             logger.warning(f"Failed to fix terminology: {str(e)}")
             return response
     
-    def _clean_formulas(self, response: str) -> str:
-        """Clean and format mathematical formulas and text structure"""
-        import re
-        
-        try:
-            logger.info("🧮 Cleaning formula formatting for better readability")
-            
-            # Clean up LaTeX notation - convert to readable format
-            response = re.sub(r'\\\[([^\\]+?)\\\]', r'\n\n**\1**\n\n', response, flags=re.DOTALL)
-            response = re.sub(r'\\text\{([^}]+)\}', r'\1', response)
-            response = re.sub(r'([A-Z]+)_\{([^}]+)\}', r'\1(\2)', response)
-            response = re.sub(r'\\([a-zA-Z]+)\{([^}]*)\}', r'\2', response)
-            
-            # Convert mathematical operators to readable symbols
-            response = response.replace('\\times', '×')
-            response = response.replace('\\cdot', '·')
-            response = response.replace('\\le', '≤')
-            response = response.replace('\\ge', '≥')
-            response = response.replace('\\ne', '≠')
-            
-            # Remove any broken PLACEHOLDER text that shouldn't be there
-            response = re.sub(r'FORMULA_\d+_\d+_PLACEHOLDER', '[Mathematical Formula]', response)
-            
-            # Clean up spacing (preserve line breaks!)
-            response = re.sub(r'[ \t]+', ' ', response)  # Only collapse spaces/tabs, not newlines
-            
-            # Fix excessive asterisk formatting
-            response = re.sub(r'\*{3,}', '**', response)
-            response = re.sub(r'\*\*\s+', '**', response)
-            response = re.sub(r'\s+\*\*', '**', response)
-            
-            # Fix broken header patterns
-            response = re.sub(r'\*\*([0-9]+\.[0-9]*\s*[A-Za-z])', r'**\1', response)
-            response = re.sub(r'\*([0-9]+\.[0-9]*\s*[A-Za-z])', r'**\1', response)
-            
-            # Ensure proper spacing after headers and bullet points
-            response = re.sub(r'\*\*([^*]+)\*\*-', r'**\1**\n\n-', response)
-            response = re.sub(r'([a-z]:)-([A-Z])', r'\1 -\2', response)
-            
-            # Professional formatting cleanup
-            response = re.sub(r'(\*\*[^*]+\*\*)([A-Z])', r'\1\n\n\2', response)
-            response = re.sub(r'(\d+\.\s+[A-Za-z][^:]+:)([A-Z])', r'\1\n\n\2', response)
-            response = re.sub(r'([.])([A-Z][^.]*:)', r'\1\n\n\2', response)
-            response = re.sub(r'(\*\*[^*]+\*\*)(\*)', r'\1\n\n\2', response)
-            
-            # Control multiple newlines
-            response = re.sub(r'\n{4,}', '\n\n\n', response)
-            response = re.sub(r'\n\n\*\*', '\n\n**', response)
-            
-            logger.info("✅ Formula formatting cleaned successfully")
-            return response
-            
-        except Exception as e:
-            logger.warning(f"Formula cleaning failed: {str(e)}")
-            return response
+    # Formula cleaning removed - trust LLM formatting through prompt engineering
     
     def _preserve_formulas(self, response: str, documents: List[Dict]) -> str:
         """Extract and preserve mathematical formulas from documents"""
@@ -1376,12 +1346,32 @@ This is document group {group_index} of {len(document_groups)}. Focus on these d
 
 {group_context}
 
-FORMATTING REQUIREMENTS:
-- Use proper markdown formatting: # for main sections, ## for subsections  
-- Use numbered lists (1., 2., 3.) with proper spacing
-- Use bullet points (-) for sub-items
-- Use **bold** only for emphasis within text, not for headers
-- Ensure clear spacing between sections and lists
+FORMATTING REQUIREMENTS (write like ChatGPT):
+- Follow this EXACT structure pattern:
+
+**1. Main Section Title**
+
+Content paragraph with details.
+
+**1.1 Subsection Title**
+
+- Bullet point item
+- Another bullet point
+- Third bullet point
+
+**2. Next Main Section**
+
+More content here.
+
+CRITICAL FORMATTING RULES:
+- Main headings: **1. Title**, **2. Title**, **3. Title** (consistent numbering)
+- Sub-headings: **1.1 Title**, **1.2 Title** (consistent sub-numbering)  
+- NEVER use random ** mid-sentence or inconsistent bold patterns
+- NEVER create orphaned dashes like ":\n-\n" - always use complete bullet points
+- NEVER end with random asterisks or incomplete formatting
+- Always double line break between sections
+- Write formulas clearly: use simple notation like (A + B)/C
+- End every section with blank line for readability
 
 CONTENT REQUIREMENTS:
 - Include ALL relevant formulas, calculations, and mathematical expressions
@@ -1419,26 +1409,17 @@ Provide a detailed response covering all information that relates to the questio
         query: str, 
         retrieved_docs: List[Dict],
         user_context: Optional[Dict[str, Any]] = None,
-        conversation_history: Optional[List[Dict]] = None
+        conversation_history: Optional[List[Dict]] = None,
+        session_id: Optional[str] = None
     ) -> str:
         """Generate response using retrieved documents and conversation context"""
         
-        # Build conversation context if available
+        # Build conversation context using memory manager
         conversation_context = ""
-        if conversation_history and len(conversation_history) > 0:
-            # Use config settings for better memory retention
-            max_history = self.config.get('conversation_config', {}).get('max_history_messages', 20)
-            max_msg_length = self.config.get('conversation_config', {}).get('max_message_length', 500)
-            
-            conversation_context = f"\n\nConversation History (last {max_history//2} exchanges):\n"
-            
-            # Get recent history based on config
-            recent_history = conversation_history[-max_history:] if len(conversation_history) > max_history else conversation_history
-            
-            for msg in recent_history:
-                role = "User" if msg.get('sender') == 'user' else "Assistant"
-                content = msg.get('content', '')[:max_msg_length]  # Use configurable truncation
-                conversation_context += f"{role}: {content}\n"
+        if self.memory_manager and session_id:
+            conversation_context = await self.memory_manager.get_conversation_context(session_id)
+            if conversation_context:
+                conversation_context = f"\n\n{conversation_context}\n"
         
         # Check if we have relevant documents
         if not retrieved_docs:
@@ -3236,107 +3217,6 @@ Generate an enhanced response that combines the original information with the ex
         
         return followups[:3]  # Limit to 3 follow-ups for optimal user experience
     
-    def _fix_citation_format(self, response: str, retrieved_docs: List[Dict]) -> str:
-        """Post-process response to replace [1], [2] citations with proper source names and page numbers"""
-        if not retrieved_docs:
-            return response
-        
-        import re
-        
-        # Create mapping of citation numbers to proper source names
-        citation_map = {}
-        for i, doc in enumerate(retrieved_docs[:10]):  # Handle up to 10 citations
-            citation_num = i + 1
-            filename = doc['metadata'].get('filename', 'Unknown')
-            
-            # Try to extract page number
-            page_info = ""
-            if 'page' in doc['metadata']:
-                page_info = f", Page {doc['metadata']['page']}"
-            elif 'estimated_page' in doc['metadata']:
-                page_info = f", Page {doc['metadata']['estimated_page']}"
-            elif 'Source: Page' in doc.get('content', ''):
-                page_match = re.search(r'Source: Page (\d+)', doc.get('content', ''))
-                if page_match:
-                    page_info = f", Page {page_match.group(1)}"
-            
-            # Create proper citation
-            proper_citation = f"({filename}{page_info})"
-            citation_map[f"[{citation_num}]"] = proper_citation
-        
-        # Replace all [1], [2], etc. with proper citations
-        fixed_response = response
-        for old_citation, new_citation in citation_map.items():
-            fixed_response = fixed_response.replace(old_citation, new_citation)
-        
-        # Also handle "Document X" references
-        for i in range(1, 11):  # Handle Document 1-10
-            doc_ref = f"Document {i}"
-            if doc_ref in fixed_response and i <= len(retrieved_docs):
-                doc = retrieved_docs[i-1]
-                filename = doc['metadata'].get('filename', 'Unknown')
-                page_info = ""
-                if 'page' in doc['metadata']:
-                    page_info = f", Page {doc['metadata']['page']}"
-                elif 'estimated_page' in doc['metadata']:
-                    page_info = f", Page {doc['metadata']['estimated_page']}"
-                
-                proper_ref = f"{filename}{page_info}"
-                fixed_response = fixed_response.replace(doc_ref, proper_ref)
-        
-        return fixed_response
-    
-    def _basic_text_cleanup(self, response: str) -> str:
-        """Basic text cleanup - minimal whitespace normalization only"""
-        import re
-        
-        # Only do minimal cleanup - no hardcoded patterns
-        # Clean up excessive newlines (but keep double newlines for spacing)
-        cleaned = re.sub(r'\n{4,}', '\n\n\n', response)
-        
-        # Clean up whitespace at start and end
-        cleaned = cleaned.strip()
-        
-        return cleaned
-    
-    def _validate_and_fix_formatting(self, response: str) -> str:
-        """Validate formatting and fix common issues using LLM-based correction"""
-        try:
-            # Check for common formatting issues
-            issues = []
-            
-            # Check for missing line breaks before numbered items
-            if '**1.' in response and not '\n\n**1.' in response and not response.startswith('**1.'):
-                issues.append("Missing line breaks before numbered items")
-            
-            # Check for run-on formatting
-            if '1. ' in response and '2. ' in response:
-                # Check if numbered items are on same line
-                lines = response.split('\n')
-                for line in lines:
-                    if '1. ' in line and ('2. ' in line or '3. ' in line):
-                        issues.append("Numbered items running together on same line")
-                        break
-            
-            # Check for "Where:" without line break
-            if 'Where: -' in response or 'Where:-' in response:
-                issues.append("Missing line break after 'Where:'")
-                
-            # Check for bold formatting artifacts
-            if '**includes' in response or '**excludes' in response:
-                issues.append("Bold formatting artifacts in text")
-            
-            # If issues found, apply LLM-based correction
-            if issues:
-                logger.info(f"🔧 Formatting issues detected: {issues}")
-                return self._apply_llm_formatting_fix(response, issues)
-            else:
-                logger.info("✅ Response formatting validated - no major issues found")
-                return response
-                
-        except Exception as e:
-            logger.warning(f"Formatting validation failed: {e}")
-            return response
     
     def _apply_llm_formatting_fix(self, response: str, detected_issues: list) -> str:
         """Apply LLM-based formatting correction for detected issues"""
@@ -3503,70 +3383,180 @@ Reply with just: VALID or NEEDS_FIXING"""
             return True  # Default to assuming it's valid
     
     def _normalize_spacing(self, response: str) -> str:
-        """Enhanced cleanup to fix persistent formatting issues: bold headers, line breaks, formulas"""
+        """Simplified cleanup to fix persistent formatting issues without breaking content"""
         import re
         
+        # Step 1: Fix the most critical issues - text running together
+        # Ensure proper spacing around numbered sections (1., 2., etc.)
+        result = re.sub(r'([a-z\.])(\d+\.)', r'\1\n\n\2', response)
         
-        # Step 1: Preserve and protect formulas/mathematical content before cleanup
-        formula_patterns = [
-            (r'(\$[\d,]+(?:\.\d+)?)', r'FORMULA_DOLLAR_\1_END'),  # Dollar amounts
-            (r'(\d+%)', r'FORMULA_PERCENT_\1_END'),  # Percentages  
-            (r'(\d+\.?\d*\s*[×*]\s*\d+\.?\d*)', r'FORMULA_MULT_\1_END'),  # Multiplication
-            (r'(NPV|PV|FV|PMT|RATE|NPER)', r'FORMULA_FUNC_\1_END'),  # Financial functions
-            (r'(\w+\s*=\s*[\w\d\s\+\-\*/\(\)\.]+)', r'FORMULA_EQ_\1_END'),  # Equations
-            (r'([A-Z]\([^)]+\))', r'FORMULA_NOTATION_\1_END'),  # Function notation like E(x+t)
-        ]
+        # Fix text immediately following bold markers without space
+        result = re.sub(r'\*\*([^*]+)\*\*([A-Z])', r'**\1**\n\n\2', result)
         
-        formula_map = {}
-        result = response
+        # Step 2: Conservative bold formatting cleanup (only clear issues)
+        # Fix excessive asterisks  
+        result = re.sub(r'\*{3,}', '**', result)
         
-        for i, (pattern, template) in enumerate(formula_patterns):
-            matches = re.findall(pattern, result)
-            for j, match in enumerate(matches):
-                placeholder_key = f'FORMULA_{i}_{j}_PLACEHOLDER'
-                formula_map[placeholder_key] = match
-                result = result.replace(match, placeholder_key, 1)
+        # Only convert numbered sections to headers if they're clearly headers
+        result = re.sub(r'\*\*(\d+\.\s*[A-Z][^*]{10,}?)\*\*', r'## \1', result)
         
-        # Step 2: Convert **bold headers** to proper markdown headers
-        # Main section headers (longer titles with key words)
-        result = re.sub(r'\*\*(.*?(?:Calculating|Determine|Calculate|Final|Minimum|Step|Method|Example|Overview|Summary|Introduction|Conclusion)[^*]{5,}?)\*\*', r'# \1', result)
-        
-        # Numbered section headers: **1.** -> ## 1.
-        result = re.sub(r'\*\*(\d+\..*?)\*\*', r'## \1', result)
-        
-        # Subsection headers with key terms
-        result = re.sub(r'\*\*((?:Step|Section|Part|Phase|Component|Element|Factor|Requirement|Condition|Assumption|Variable|Formula|Calculation|Procedure|Process|Method)[^*]*?)\*\*', r'### \1', result)
-        
-        # Step 3: Fix line breaks around numbered sections
-        # Ensure space before numbered sections (1., 2., etc.)
-        result = re.sub(r'([^\n])\n(\d+\.)', r'\1\n\n\2', result)
-        result = re.sub(r'(\d+\.)\s*([A-Z])', r'\1 \2', result)  # Ensure space after number
-        
-        # Fix subsection numbering (4.1, 4.2, etc.)
-        result = re.sub(r'([^\n])\n(\d+\.\d+)', r'\1\n\n\2', result)
-        
-        # Step 4: Clean up whitespace
+        # Step 3: Clean up whitespace issues
+        # Remove extra spaces but preserve line breaks
         result = re.sub(r'[ \t]+', ' ', result)
-        result = re.sub(r'\n{3,}', '\n\n', result)
         
-        # Step 5: Ensure proper spacing around headers
-        result = re.sub(r'\n(#{1,6}\s)', r'\n\n\1', result)  # Space before headers
-        result = re.sub(r'(#{1,6}[^\n]+)\n([^\n#])', r'\1\n\n\2', result)  # Space after headers
+        # Control excessive newlines
+        result = re.sub(r'\n{4,}', '\n\n\n', result)
         
-        # Step 6: Fix list formatting
-        result = re.sub(r'\n(-\s)', r'\n\n- ', result)  # Space before bullet lists
-        result = re.sub(r'\n(\d+\.)\s*([^\n])', r'\n\n\1 \2', result)  # Space before numbered lists
+        # Step 4: Fix spacing after punctuation
+        result = re.sub(r'([\.!?])([A-Z])', r'\1 \2', result)
         
-        # Step 7: Clean up excessive bold formatting in body text
-        # Remove **bold** from short phrases that shouldn't be emphasized
-        result = re.sub(r'\*\*([^*]{1,20})\*\*(?=\s[a-z])', r'\1', result)  # Short bold followed by lowercase
-        
-        # Step 8: Restore preserved formulas
-        for placeholder_key, original_formula in formula_map.items():
-            result = result.replace(placeholder_key, original_formula)
+        # Step 5: Ensure proper spacing around list items
+        result = re.sub(r'([^\n])\n-\s', r'\1\n\n- ', result)
         
         result = result.strip()
         return result
+    
+    async def _apply_professional_formatting(self, response: str, query: str) -> str:
+        """Apply ChatGPT-style professional formatting to responses"""
+        try:
+            logger.info("📝 Applying professional formatting to response")
+            
+            # Use LLM to reformat the content professionally
+            system_prompt = """You are a formatting expert. Rewrite the provided technical content with:
+
+1. Clear visual hierarchy using emojis as section markers (🔹 for main points, ✅ for summary, 📌 for key points)
+2. Numbered sections with proper spacing
+3. Sub-points using (a), (b), (c) or bullet points
+4. Bold only for key terms and headers (use sparingly)
+5. Clean spacing between sections
+6. Professional, conversational tone
+7. Examples where helpful
+8. A clear summary at the end
+
+Format like high-quality ChatGPT responses - clean, organized, and easy to scan.
+Keep all technical accuracy but improve readability dramatically.
+Do NOT add unnecessary information - only reformat what's provided."""
+
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"Query: {query}\n\nContent to reformat:\n{response}"}
+            ]
+            
+            formatted_response = await self.llm_client.achat.completions.create(
+                model=self.llm_model,
+                messages=messages,
+                temperature=0.3,
+                max_tokens=4000
+            )
+            
+            result = formatted_response.choices[0].message.content
+            
+            # Apply final clean-up
+            result = self._final_formatting_cleanup(result)
+            
+            logger.info("✅ Professional formatting applied successfully")
+            return result
+            
+        except Exception as e:
+            logger.warning(f"Could not apply professional formatting: {e}")
+            # Fall back to basic cleanup
+            return self._basic_professional_format(response)
+    
+    def _final_formatting_cleanup(self, text: str) -> str:
+        """Final cleanup for professional formatting"""
+        import re
+        
+        # Ensure consistent spacing
+        text = re.sub(r'\n{4,}', '\n\n\n', text)
+        
+        # Ensure space after emoji markers
+        text = re.sub(r'(🔹|✅|📌|📍|🎯|💡|⚠️|❌|✔️)([A-Za-z])', r'\1 \2', text)
+        
+        # Clean up any remaining formatting issues
+        text = re.sub(r'\*{3,}', '**', text)
+        
+        return text.strip()
+    
+    def _apply_simple_professional_formatting(self, response: str) -> str:
+        """Simple, reliable professional formatting without API calls"""
+        import re
+        
+        # Split into paragraphs
+        paragraphs = response.split('\n\n')
+        formatted_paragraphs = []
+        
+        for para in paragraphs:
+            para = para.strip()
+            if not para:
+                continue
+                
+            # Detect and format different types of content
+            if re.match(r'^\d+\.', para):
+                # Main numbered section - add emoji marker
+                para = re.sub(r'^(\d+\.)', r'🔹 \1', para)
+                # Ensure space after the number
+                para = re.sub(r'^(🔹\s*\d+\.)([A-Z])', r'\1 \2', para)
+            elif re.match(r'^##?\s', para):
+                # Already a header, leave it
+                pass
+            elif 'summary' in para.lower() or 'conclusion' in para.lower():
+                # Summary sections
+                if not para.startswith('✅'):
+                    para = f"✅ {para}"
+            elif re.match(r'^-\s', para):
+                # Bullet point
+                para = re.sub(r'^-\s', '• ', para)
+            
+            # Fix excessive bold - only keep for important terms
+            if para.count('**') > 6:
+                # Too much bold, reduce it
+                para = re.sub(r'\*\*([^*]{1,15})\*\*', r'\1', para)
+            
+            formatted_paragraphs.append(para)
+        
+        result = '\n\n'.join(formatted_paragraphs)
+        
+        # Final cleanup
+        result = re.sub(r'\n{3,}', '\n\n', result)
+        result = re.sub(r'\*{3,}', '**', result)
+        
+        return result.strip()
+    
+    def _basic_professional_format(self, response: str) -> str:
+        """Fallback basic professional formatting without LLM"""
+        import re
+        
+        lines = response.split('\n')
+        formatted_lines = []
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                formatted_lines.append('')
+                continue
+                
+            # Add emoji markers for numbered items
+            if re.match(r'^\d+\.', line):
+                # Main numbered sections
+                line = f"🔹 {line}"
+            elif re.match(r'^[a-z]\)', line):
+                # Sub-points
+                line = f"  • {line[2:].strip()}"
+            elif line.startswith('-'):
+                # Bullet points
+                line = f"  • {line[1:].strip()}"
+            
+            formatted_lines.append(line)
+        
+        result = '\n'.join(formatted_lines)
+        
+        # Add proper spacing
+        result = re.sub(r'(🔹[^\n]+)\n([^🔹\n])', r'\1\n\n\2', result)
+        
+        # Add summary marker if there's a summary section
+        result = re.sub(r'(Summary|Conclusion|Final)', r'✅ \1', result, flags=re.IGNORECASE)
+        
+        return result.strip()
     
     def clear_cache(self):
         """Clear the response cache to force fresh responses"""
@@ -3574,10 +3564,10 @@ Reply with just: VALID or NEEDS_FIXING"""
             if self.cache:
                 self.cache.flushdb()
                 logger.info("✅ Response cache cleared successfully")
-                return True
+                return {"status": "success", "message": "Cache cleared successfully"}
             else:
-                logger.info("ℹ️ No cache available to clear")
-                return False
+                logger.warning("⚠️ No cache configured")
+                return {"status": "warning", "message": "No cache configured"}
         except Exception as e:
-            logger.error(f"❌ Failed to clear cache: {e}")
-            return False
+            logger.error(f"❌ Failed to clear cache: {str(e)}")
+            return {"status": "error", "message": f"Failed to clear cache: {str(e)}"}

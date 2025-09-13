@@ -97,6 +97,14 @@ conversation_config:
   max_history_messages: 20  # Keep last 20 messages (10 exchanges)
   max_message_length: 500   # Allow longer message context
   context_window_tokens: 8000  # GPT-4o-mini supports 128k context
+
+# Memory Management Settings (Level 2: Intelligent Context Management)
+memory_config:
+  max_messages_before_compression: 15  # Compress when conversation exceeds this
+  session_ttl_hours: 2                # Session expires after 2 hours
+  max_compressed_summaries: 3         # Keep max 3 compressed summaries per session
+  compression_ratio: 0.3              # Keep 30% of messages, compress 70%
+  max_context_tokens: 2000            # Max tokens for conversation context in prompt
   
 # Embedding Configuration
 embedding_config:
