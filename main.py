@@ -1397,10 +1397,12 @@ async def ingest_sec_filing(request: dict):
         raise HTTPException(status_code=500, detail=f"Ingestion failed: {str(e)}")
 
 if __name__ == "__main__":
+    print("🚨 DEBUG: Starting AAIRE with latest code - formatting system should work!")
+    print("🔧 DEBUG: Two-pass formatting and conversation memory enabled")
     uvicorn.run(
         app, 
         host="0.0.0.0", 
-        port=8000,
+        port=int(os.environ.get("PORT", 8000)),
         log_config={
             "version": 1,
             "disable_existing_loggers": False,

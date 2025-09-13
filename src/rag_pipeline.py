@@ -480,7 +480,8 @@ class RAGPipeline:
                 
                 response = await self._generate_response(query, retrieved_docs, user_context, conversation_history, session_id)
                 
-                # Pass 2: Format the response
+                # Pass 2: Format the response using LLM-based formatting
+                response = self._format_response(response)
                 
                 citations = self._extract_citations(retrieved_docs, query)
                 confidence = self._calculate_confidence(retrieved_docs, response)
@@ -505,6 +506,7 @@ class RAGPipeline:
                     # Use general knowledge response
                     logger.info(f"No relevant documents found, using general knowledge for: '{query[:50]}...'")
                     response = await self._generate_response(query, [], user_context, conversation_history, session_id)
+                    response = self._format_response(response)
                     response = self._remove_citations_from_response(response)
                     citations = []
                     confidence = 0.3  # Low confidence for general knowledge responses
@@ -998,8 +1000,18 @@ Focus on providing comprehensive, accurate actuarial content. Don't worry about 
         return formatted_response
     
     def _format_response(self, raw_content: str) -> str:
-        """Pass 2: Clean formatting of the generated content"""
-        format_prompt = f"""You are a formatting specialist. Your ONLY job is to fix formatting issues while keeping ALL content identical.
+        """Pass 2: Clean formatting of the generated content with error handling"""
+        try:
+            logger.info("🔧 Pass 2: Starting formatting cleanup")
+            logger.info(f"🔍 Pass 2: Input content length: {len(raw_content)} characters")
+            logger.info(f"🔍 Pass 2: Content preview: {raw_content[:200]}...")
+            
+            # Check if self.llm exists and is properly configured
+            logger.info(f"🔍 Pass 2: LLM object exists: {self.llm is not None}")
+            if hasattr(self.llm, 'client'):
+                logger.info(f"🔍 Pass 2: LLM client exists: {self.llm.client is not None}")
+            
+            format_prompt = f"""You are a formatting specialist. Your ONLY job is to fix formatting issues while keeping ALL content identical.
 
 INPUT TEXT:
 {raw_content}
@@ -1027,9 +1039,42 @@ RULES:
 - Clean professional appearance
 
 Return ONLY the cleaned text:"""
-        
-        formatted_response = self.llm.complete(format_prompt)
-        return formatted_response.text.strip()
+            
+            logger.info(f"🔍 Pass 2: Format prompt length: {len(format_prompt)} characters")
+            logger.info("🚀 Pass 2: About to call self.llm.complete()")
+            
+            # Add timeout and more specific error handling
+            import time
+            start_time = time.time()
+            
+            formatted_response = self.llm.complete(format_prompt)
+            
+            end_time = time.time()
+            logger.info(f"🚀 Pass 2: LLM call completed in {end_time - start_time:.2f} seconds")
+            logger.info(f"🔍 Pass 2: Response object type: {type(formatted_response)}")
+            logger.info(f"🔍 Pass 2: Response has text attribute: {hasattr(formatted_response, 'text')}")
+            
+            if hasattr(formatted_response, 'text'):
+                logger.info(f"🔍 Pass 2: Response text length: {len(formatted_response.text)} characters")
+                logger.info(f"🔍 Pass 2: Response preview: {formatted_response.text[:200]}...")
+                
+                cleaned_text = formatted_response.text.strip()
+                logger.info(f"🔍 Pass 2: Cleaned text length: {len(cleaned_text)} characters")
+                
+                logger.info("✅ Pass 2: Formatting cleanup completed successfully")
+                return cleaned_text
+            else:
+                logger.error("❌ Pass 2: Response object has no 'text' attribute")
+                logger.info("🔄 Pass 2: Falling back to original content")
+                return raw_content
+            
+        except Exception as e:
+            logger.error(f"❌ Pass 2: Formatting cleanup failed with exception: {str(e)}")
+            logger.error(f"❌ Pass 2: Exception type: {type(e).__name__}")
+            import traceback
+            logger.error(f"❌ Pass 2: Full traceback: {traceback.format_exc()}")
+            logger.info("🔄 Pass 2: Falling back to original content")
+            return raw_content
     
     def _merge_response_parts(self, query: str, response_parts: List[str]) -> str:
         """Merge multiple response parts into a coherent final response"""
