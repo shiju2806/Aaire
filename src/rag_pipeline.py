@@ -1006,6 +1006,15 @@ Focus on providing comprehensive, accurate actuarial content. Don't worry about 
             logger.info(f"🔍 Pass 2: Input content length: {len(raw_content)} characters")
             logger.info(f"🔍 Pass 2: Content preview: {raw_content[:200]}...")
 
+            # Create a dedicated formatting LLM using GPT-4 for better performance
+            from llama_index.llms.openai import OpenAI
+            formatting_llm = OpenAI(
+                model="gpt-4",
+                temperature=0,
+                max_tokens=4000
+            )
+            logger.info("🔧 Pass 2: Using GPT-4 for enhanced formatting capabilities")
+
             # Check if self.llm exists and is properly configured
             logger.info(f"🔍 Pass 2: LLM object exists: {self.llm is not None}")
             if hasattr(self.llm, 'client'):
@@ -1104,13 +1113,13 @@ OUTPUT: "• **061** = Single premium\n• **062** = Universal life"
 NOW FORMAT THE TEXT - Return ONLY the perfectly formatted version:"""
 
             logger.info(f"🔍 Pass 2: Format prompt length: {len(format_prompt)} characters")
-            logger.info("🚀 Pass 2: About to call self.llm.complete()")
+            logger.info("🚀 Pass 2: About to call formatting_llm.complete() with GPT-4")
 
             # Add timeout and more specific error handling
             import time
             start_time = time.time()
 
-            formatted_response = self.llm.complete(format_prompt)
+            formatted_response = formatting_llm.complete(format_prompt)
 
             end_time = time.time()
             logger.info(f"🚀 Pass 2: LLM call completed in {end_time - start_time:.2f} seconds")
@@ -1142,7 +1151,7 @@ CRITICAL: Keep ALL other content EXACTLY the same.
 
 Return the corrected text:"""
                     
-                    second_response = self.llm.complete(focused_prompt)
+                    second_response = formatting_llm.complete(focused_prompt)
                     if hasattr(second_response, 'text'):
                         cleaned_text = second_response.text.strip()
                         logger.info("✅ Pass 2: Focused cleanup completed")
