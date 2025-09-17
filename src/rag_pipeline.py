@@ -8,6 +8,10 @@ import yaml
 from typing import List, Dict, Any, Optional, AsyncGenerator
 from datetime import datetime
 import asyncio
+
+# Load environment variables early to ensure API keys are available
+from dotenv import load_dotenv
+load_dotenv()
 import uuid
 import re
 import json
@@ -28,6 +32,7 @@ from llama_index.core.indices.base_retriever import BaseRetriever
 from llama_index.core.query_engine import RetrieverQueryEngine
 from llama_index.embeddings.openai import OpenAIEmbedding
 from llama_index.llms.openai import OpenAI
+from openai import AsyncOpenAI
 
 # Vector stores - Qdrant only (Pinecone removed for simplicity)
 
@@ -47,6 +52,7 @@ from .relevance_engine import RelevanceEngine
 from .intelligent_extractor_simple import IntelligentDocumentExtractor
 from .enhanced_query_handler_simple import EnhancedQueryHandler
 from .conversation_memory import ConversationMemoryManager
+from .smart_metadata_analyzer import SmartMetadataAnalyzer, QueryIntent, DocumentMetadata
 
 logger = structlog.get_logger()
 
@@ -113,7 +119,13 @@ class RAGPipeline:
         self.embedding_model = OpenAIEmbedding(
             model=self.config['embedding_config']['model']
         )
-        
+
+        # Initialize AsyncOpenAI client for parallel processing
+        self.async_client = AsyncOpenAI(
+            api_key=os.getenv("OPENAI_API_KEY")
+        )
+        logger.info("✅ AsyncOpenAI client initialized for parallel processing")
+
         # Configure global settings (replaces ServiceContext in 0.10.x)
         Settings.llm = self.llm
         Settings.embed_model = self.embedding_model
@@ -158,11 +170,17 @@ class RAGPipeline:
             redis_client=self.cache,
             config=memory_config
         )
-        
-        logger.info("RAG Pipeline initialized", 
+
+        # Initialize smart metadata analyzer for intent-based filtering
+        self.metadata_analyzer = SmartMetadataAnalyzer(
+            openai_api_key=os.getenv("OPENAI_API_KEY")
+        )
+
+        logger.info("RAG Pipeline initialized",
                    model=self.config['llm_config']['model'],
                    embedding_model=self.config['embedding_config']['model'],
-                   memory_enabled=self.cache is not None)
+                   memory_enabled=self.cache is not None,
+                   smart_filtering=self.metadata_analyzer.smart_filtering_enabled)
     
     def _try_qdrant(self) -> bool:
         """Try to initialize Qdrant vector store"""
@@ -289,13 +307,141 @@ class RAGPipeline:
             self.bm25_index = None
             self.bm25_documents = []  # Store document texts for BM25
             self.bm25_metadata = []   # Store metadata for BM25 documents
+            self.bm25_backfill_complete = False  # Track backfill status
             logger.info("✅ Hybrid search components initialized")
+
+            # Start BM25 backfill in background thread to avoid startup delays
+            import threading
+            self.backfill_thread = threading.Thread(
+                target=self._populate_bm25_from_existing_documents,
+                daemon=True
+            )
+            self.backfill_thread.start()
+            logger.info("🚀 BM25 backfill started in background")
+
         except Exception as e:
             logger.error("Failed to initialize hybrid search", error=str(e))
             # Set fallback values
             self.bm25_index = None
             self.bm25_documents = []
             self.bm25_metadata = []
+            self.bm25_backfill_complete = False
+
+    def _populate_bm25_from_existing_documents(self):
+        """Populate BM25 index with existing documents from Qdrant on startup (optimized)"""
+        try:
+            # Only proceed if we have Qdrant available
+            if not hasattr(self, 'qdrant_client') or not self.qdrant_client:
+                logger.info("🔄 Qdrant not available, skipping BM25 backfill")
+                return
+
+            logger.info("🔄 Starting optimized BM25 backfill from existing Qdrant documents...")
+
+            # Use smaller batches for better performance
+            batch_size = 50  # Reduced from 100
+            documents_processed = 0
+            offset = None
+
+            # Process documents in batches to avoid memory issues
+            while True:
+                try:
+                    # Fetch batch of documents
+                    response = self.qdrant_client.scroll(
+                        collection_name=self.collection_name,
+                        limit=batch_size,
+                        offset=offset,
+                        with_payload=True,
+                        with_vectors=False  # We only need the text content
+                    )
+
+                    points = response[0]
+                    if not points:
+                        break
+
+                    # Process batch immediately instead of storing all
+                    batch_docs = []
+                    batch_metadata = []
+
+                    for point in points:
+                        payload = point.payload
+
+                        # Extract text content (try different field names)
+                        text_content = (
+                            payload.get('text') or
+                            payload.get('content') or
+                            payload.get('_node_content') or
+                            str(payload)
+                        )
+
+                        if text_content and len(text_content.strip()) > 10:  # Only meaningful content
+                            batch_docs.append(text_content)
+
+                            # Store metadata for search result mapping (consistent with _update_bm25_index format)
+                            metadata = {
+                                'node_id': str(point.id),
+                                'metadata': {
+                                    'point_id': str(point.id),
+                                    'filename': payload.get('filename', 'Unknown'),
+                                    'doc_type': payload.get('doc_type', 'company'),
+                                    'added_at': payload.get('added_at', ''),
+                                    'page': payload.get('page', 0),
+                                    # Copy any other metadata from payload for smart filtering
+                                    **payload  # Include all existing metadata for smart filtering
+                                },
+                                'text': text_content
+                            }
+                            batch_metadata.append(metadata)
+
+                    # Add batch to main storage
+                    self.bm25_documents.extend(batch_docs)
+                    self.bm25_metadata.extend(batch_metadata)
+
+                    documents_processed += len(batch_docs)
+                    logger.info(f"📄 Processed {documents_processed} documents for BM25...")
+
+                    # Update offset for next batch
+                    offset = response[1]
+
+                    if len(points) < batch_size:
+                        break
+
+                except Exception as batch_error:
+                    logger.error(f"Error processing batch: {str(batch_error)}")
+                    break
+
+            logger.info(f"📚 Found {documents_processed} documents in Qdrant for BM25 indexing")
+
+            # Build BM25 index if we have documents
+            if self.bm25_documents:
+                logger.info("🔨 Building BM25 index...")
+                from rank_bm25 import BM25Okapi
+
+                # Tokenize in smaller chunks to avoid memory spikes
+                tokenized_docs = []
+                chunk_size = 100
+
+                for i in range(0, len(self.bm25_documents), chunk_size):
+                    chunk = self.bm25_documents[i:i+chunk_size]
+                    tokenized_chunk = [self._tokenize_text(doc) for doc in chunk]
+                    tokenized_docs.extend(tokenized_chunk)
+                    logger.info(f"⚡ Tokenized {min(i+chunk_size, len(self.bm25_documents))}/{len(self.bm25_documents)} documents")
+
+                # Build the BM25 index
+                self.bm25_index = BM25Okapi(tokenized_docs)
+
+                logger.info(f"✅ BM25 backfill completed: {len(self.bm25_documents)} documents indexed")
+                logger.info("🎯 Hybrid search (vector + keyword) now available for ALL documents")
+                self.bm25_backfill_complete = True
+            else:
+                logger.info("⚠️ No suitable documents found for BM25 indexing")
+                self.bm25_backfill_complete = True
+
+        except Exception as e:
+            logger.error(f"❌ BM25 backfill failed: {str(e)}")
+            # Don't crash the system, just log the error
+            import traceback
+            logger.error(f"Full error trace: {traceback.format_exc()}")
+            self.bm25_backfill_complete = True  # Mark as complete even if failed
     
     def _update_bm25_index(self, nodes):
         """Update BM25 index with new document nodes"""
@@ -348,18 +494,151 @@ class RAGPipeline:
             
             # Parse documents into nodes
             nodes = self.node_parser.get_nodes_from_documents(documents)
-            
-            # Ensure nodes inherit the document metadata including job_id
-            for node in nodes:
-                if not node.metadata:
-                    node.metadata = {}
-                # Preserve important metadata from parent document
-                node.metadata['doc_type'] = doc_type
-                node.metadata['added_at'] = datetime.utcnow().isoformat()
-                # Ensure job_id is preserved for deletion tracking
-                if documents and documents[0].metadata and 'job_id' in documents[0].metadata:
-                    node.metadata['job_id'] = documents[0].metadata['job_id']
-                    node.metadata['filename'] = documents[0].metadata.get('filename', 'Unknown')
+
+            # Extract document-level metadata for each document using new approach
+            logger.info(f"Extracting document-level metadata for {len(documents)} documents")
+            document_metadata_cache = {}
+
+            for doc in documents:
+                try:
+                    filename = doc.metadata.get('filename', 'Unknown') if doc.metadata else 'Unknown'
+
+                    # Step 1: Extract document-level metadata (primary framework detection)
+                    doc_level_metadata = await self.metadata_analyzer.extract_document_level_metadata(
+                        content=doc.text,
+                        filename=filename,
+                        doc_type=doc_type
+                    )
+
+                    # Store for chunk inheritance
+                    document_metadata_cache[filename] = doc_level_metadata
+
+                    # Add document-level metadata to the document
+                    if not doc.metadata:
+                        doc.metadata = {}
+                    doc.metadata.update(doc_level_metadata)
+
+                    logger.info(f"Document-level metadata extracted for {filename}",
+                               primary_framework=doc_level_metadata.get('primary_framework'),
+                               frameworks=doc_level_metadata.get('frameworks', []),
+                               document_type=doc_level_metadata.get('document_type'))
+
+                except Exception as e:
+                    logger.warning(f"Document-level metadata extraction failed for document",
+                                 filename=filename, error=str(e))
+                    # Create fallback document metadata
+                    document_metadata_cache[filename] = {
+                        'source_document': filename,
+                        'primary_framework': 'unknown',
+                        'frameworks': ['unknown'],
+                        'document_type': 'other',
+                        'content_domain': 'general',
+                        'context_tags': []
+                    }
+
+            # Step 2: Process chunks with document-level inheritance + chunk-level refinement
+            logger.info(f"Processing {len(nodes)} chunks with inheritance + refinement")
+            processed_chunks = 0
+
+            # Parallel processing with controlled concurrency
+            import asyncio
+            parallel_limit = 8  # Process 8 chunks concurrently
+            semaphore = asyncio.Semaphore(parallel_limit)
+
+            async def process_chunk(chunk_index, node):
+                async with semaphore:
+                    if not node.metadata:
+                        node.metadata = {}
+
+                    # Find the source document for this chunk
+                    source_doc = None
+                    if hasattr(node, 'ref_doc_id') and documents:
+                        # Try to match by document ID
+                        for doc in documents:
+                            if hasattr(doc, 'doc_id') and doc.doc_id == node.ref_doc_id:
+                                source_doc = doc
+                                break
+                        # Fallback to first document if no match found
+                        if source_doc is None:
+                            source_doc = documents[0]
+                    elif documents:
+                        source_doc = documents[0]
+
+                    # Get document-level metadata
+                    filename = source_doc.metadata.get('filename', 'Unknown') if source_doc and source_doc.metadata else 'Unknown'
+                    doc_metadata = document_metadata_cache.get(filename, {})
+
+                    try:
+                        # Generate chunk metadata with inheritance + refinement
+                        chunk_metadata_obj = await self.metadata_analyzer.extract_chunk_metadata(
+                            chunk_content=getattr(node, 'text', '') or getattr(node, 'content', ''),
+                            document_metadata=doc_metadata,
+                            chunk_index=chunk_index
+                        )
+
+                        # Convert chunk metadata to dictionary
+                        chunk_metadata_dict = self.metadata_analyzer.create_metadata_dict(chunk_metadata_obj)
+
+                        # Add chunk metadata to node
+                        node.metadata.update(chunk_metadata_dict)
+
+                        # Add system metadata
+                        node.metadata['doc_type'] = doc_type
+                        node.metadata['added_at'] = datetime.utcnow().isoformat()
+
+                        # Ensure job_id and filename are preserved for deletion tracking
+                        if source_doc and source_doc.metadata:
+                            if 'job_id' in source_doc.metadata:
+                                node.metadata['job_id'] = source_doc.metadata['job_id']
+                            if 'filename' in source_doc.metadata:
+                                node.metadata['filename'] = source_doc.metadata['filename']
+
+                        # Log chunk processing (every 20th chunk or if it's refined)
+                        if chunk_index % 20 == 0 or (hasattr(chunk_metadata_obj, 'attributes') and
+                                                    chunk_metadata_obj.attributes.get('chunk_focus') !=
+                                                    doc_metadata.get('primary_framework')):
+                            logger.debug(f"Chunk {chunk_index} processed",
+                                       filename=filename,
+                                       primary_framework=doc_metadata.get('primary_framework'),
+                                       chunk_focus=chunk_metadata_obj.attributes.get('chunk_focus') if hasattr(chunk_metadata_obj, 'attributes') else None)
+
+                        return 1  # Success count
+
+                    except Exception as e:
+                        logger.warning(f"Chunk metadata processing failed for chunk {chunk_index}",
+                                     filename=filename, error=str(e))
+                        return 0  # Failure count
+
+            # Process all chunks in parallel
+            logger.info(f"🚀 Starting parallel processing with {parallel_limit} concurrent workers")
+            tasks = [process_chunk(chunk_index, node) for chunk_index, node in enumerate(nodes)]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            # Count successful processes
+            processed_chunks = sum(r for r in results if isinstance(r, int) and r > 0)
+            failed_chunks = len(results) - processed_chunks
+
+            if failed_chunks > 0:
+                logger.warning(f"⚠️ {failed_chunks} chunks failed processing")
+
+            logger.info(f"✅ Parallel processing completed: {processed_chunks}/{len(nodes)} chunks processed successfully")
+
+            # Process fallback for chunks that didn't get metadata
+            for chunk_index, node in enumerate(nodes):
+                if 'chunk_index' not in node.metadata:
+                    # This chunk didn't get processed, apply fallback metadata
+                    if doc_metadata:
+                        node.metadata.update(doc_metadata)
+                    node.metadata['doc_type'] = doc_type
+                    node.metadata['added_at'] = datetime.utcnow().isoformat()
+                    node.metadata['chunk_index'] = chunk_index
+
+                    # Ensure job_id and filename are preserved
+                    if source_doc and source_doc.metadata:
+                        if 'job_id' in source_doc.metadata:
+                            node.metadata['job_id'] = source_doc.metadata['job_id']
+                        if 'filename' in source_doc.metadata:
+                            node.metadata['filename'] = source_doc.metadata['filename']
                 
                 # Preserve page information if available in node start_char_idx
                 if hasattr(node, 'start_char_idx') and hasattr(node, 'ref_doc_id'):
@@ -390,6 +669,12 @@ class RAGPipeline:
                 for key in self.cache.scan_iter(match=pattern):
                     self.cache.delete(key)
             
+            # Log summary of document-level metadata processing
+            logger.info(f"Document-level metadata processing completed",
+                       documents_processed=len(documents),
+                       chunks_processed=processed_chunks,
+                       total_chunks=len(nodes))
+
             logger.info(f"Added {len(documents)} documents to index",
                        doc_type=doc_type,
                        total_nodes=len(nodes),
@@ -644,7 +929,45 @@ class RAGPipeline:
     
     async def _retrieve_documents(self, query: str, doc_type_filter: Optional[List[str]], similarity_threshold: Optional[float] = None, filters: Optional[Dict[str, Any]] = None) -> List[Dict]:
         """Hybrid retrieval: combines vector search with BM25 keyword search using buffer approach"""
-        
+
+        # Analyze query intent for smart filtering
+        try:
+            query_intent = await self.metadata_analyzer.analyze_query_intent(query)
+            logger.info(f"Query intent analyzed",
+                       query=query[:50],
+                       confidence=query_intent.confidence,
+                       domains=query_intent.content_domains,
+                       framework=query_intent.required_filters.get('framework'),
+                       tags=query_intent.context_tags[:3])  # First 3 tags for brevity
+
+            # Apply smart filtering if confidence is high enough
+            if query_intent.confidence > 0.6 and self.metadata_analyzer.smart_filtering_enabled:
+                # Merge intent-based filters with existing filters
+                smart_filters = filters.copy() if filters else {}
+
+                # Apply required filters from intent analysis
+                for key, value in query_intent.required_filters.items():
+                    smart_filters[key] = value
+
+                # Apply excluded filters (handled in vector/keyword search methods)
+                if query_intent.excluded_filters:
+                    smart_filters['_excluded'] = query_intent.excluded_filters
+
+                logger.info(f"Smart filtering applied",
+                           original_filters=filters,
+                           smart_filters=smart_filters,
+                           confidence=query_intent.confidence)
+
+                filters = smart_filters
+            else:
+                logger.debug(f"Smart filtering skipped",
+                           confidence=query_intent.confidence,
+                           enabled=self.metadata_analyzer.smart_filtering_enabled)
+
+        except Exception as e:
+            logger.warning(f"Query intent analysis failed, proceeding without smart filtering",
+                         error=str(e))
+
         # Get the target document limit
         doc_limit = self._get_document_limit(query)
         
@@ -720,7 +1043,52 @@ class RAGPipeline:
                         node_doc_type = node.metadata.get('doc_type') if node.metadata else None
                         if node_doc_type not in doc_type_filter:
                             continue  # Skip nodes that don't match filter
-                    
+
+                    # Apply smart metadata filters if specified
+                    if filters:
+                        node_metadata = node.metadata or {}
+
+                        # Apply required filters (must match exactly)
+                        skip_node = False
+                        for key, value in filters.items():
+                            if key.startswith('_'):  # Skip special filter keys
+                                continue
+                            if key in ['job_id']:  # Skip already handled filters
+                                continue
+
+                            node_value = node_metadata.get(key)
+                            if node_value != value:
+                                # For context_tags, also check if the required tag is in the list
+                                if key == 'context_tags' and isinstance(node_value, list):
+                                    if value not in node_value:
+                                        skip_node = True
+                                        break
+                                else:
+                                    skip_node = True
+                                    break
+
+                        if skip_node:
+                            continue
+
+                        # Apply excluded filters (must NOT match)
+                        if '_excluded' in filters:
+                            excluded_filters = filters['_excluded']
+                            skip_node = False
+                            for key, value in excluded_filters.items():
+                                node_value = node_metadata.get(key)
+                                if node_value == value:
+                                    # For context_tags, check if excluded tag is in the list
+                                    if key == 'context_tags' and isinstance(node_value, list):
+                                        if value in node_value:
+                                            skip_node = True
+                                            break
+                                    else:
+                                        skip_node = True
+                                        break
+
+                            if skip_node:
+                                continue
+
                     all_results.append({
                         'content': node.text,
                         'metadata': node.metadata or {},
@@ -778,7 +1146,52 @@ class RAGPipeline:
                         doc_type = doc_metadata['metadata'].get('doc_type')
                         if doc_type not in doc_type_filter:
                             continue
-                    
+
+                    # Apply smart metadata filters if specified
+                    if filters:
+                        node_metadata = doc_metadata['metadata']
+
+                        # Apply required filters (must match exactly)
+                        skip_node = False
+                        for key, value in filters.items():
+                            if key.startswith('_'):  # Skip special filter keys
+                                continue
+                            if key in ['job_id']:  # Skip already handled filters
+                                continue
+
+                            node_value = node_metadata.get(key)
+                            if node_value != value:
+                                # For context_tags, also check if the required tag is in the list
+                                if key == 'context_tags' and isinstance(node_value, list):
+                                    if value not in node_value:
+                                        skip_node = True
+                                        break
+                                else:
+                                    skip_node = True
+                                    break
+
+                        if skip_node:
+                            continue
+
+                        # Apply excluded filters (must NOT match)
+                        if '_excluded' in filters:
+                            excluded_filters = filters['_excluded']
+                            skip_node = False
+                            for key, value in excluded_filters.items():
+                                node_value = node_metadata.get(key)
+                                if node_value == value:
+                                    # For context_tags, check if excluded tag is in the list
+                                    if key == 'context_tags' and isinstance(node_value, list):
+                                        if value in node_value:
+                                            skip_node = True
+                                            break
+                                    else:
+                                        skip_node = True
+                                        break
+
+                            if skip_node:
+                                continue
+
                     results.append({
                         'content': doc_metadata['text'],
                         'metadata': doc_metadata['metadata'],
@@ -1009,11 +1422,11 @@ Focus on providing comprehensive, accurate actuarial content. Don't worry about 
             # Create a dedicated formatting LLM using GPT-4 for better performance
             from llama_index.llms.openai import OpenAI
             formatting_llm = OpenAI(
-                model="gpt-4",
+                model="gpt-4o-mini",
                 temperature=0,
                 max_tokens=4000
             )
-            logger.info("🔧 Pass 2: Using GPT-4 for enhanced formatting capabilities")
+            logger.info("🔧 Pass 2: Using GPT-4o-mini for enhanced formatting capabilities")
 
             # Check if self.llm exists and is properly configured
             logger.info(f"🔍 Pass 2: LLM object exists: {self.llm is not None}")
@@ -1398,9 +1811,11 @@ Assessment:"""
                 response = await self._generate_chunked_response(query, diverse_docs, conversation_context)
             
             # Apply enhancements
-            enhanced_response = self._completeness_check(query, response, diverse_docs)
-            
-            return enhanced_response
+            # OPTIMIZATION: Disable completeness check for faster response times
+            # enhanced_response = self._completeness_check(query, response, diverse_docs)
+            logger.info("⚡ Completeness check disabled for speed optimization")
+
+            return response
             
         except Exception as e:
             logger.error(f"Enhanced processing failed: {str(e)}")
@@ -1477,10 +1892,10 @@ Structure your response to systematically cover every major topic found in the s
         document_groups = self._create_semantic_document_groups(documents)
         response_parts = []
         
-        # Process all groups in parallel using threading for faster response
-        def process_group(group_index: int, doc_group: List[Dict]) -> str:
+        # Process all groups in parallel using async for faster response
+        async def process_group_async(group_index: int, doc_group: List[Dict]) -> str:
             group_context = "\n\n".join([f"[Doc {i+1}]\n{doc['content']}" for i, doc in enumerate(doc_group)])
-            
+
             group_prompt = f"""You are answering: {query}
 
 This is document group {group_index} of {len(document_groups)}. Focus on these documents:
@@ -1506,7 +1921,7 @@ More content here.
 
 CRITICAL FORMATTING RULES:
 - Main headings: **1. Title**, **2. Title**, **3. Title** (consistent numbering)
-- Sub-headings: **1.1 Title**, **1.2 Title** (consistent sub-numbering)  
+- Sub-headings: **1.1 Title**, **1.2 Title** (consistent sub-numbering)
 - NEVER use random ** mid-sentence or inconsistent bold patterns
 - NEVER create orphaned dashes like ":\n-\n" - always use complete bullet points
 - NEVER end with random asterisks or incomplete formatting
@@ -1517,21 +1932,29 @@ CRITICAL FORMATTING RULES:
 CONTENT REQUIREMENTS:
 - Include ALL relevant formulas, calculations, and mathematical expressions
 - Preserve specific numerical values like 90%, $2.50 per $1,000, etc.
-- Copy EXACT formulas from documents 
+- Copy EXACT formulas from documents
 - Include ALL calculation methods and procedures
 - Maintain technical accuracy and detail
 
 Provide a detailed response covering all information that relates to the question using proper markdown formatting."""
-            
-            group_response = self.llm.complete(group_prompt)
-            logger.info(f"Processed group {group_index}/{len(document_groups)}")
-            return group_response.text.strip()
-        
-        # Process all groups concurrently using ThreadPoolExecutor
-        import concurrent.futures
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            futures = [executor.submit(process_group, i+1, doc_group) for i, doc_group in enumerate(document_groups)]
-            response_parts = [future.result() for future in concurrent.futures.as_completed(futures)]
+
+            # Use AsyncOpenAI for true parallel processing
+            response = await self.async_client.chat.completions.create(
+                model=self.actual_model,
+                messages=[{"role": "user", "content": group_prompt}],
+                temperature=0,
+                max_tokens=4000
+            )
+
+            logger.info(f"⚡ Processed group {group_index}/{len(document_groups)} (async)")
+            return response.choices[0].message.content.strip()
+
+        # Process all groups concurrently using asyncio.gather for true parallelism
+        logger.info(f"⚡ Starting parallel processing of {len(document_groups)} groups with AsyncOpenAI")
+        response_parts = await asyncio.gather(*[
+            process_group_async(i+1, doc_group)
+            for i, doc_group in enumerate(document_groups)
+        ])
         
         # Temporarily disable structured JSON approach - has parsing issues
         # TODO: Fix JSON parsing and markdown conversion in structured approach
@@ -2381,10 +2804,10 @@ Answer:"""
         
         # Get config
         config = self.config.get('retrieval_config', {})
-        base_limit = config.get('base_document_limit', 25)
-        standard_limit = config.get('standard_document_limit', 35)  
-        complex_limit = config.get('complex_document_limit', 45)
-        max_limit = config.get('max_document_limit', 60)
+        base_limit = config.get('base_document_limit', 15)
+        standard_limit = config.get('standard_document_limit', 20)
+        complex_limit = config.get('complex_document_limit', 30)
+        max_limit = config.get('max_document_limit', 40)
         
         # Analyze query complexity
         query_lower = query.lower()

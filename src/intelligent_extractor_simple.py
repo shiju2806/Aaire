@@ -12,6 +12,33 @@ from openai import AsyncOpenAI
 
 logger = structlog.get_logger()
 
+
+def strip_markdown_json(response_content: str) -> str:
+    """
+    Strip markdown code blocks from OpenAI response to extract raw JSON
+    Handles cases where OpenAI returns JSON wrapped in ```json ... ```
+    """
+    content = response_content.strip()
+
+    # Find JSON code block using regex to handle text before the block
+    import re
+
+    # Pattern to match ```json ... ``` or ``` ... ``` blocks
+    json_block_pattern = r'```(?:json)?\s*\n?(.*?)\n?```'
+    match = re.search(json_block_pattern, content, re.DOTALL)
+
+    if match:
+        # Extract content from within the code block
+        content = match.group(1).strip()
+    else:
+        # Fallback: try simple start/end patterns
+        if content.startswith('```json') and content.endswith('```'):
+            content = content[7:-3].strip()
+        elif content.startswith('```') and content.endswith('```'):
+            content = content[3:-3].strip()
+
+    return content
+
 @dataclass
 class PersonJobTitle:
     """Extracted person and job title information"""
@@ -81,7 +108,9 @@ Provide results in JSON format:
                 max_tokens=2000
             )
             
-            result = json.loads(response.choices[0].message.content)
+            response_content = response.choices[0].message.content.strip()
+            cleaned_content = strip_markdown_json(response_content)
+            result = json.loads(cleaned_content)
             
             # Convert to PersonJobTitle objects
             job_titles = []

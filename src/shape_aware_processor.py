@@ -108,14 +108,14 @@ class ShapeAwareProcessor:
                 logger.info("Attempting intelligent extraction")
                 intelligent_result = await self._intelligent_extraction_fallback(file_path, query_context)
                 
-                if intelligent_result and intelligent_result.confidence >= self.confidence_threshold:
-                    logger.info(f"Intelligent extraction successful with confidence {intelligent_result.confidence:.3f}")
+                if intelligent_result and intelligent_result.confidence_score >= self.confidence_threshold:
+                    logger.info(f"Intelligent extraction successful with confidence {intelligent_result.confidence_score:.3f}")
                     
                     return ProcessingResult(
                         success=True,
                         extraction_method="intelligent_llm",
                         organizational_data=self._convert_intelligent_to_org_data(intelligent_result),
-                        confidence=intelligent_result.confidence,
+                        confidence=intelligent_result.confidence_score,
                         metadata={"extraction_type": "intelligent_fallback"},
                         warnings=intelligent_result.warnings,
                         fallback_used=not prefer_spatial
@@ -195,14 +195,14 @@ class ShapeAwareProcessor:
                 logger.info("Attempting intelligent extraction for PowerPoint")
                 intelligent_result = await self._intelligent_extraction_fallback(file_path, query_context)
                 
-                if intelligent_result and intelligent_result.confidence >= self.confidence_threshold:
+                if intelligent_result and intelligent_result.confidence_score >= self.confidence_threshold:
                     logger.info(f"Intelligent PowerPoint extraction successful")
                     
                     return ProcessingResult(
                         success=True,
                         extraction_method="pptx_intelligent",
                         organizational_data=self._convert_intelligent_to_org_data(intelligent_result),
-                        confidence=intelligent_result.confidence,
+                        confidence=intelligent_result.confidence_score,
                         metadata={"extraction_type": "intelligent_fallback", "file_type": "pptx"},
                         warnings=intelligent_result.warnings,
                         fallback_used=True

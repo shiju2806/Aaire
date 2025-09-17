@@ -12,6 +12,33 @@ import structlog
 
 logger = structlog.get_logger()
 
+
+def strip_markdown_json(response_content: str) -> str:
+    """
+    Strip markdown code blocks from OpenAI response to extract raw JSON
+    Handles cases where OpenAI returns JSON wrapped in ```json ... ```
+    """
+    content = response_content.strip()
+
+    # Find JSON code block using regex to handle text before the block
+    import re
+
+    # Pattern to match ```json ... ``` or ``` ... ``` blocks
+    json_block_pattern = r'```(?:json)?\s*\n?(.*?)\n?```'
+    match = re.search(json_block_pattern, content, re.DOTALL)
+
+    if match:
+        # Extract content from within the code block
+        content = match.group(1).strip()
+    else:
+        # Fallback: try simple start/end patterns
+        if content.startswith('```json') and content.endswith('```'):
+            content = content[7:-3].strip()
+        elif content.startswith('```') and content.endswith('```'):
+            content = content[3:-3].strip()
+
+    return content
+
 class DocumentType(Enum):
     ORGANIZATIONAL_CHART = "org_chart"
     APPROVAL_MATRIX = "approval_matrix"
@@ -119,8 +146,9 @@ Be extremely conservative. If you're not 100% certain, don't include it.
 
         try:
             response = await self._query_llm(extraction_prompt)
-            result_data = json.loads(response)
-            
+            cleaned_response = strip_markdown_json(response)
+            result_data = json.loads(cleaned_response)
+
             # Validate extraction quality
             confidence = self._calculate_confidence(result_data, text)
             warnings = result_data.get('warnings', [])
@@ -170,8 +198,9 @@ Focus on accuracy over completeness. Better to miss information than to hallucin
 
         try:
             response = await self._query_llm(extraction_prompt)
-            result_data = json.loads(response)
-            
+            cleaned_response = strip_markdown_json(response)
+            result_data = json.loads(cleaned_response)
+
             confidence = self._calculate_confidence(result_data, text)
             warnings = result_data.get('warnings', [])
             
@@ -211,8 +240,9 @@ Extract:
 
         try:
             response = await self._query_llm(extraction_prompt)
-            result_data = json.loads(response)
-            
+            cleaned_response = strip_markdown_json(response)
+            result_data = json.loads(cleaned_response)
+
             confidence = self._calculate_confidence(result_data, text)
             
             return ExtractionResult(
@@ -229,7 +259,7 @@ Extract:
     
     async def _extract_general_information(self, text: str, query_context: str) -> ExtractionResult:
         """General information extraction"""
-        
+
         extraction_prompt = f"""
 Extract information relevant to: {query_context}
 
@@ -246,8 +276,19 @@ Return JSON with extracted information and confidence scores.
 
         try:
             response = await self._query_llm(extraction_prompt)
-            result_data = json.loads(response)
-            
+            cleaned_response = strip_markdown_json(response)
+
+            # Add validation before JSON parsing
+            if not cleaned_response or cleaned_response.strip() == "":
+                logger.warning("Empty response from LLM after cleaning")
+                return self._fallback_extraction(text, DocumentType.GENERAL)
+
+            try:
+                result_data = json.loads(cleaned_response)
+            except json.JSONDecodeError as json_error:
+                logger.warning(f"JSON decode error: {json_error}, raw response: {response[:200]}...")
+                return self._fallback_extraction(text, DocumentType.GENERAL)
+
             confidence = self._calculate_confidence(result_data, text)
             
             return ExtractionResult(
