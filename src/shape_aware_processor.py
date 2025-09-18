@@ -225,7 +225,7 @@ class ShapeAwareProcessor:
         """Use existing intelligent extraction as fallback"""
         
         try:
-            from .intelligent_extractor import IntelligentDocumentExtractor
+            from .extraction.bridge_adapter import IntelligentDocumentExtractor
             
             # Read file content (simplified - would need proper file reading)
             with open(file_path, 'rb') as f:

@@ -6,12 +6,12 @@ from .structured_generator import (
     StructuredResponseGenerator,
     ResponseStructure,
     GroundingValidationResult,
-    ResponseQualityValidator
+    SemanticAlignmentResult
 )
 
 __all__ = [
     'StructuredResponseGenerator',
     'ResponseStructure',
     'GroundingValidationResult',
-    'ResponseQualityValidator'
+    'SemanticAlignmentResult'
 ]

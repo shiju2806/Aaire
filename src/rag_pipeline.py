@@ -777,15 +777,12 @@ class RAGPipeline:
                 if self.structured_generator:
                     try:
                         logger.info("🔧 Applying structured response generation for quality control")
-                        retrieved_chunks = [{
-                            'content': doc.get('content', ''),
-                            'metadata': doc.get('metadata', {}),
-                            'score': doc.get('score', 0.0)
-                        } for doc in retrieved_docs]
+                        # Use processed context instead of raw chunks
+                        processed_context = "\n\n".join([doc.get('content', '') for doc in retrieved_docs])
 
                         structured_response = await self.structured_generator.generate_structured_response(
                             query=query,
-                            retrieved_chunks=retrieved_chunks,
+                            processed_context=processed_context,
                             conversation_history=conversation_history
                         )
 
@@ -828,7 +825,7 @@ class RAGPipeline:
                             logger.info("🔧 Applying structured response generation for general knowledge")
                             structured_response = await self.structured_generator.generate_structured_response(
                                 query=query,
-                                retrieved_chunks=[],  # No source documents for general knowledge
+                                processed_context="",  # No source documents for general knowledge
                                 conversation_history=conversation_history
                             )
                             response = structured_response.answer
@@ -1832,17 +1829,19 @@ Assessment:"""
             if self.structured_generator is not None:
                 try:
                     logger.info("🔧 Applying structured response generation for quality control")
-                    structured_response = await self.structured_generator.generate_response(
+                    # Extract the processed context that was actually used for response generation
+                    # This is the same context processing used in _generate_enhanced_single_pass
+                    processed_context = "\n\n".join([doc['content'] for doc in diverse_docs])
+
+                    structured_response = await self.structured_generator.generate_structured_response(
                         query=query,
-                        raw_response=response,
-                        source_chunks=[{
-                            'content': doc.get('content', ''),
-                            'metadata': doc.get('metadata', {}),
-                            'score': doc.get('score', 0.0)
-                        } for doc in diverse_docs]
+                        processed_context=processed_context,
+                        conversation_history=None  # No conversation history available in this method
                     )
+
+                    # Extract the formatted answer from the structured response
+                    response = structured_response.answer
                     logger.info("✅ Structured response generation completed successfully")
-                    return structured_response
                 except Exception as e:
                     logger.warning(f"Structured response generation failed: {e}, returning original response")
                     return response

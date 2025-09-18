@@ -1,12 +1,12 @@
 # AAIRE Response Generation Configuration - Industry Standard
 # Prevents hallucination, document references, and formatting issues
 
-# Grounding validation - prevent hallucinations
-grounding:
-  enabled: true
-  similarity_threshold: 0.7  # Minimum similarity between response claims and source chunks
-  require_citations: true
-  fallback_when_no_information: true
+# Semantic alignment validation - replaces ineffective grounding validation
+semantic_alignment:
+  enabled: true  # New LLM-based intent matching system
+  intent_match_threshold: 0.6  # Minimum score for query-content alignment
+  require_specific_content: true  # Prefer specific methodologies over general principles
+  fallback_when_misaligned: true
 
 # Prohibited content - prevent document references
 prohibited_content:
@@ -102,12 +102,14 @@ prompts:
 
     GROUNDING RULES:
     1. ONLY use information from the provided context chunks
-    2. If information is not in the chunks, say "I don't have specific information about [topic]"
-    3. NEVER invent terms, acronyms, or concepts not present in the source material
-    4. NEVER mention document numbers, page numbers, or sections
+    2. Use your expert knowledge to connect related concepts (e.g., "USSTAT" = "US Statutory", "reserves" includes various reserve calculation methods)
+    3. CRITICAL: Be explicit about the level of specificity in your information - if you have detailed methodologies for what's asked, provide them with confidence; if you only have general principles, clearly state limitations
+    4. If the context truly contains no relevant information for the topic, acknowledge this honestly
+    5. NEVER invent terms, acronyms, or concepts not present in the source material
+    6. NEVER mention document numbers, page numbers, or sections
 
     RESPONSE STRUCTURE:
-    1. Provide a direct answer based on available information
+    1. Provide a direct answer based on available information, being explicit about specificity level
     2. Include confidence level: high/medium/low/none
     3. Summarize what sources were used (without naming documents)
     4. Generate 3 self-contained follow-up questions
@@ -132,27 +134,10 @@ prompts:
     2. {question_2}
     3. {question_3}
 
-# Validation rules - post-generation checks
+# Validation rules - semantic alignment validation only
 validation:
   enabled: true
-
-  checks:
-    - name: "grounding_check"
-      description: "Verify all claims are supported by source material"
-      enabled: true
-      threshold: 0.7
-
-    - name: "document_reference_check"
-      description: "Ensure no document references in response"
-      enabled: true
-
-    - name: "formula_preservation_check"
-      description: "Verify mathematical formulas are preserved correctly"
-      enabled: true
-
-    - name: "confidence_alignment_check"
-      description: "Ensure confidence level matches available information"
-      enabled: true
+  method: "semantic_alignment"  # Uses new LLM-based validation instead of old checks
 
 # Performance settings
 performance:

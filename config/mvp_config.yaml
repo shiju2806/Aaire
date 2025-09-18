@@ -112,6 +112,44 @@ embedding_config:
   dimensions: 1536
   batch_size: 100
 
+# Framework Detection Configuration - MVP-FR-019
+framework_detection:
+  enabled: true
+  confidence_threshold: 0.7
+
+  # Framework keyword mappings for metadata classification
+  frameworks:
+    usstat:
+      keywords: ["usstat", "us statutory", "statutory accounting", "naic", "sap", "ssap", "fis", "blanks"]
+      content_indicators: ["reserve methodology", "statutory reserves", "commissioners standard", "valuation manual"]
+      confidence_boost: 0.1
+
+    ifrs:
+      keywords: ["ifrs", "international financial reporting", "iasb", "ias", "ifrs 17", "contractual service margin"]
+      content_indicators: ["building block approach", "variable fee approach", "premium allocation approach"]
+      confidence_boost: 0.1
+
+    gaap:
+      keywords: ["gaap", "us gaap", "generally accepted accounting principles", "asc", "accounting standards codification"]
+      content_indicators: ["long duration", "short duration", "targeted improvements", "ldti"]
+      confidence_boost: 0.1
+
+    actuarial:
+      keywords: ["actuarial", "mortality", "morbidity", "lapse", "surrender", "policyholder behavior"]
+      content_indicators: ["actuarial assumptions", "experience studies", "credibility", "liability adequacy"]
+      confidence_boost: 0.15
+
+    regulatory:
+      keywords: ["regulatory", "capital", "solvency", "risk based capital", "rbc", "c-1", "c-2", "c-3", "c-4"]
+      content_indicators: ["authorized control level", "company action level", "regulatory action level"]
+      confidence_boost: 0.1
+
+  # Default classification when no framework is detected
+  default_framework: "general"
+
+  # Minimum content length for framework detection
+  min_content_length: 100
+
 # Performance Settings
 performance:
   query_timeout: 30

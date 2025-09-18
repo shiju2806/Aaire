@@ -1,0 +1,113 @@
+extraction:
+  # Document type extractors configuration
+  extractors:
+    organizational:
+      enabled: true
+      patterns:
+        - "organizational chart"
+        - "org chart"
+        - "reporting structure"
+        - "reports to"
+        - "manager"
+        - "director"
+        - "supervisor"
+        - "team lead"
+      confidence_threshold: 0.7
+      llm_model: "gpt-4o-mini"
+      cache_ttl_hours: 24
+
+    financial:
+      enabled: true
+      patterns:
+        - "financial structure"
+        - "finance team"
+        - "accounting structure"
+        - "cfo"
+        - "treasurer"
+        - "controller"
+        - "financial analyst"
+      confidence_threshold: 0.8
+      llm_model: "gpt-4o-mini"
+      cache_ttl_hours: 24
+
+    approval_matrix:
+      enabled: true
+      patterns:
+        - "approval matrix"
+        - "approval limit"
+        - "authorization limit"
+        - "spending authority"
+        - "approval threshold"
+        - "signature authority"
+      confidence_threshold: 0.75
+      llm_model: "gpt-4o-mini"
+      cache_ttl_hours: 24
+
+    general:
+      enabled: true
+      patterns: []
+      confidence_threshold: 0.6
+      llm_model: "gpt-4o-mini"
+      cache_ttl_hours: 12
+
+  # Smart routing configuration
+  routing:
+    cache_enabled: true
+    cache_ttl_hours: 24
+    pattern_matching_threshold: 0.8
+    light_llm_threshold: 0.6
+    full_llm_threshold: 0.4
+    fallback_enabled: true
+
+  # LLM circuit breaker settings
+  circuit_breaker:
+    enabled: true
+    failure_threshold: 5
+    timeout_seconds: 60
+    half_open_max_calls: 3
+
+  # Processing limits
+  limits:
+    max_document_size_mb: 50
+    max_chunk_size: 8000
+    max_concurrent_extractions: 10
+    timeout_seconds: 300
+
+  # Quality thresholds
+  quality:
+    min_confidence_for_storage: 0.3
+    contamination_warning_threshold: 0.2
+    duplicate_similarity_threshold: 0.95
+
+# Qdrant configuration
+qdrant:
+  collection_name: "aaire-documents"
+  vector_size: 1536
+  distance_metric: "cosine"
+
+  # Indexing configuration
+  indexes:
+    - field: "document_id"
+      type: "keyword"
+    - field: "document_fingerprint"
+      type: "keyword"
+    - field: "job_id"
+      type: "keyword"
+    - field: "primary_framework"
+      type: "keyword"
+    - field: "content_domains"
+      type: "keyword"
+    - field: "document_type"
+      type: "keyword"
+    - field: "tenant_id"
+      type: "keyword"
+    - field: "extraction_timestamp"
+      type: "integer"
+
+  # Search configuration
+  search:
+    default_limit: 10
+    max_limit: 100
+    score_threshold: 0.5
+    hnsw_ef: 128
+    exact_search_threshold: 1000
