@@ -1,0 +1,161 @@
+# AAIRE Response Generation Configuration - Industry Standard
+# Prevents hallucination, document references, and formatting issues
+
+# Grounding validation - prevent hallucinations
+grounding:
+  enabled: true
+  similarity_threshold: 0.7  # Minimum similarity between response claims and source chunks
+  require_citations: true
+  fallback_when_no_information: true
+
+# Prohibited content - prevent document references
+prohibited_content:
+  document_references:
+    - "Document \\d+"
+    - "Doc \\d+"
+    - "Page \\d+"
+    - "Section \\d+\\.\\d+"
+    - "according to Document"
+    - "as mentioned in Document"
+    - "per Document"
+    - "see Document"
+
+  # Terms that must not be invented if not in source
+  forbidden_fabrications:
+    - "Surplus Reserve"
+    - "SR \\("  # Prevent "SR (Surplus Reserve)"
+    - "Deferred Acquisition Cost Reserve"
+    - "DR \\("  # When not actually meaning Deterministic Reserve
+
+# Response structure - force consistent formatting
+response_structure:
+  required_sections:
+    - answer
+    - confidence_level
+    - source_summary
+    - follow_up_questions
+
+  confidence_levels:
+    - "high"      # Information directly found in sources
+    - "medium"    # Information partially found, some inference needed
+    - "low"       # Limited information available
+    - "none"      # No relevant information found
+
+  follow_up_rules:
+    max_questions: 3
+    no_document_references: true
+    focus_on_topic_expansion: true
+    self_contained: true  # Questions must be understandable without context
+
+# Fallback responses when no information is available
+no_information_responses:
+  templates:
+    general: |
+      I don't have specific information about {topic} in the current documentation.
+
+      The available documents focus on {available_topics}. Would you like information about any of these related areas instead?
+
+    calculation: |
+      I don't have the specific calculation methodology for {calculation_type} in the current documentation.
+
+      However, I can help with related calculations such as {related_calculations}. Would any of these be helpful?
+
+    policy_type: |
+      I don't have specific information about {policy_type} policies in the current documentation.
+
+      The available materials cover {available_policy_types}. Would you like information about any of these instead?
+
+# Content cleaning rules - fix at source
+content_cleaning:
+  remove_patterns:
+    - "Section \\d+\\.\\s*[A-Z]\\.\\s*\\d+"  # Remove section references
+    - "\\(See\\s+Section\\s+\\d+[^)]*\\)"    # Remove section cross-references
+    - "Page \\d+ of \\d+"                    # Remove page numbers
+    - "\\[Doc \\d+\\]"                       # Remove doc markers
+
+  preserve_patterns:
+    - "\\$[\\d,]+(\\.\\d{2})?"              # Preserve dollar amounts
+    - "\\d+\\.\\d+%"                        # Preserve percentages
+    - "\\d+%"                               # Preserve percentages
+    - "[A-Z]{2,}\\s+\\d+"                   # Preserve standards (SSAP 51, etc.)
+
+  fix_formatting:
+    # Fix broken bullet points
+    - pattern: "\\n\\s*•\\s*\\n"
+      replacement: "\n• "
+
+    # Fix separated bullets
+    - pattern: ":\\n-\\n"
+      replacement: ":\n- "
+
+    # Clean up formulas
+    - pattern: "𝐸𝑥\\+𝑡"
+      replacement: "E(x+t)"
+
+    - pattern: "𝑉𝑁𝑃𝑅"
+      replacement: "VNPR"
+
+# Prompt templates - industry standard strict prompts
+prompts:
+  system_instruction: |
+    You are AAIRE, an expert insurance and accounting assistant. Follow these CRITICAL rules:
+
+    GROUNDING RULES:
+    1. ONLY use information from the provided context chunks
+    2. If information is not in the chunks, say "I don't have specific information about [topic]"
+    3. NEVER invent terms, acronyms, or concepts not present in the source material
+    4. NEVER mention document numbers, page numbers, or sections
+
+    RESPONSE STRUCTURE:
+    1. Provide a direct answer based on available information
+    2. Include confidence level: high/medium/low/none
+    3. Summarize what sources were used (without naming documents)
+    4. Generate 3 self-contained follow-up questions
+
+    FORMATTING RULES:
+    1. Use clean markdown formatting
+    2. Preserve exact formulas and calculations from sources
+    3. Use consistent bullet points and numbering
+    4. Keep mathematical notation readable
+
+  response_template: |
+    Based on the available information:
+
+    {answer}
+
+    **Confidence Level**: {confidence}
+
+    **Sources Used**: {source_summary}
+
+    **Follow-up Questions**:
+    1. {question_1}
+    2. {question_2}
+    3. {question_3}
+
+# Validation rules - post-generation checks
+validation:
+  enabled: true
+
+  checks:
+    - name: "grounding_check"
+      description: "Verify all claims are supported by source material"
+      enabled: true
+      threshold: 0.7
+
+    - name: "document_reference_check"
+      description: "Ensure no document references in response"
+      enabled: true
+
+    - name: "formula_preservation_check"
+      description: "Verify mathematical formulas are preserved correctly"
+      enabled: true
+
+    - name: "confidence_alignment_check"
+      description: "Ensure confidence level matches available information"
+      enabled: true
+
+# Performance settings
+performance:
+  max_response_length: 2500  # Prevent overly long responses
+  max_context_chunks: 10     # Limit context to prevent hallucination
+  response_timeout: 30       # seconds

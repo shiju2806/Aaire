@@ -17,7 +17,8 @@ import re
 import json
 import numpy as np
 from collections import defaultdict
-from rank_bm25 import BM25Okapi
+from .whoosh_search_engine import WhooshSearchEngine, SearchResult
+from .response_generation.structured_generator import StructuredResponseGenerator
 
 # LlamaIndex imports - current version structure  
 from llama_index.core import (
@@ -49,10 +50,11 @@ except ImportError:
 import redis
 import structlog
 from .relevance_engine import RelevanceEngine
-from .intelligent_extractor_simple import IntelligentDocumentExtractor
+from .extraction.bridge_adapter import IntelligentDocumentExtractor
 from .enhanced_query_handler_simple import EnhancedQueryHandler
 from .conversation_memory import ConversationMemoryManager
-from .smart_metadata_analyzer import SmartMetadataAnalyzer, QueryIntent, DocumentMetadata
+from .extraction.document_processing_adapter import DocumentProcessingAdapter
+from .extraction.models import QueryIntent, LegacyDocumentMetadata as DocumentMetadata
 
 logger = structlog.get_logger()
 
@@ -171,16 +173,28 @@ class RAGPipeline:
             config=memory_config
         )
 
-        # Initialize smart metadata analyzer for intent-based filtering
-        self.metadata_analyzer = SmartMetadataAnalyzer(
-            openai_api_key=os.getenv("OPENAI_API_KEY")
+        # Initialize new extraction system for document processing
+        self.metadata_analyzer = DocumentProcessingAdapter(
+            qdrant_client=self.qdrant_client if hasattr(self, 'qdrant_client') else None,
+            llm_client=self.async_client  # Use AsyncOpenAI client instead of LlamaIndex wrapper
         )
+
+        # Initialize structured response generator for quality control
+        try:
+            self.structured_generator = StructuredResponseGenerator(
+                llm_client=self.async_client
+            )
+            logger.info("✅ StructuredResponseGenerator initialized successfully")
+        except Exception as e:
+            logger.warning(f"StructuredResponseGenerator initialization failed: {e}")
+            self.structured_generator = None
 
         logger.info("RAG Pipeline initialized",
                    model=self.config['llm_config']['model'],
                    embedding_model=self.config['embedding_config']['model'],
                    memory_enabled=self.cache is not None,
-                   smart_filtering=self.metadata_analyzer.smart_filtering_enabled)
+                   smart_filtering=self.metadata_analyzer.smart_filtering_enabled,
+                   structured_response_enabled=True)
     
     def _try_qdrant(self) -> bool:
         """Try to initialize Qdrant vector store"""
@@ -301,48 +315,48 @@ class RAGPipeline:
             self.cache = None
     
     def _init_hybrid_search(self):
-        """Initialize BM25 keyword search for hybrid retrieval"""
+        """Initialize Whoosh keyword search for hybrid retrieval"""
         try:
-            # Initialize BM25 index (will be populated when documents are added)
-            self.bm25_index = None
-            self.bm25_documents = []  # Store document texts for BM25
-            self.bm25_metadata = []   # Store metadata for BM25 documents
-            self.bm25_backfill_complete = False  # Track backfill status
-            logger.info("✅ Hybrid search components initialized")
+            # Initialize Whoosh search engine
+            self.whoosh_engine = WhooshSearchEngine(
+                index_dir="search_index",
+                analyzer_type="stemming",
+                max_memory_mb=256
+            )
+            self.keyword_search_ready = False
+            logger.info("✅ Whoosh search engine initialized")
 
-            # Start BM25 backfill in background thread to avoid startup delays
+            # Start Whoosh backfill in background thread to avoid startup delays
             import threading
             self.backfill_thread = threading.Thread(
-                target=self._populate_bm25_from_existing_documents,
+                target=self._populate_whoosh_from_existing_documents,
                 daemon=True
             )
             self.backfill_thread.start()
-            logger.info("🚀 BM25 backfill started in background")
+            logger.info("🚀 Whoosh backfill started in background")
 
         except Exception as e:
-            logger.error("Failed to initialize hybrid search", error=str(e))
+            logger.error("Failed to initialize Whoosh search", error=str(e))
             # Set fallback values
-            self.bm25_index = None
-            self.bm25_documents = []
-            self.bm25_metadata = []
-            self.bm25_backfill_complete = False
+            self.whoosh_engine = None
+            self.keyword_search_ready = False
 
-    def _populate_bm25_from_existing_documents(self):
-        """Populate BM25 index with existing documents from Qdrant on startup (optimized)"""
+    def _populate_whoosh_from_existing_documents(self):
+        """Populate Whoosh index with existing documents from Qdrant on startup (optimized)"""
         try:
-            # Only proceed if we have Qdrant available
-            if not hasattr(self, 'qdrant_client') or not self.qdrant_client:
-                logger.info("🔄 Qdrant not available, skipping BM25 backfill")
+            # Only proceed if we have Qdrant and Whoosh available
+            if not hasattr(self, 'qdrant_client') or not self.qdrant_client or not self.whoosh_engine:
+                logger.info("🔄 Qdrant or Whoosh not available, skipping Whoosh backfill")
                 return
 
-            logger.info("🔄 Starting optimized BM25 backfill from existing Qdrant documents...")
+            logger.info("🔄 Starting Whoosh backfill from existing Qdrant documents...")
 
             # Use smaller batches for better performance
-            batch_size = 50  # Reduced from 100
+            batch_size = 50
             documents_processed = 0
             offset = None
 
-            # Process documents in batches to avoid memory issues
+            # Process documents in batches
             while True:
                 try:
                     # Fetch batch of documents
@@ -358,9 +372,8 @@ class RAGPipeline:
                     if not points:
                         break
 
-                    # Process batch immediately instead of storing all
+                    # Prepare documents for Whoosh indexing
                     batch_docs = []
-                    batch_metadata = []
 
                     for point in points:
                         payload = point.payload
@@ -374,30 +387,33 @@ class RAGPipeline:
                         )
 
                         if text_content and len(text_content.strip()) > 10:  # Only meaningful content
-                            batch_docs.append(text_content)
-
-                            # Store metadata for search result mapping (consistent with _update_bm25_index format)
-                            metadata = {
-                                'node_id': str(point.id),
+                            # Convert to Whoosh document format
+                            whoosh_doc = {
+                                'doc_id': str(point.id),
+                                'content': text_content,
+                                'title': payload.get('filename', 'Unknown'),
                                 'metadata': {
                                     'point_id': str(point.id),
                                     'filename': payload.get('filename', 'Unknown'),
                                     'doc_type': payload.get('doc_type', 'company'),
                                     'added_at': payload.get('added_at', ''),
                                     'page': payload.get('page', 0),
-                                    # Copy any other metadata from payload for smart filtering
-                                    **payload  # Include all existing metadata for smart filtering
-                                },
-                                'text': text_content
+                                    'primary_framework': payload.get('primary_framework', 'unknown'),
+                                    'content_domains': payload.get('content_domains', []),
+                                    'document_type': payload.get('document_type', 'unknown'),
+                                    'file_path': payload.get('filename', 'Unknown'),
+                                    'confidence_score': payload.get('confidence_score', 0.5),
+                                    # Include all existing metadata for smart filtering
+                                    **payload
+                                }
                             }
-                            batch_metadata.append(metadata)
+                            batch_docs.append(whoosh_doc)
 
-                    # Add batch to main storage
-                    self.bm25_documents.extend(batch_docs)
-                    self.bm25_metadata.extend(batch_metadata)
-
-                    documents_processed += len(batch_docs)
-                    logger.info(f"📄 Processed {documents_processed} documents for BM25...")
+                    # Index batch in Whoosh
+                    if batch_docs:
+                        indexed_count = self.whoosh_engine.add_documents(batch_docs, batch_processing=True)
+                        documents_processed += indexed_count
+                        logger.info(f"📄 Indexed {documents_processed} documents in Whoosh...")
 
                     # Update offset for next batch
                     offset = response[1]
@@ -406,71 +422,61 @@ class RAGPipeline:
                         break
 
                 except Exception as batch_error:
-                    logger.error(f"Error processing batch: {str(batch_error)}")
+                    logger.error(f"Error processing Whoosh batch: {str(batch_error)}")
                     break
 
-            logger.info(f"📚 Found {documents_processed} documents in Qdrant for BM25 indexing")
-
-            # Build BM25 index if we have documents
-            if self.bm25_documents:
-                logger.info("🔨 Building BM25 index...")
-                from rank_bm25 import BM25Okapi
-
-                # Tokenize in smaller chunks to avoid memory spikes
-                tokenized_docs = []
-                chunk_size = 100
-
-                for i in range(0, len(self.bm25_documents), chunk_size):
-                    chunk = self.bm25_documents[i:i+chunk_size]
-                    tokenized_chunk = [self._tokenize_text(doc) for doc in chunk]
-                    tokenized_docs.extend(tokenized_chunk)
-                    logger.info(f"⚡ Tokenized {min(i+chunk_size, len(self.bm25_documents))}/{len(self.bm25_documents)} documents")
-
-                # Build the BM25 index
-                self.bm25_index = BM25Okapi(tokenized_docs)
-
-                logger.info(f"✅ BM25 backfill completed: {len(self.bm25_documents)} documents indexed")
-                logger.info("🎯 Hybrid search (vector + keyword) now available for ALL documents")
-                self.bm25_backfill_complete = True
-            else:
-                logger.info("⚠️ No suitable documents found for BM25 indexing")
-                self.bm25_backfill_complete = True
+            logger.info(f"📚 Whoosh backfill completed: {documents_processed} documents indexed")
+            logger.info("🎯 Hybrid search (vector + keyword) now available for ALL documents")
+            self.keyword_search_ready = True
 
         except Exception as e:
-            logger.error(f"❌ BM25 backfill failed: {str(e)}")
+            logger.error(f"❌ Whoosh backfill failed: {str(e)}")
             # Don't crash the system, just log the error
             import traceback
             logger.error(f"Full error trace: {traceback.format_exc()}")
-            self.bm25_backfill_complete = True  # Mark as complete even if failed
+            self.keyword_search_ready = True  # Mark as ready even if failed
     
-    def _update_bm25_index(self, nodes):
-        """Update BM25 index with new document nodes"""
+    def _update_whoosh_index(self, nodes):
+        """Update Whoosh index with new document nodes"""
         try:
-            # Add node texts and metadata to BM25 storage
+            if not self.whoosh_engine:
+                logger.warning("Whoosh engine not available for indexing")
+                return
+
+            # Convert nodes to Whoosh document format
+            whoosh_docs = []
             for node in nodes:
                 text = node.get_content() if hasattr(node, 'get_content') else str(node.text)
-                self.bm25_documents.append(text)
-                self.bm25_metadata.append({
-                    'node_id': node.node_id if hasattr(node, 'node_id') else str(uuid.uuid4()),
-                    'metadata': node.metadata or {},
-                    'text': text
-                })
-            
-            # Rebuild BM25 index with all documents
-            if self.bm25_documents:
-                # Tokenize documents for BM25 (simple word splitting)
-                tokenized_docs = [self._tokenize_text(doc) for doc in self.bm25_documents]
-                self.bm25_index = BM25Okapi(tokenized_docs)
-                logger.info(f"✅ BM25 index updated with {len(self.bm25_documents)} documents")
+                node_id = node.node_id if hasattr(node, 'node_id') else str(uuid.uuid4())
+                metadata = node.metadata or {}
+
+                whoosh_doc = {
+                    'doc_id': node_id,
+                    'content': text,
+                    'title': metadata.get('filename', 'Unknown'),
+                    'metadata': {
+                        'node_id': node_id,
+                        'filename': metadata.get('filename', 'Unknown'),
+                        'doc_type': metadata.get('doc_type', 'company'),
+                        'added_at': metadata.get('added_at', ''),
+                        'page': metadata.get('page', 0),
+                        'primary_framework': metadata.get('primary_framework', 'unknown'),
+                        'content_domains': metadata.get('content_domains', []),
+                        'document_type': metadata.get('document_type', 'unknown'),
+                        'file_path': metadata.get('filename', 'Unknown'),
+                        'confidence_score': metadata.get('confidence_score', 0.5),
+                        **metadata  # Include all existing metadata
+                    }
+                }
+                whoosh_docs.append(whoosh_doc)
+
+            # Index documents in Whoosh (incremental)
+            if whoosh_docs:
+                indexed_count = self.whoosh_engine.add_documents(whoosh_docs, batch_processing=True)
+                logger.info(f"✅ Whoosh index updated with {indexed_count} documents")
+                self.keyword_search_ready = True
         except Exception as e:
-            logger.error("Failed to update BM25 index", error=str(e))
-    
-    def _tokenize_text(self, text: str) -> List[str]:
-        """Simple tokenization for BM25"""
-        # Convert to lowercase and split on non-alphanumeric characters
-        text = text.lower()
-        tokens = re.findall(r'\b\w+\b', text)
-        return tokens
+            logger.error("Failed to update Whoosh index", error=str(e))
     
     def _init_local_index(self):
         """Initialize local vector store as fallback"""
@@ -504,8 +510,10 @@ class RAGPipeline:
                     filename = doc.metadata.get('filename', 'Unknown') if doc.metadata else 'Unknown'
 
                     # Step 1: Extract document-level metadata (primary framework detection)
+                    # Use hierarchical sampling instead of full document to avoid OpenAI rate limits
+                    sampled_content = self._sample_document_for_metadata(doc.text, filename)
                     doc_level_metadata = await self.metadata_analyzer.extract_document_level_metadata(
-                        content=doc.text,
+                        content=sampled_content,
                         filename=filename,
                         doc_type=doc_type
                     )
@@ -661,7 +669,7 @@ class RAGPipeline:
             self.index.insert_nodes(nodes)
             
             # Update BM25 index for hybrid search
-            self._update_bm25_index(nodes)
+            self._update_whoosh_index(nodes)
             
             # Invalidate cache for this document type
             if self.cache:
@@ -678,7 +686,7 @@ class RAGPipeline:
             logger.info(f"Added {len(documents)} documents to index",
                        doc_type=doc_type,
                        total_nodes=len(nodes),
-                       bm25_documents=len(self.bm25_documents))
+                       whoosh_docs=self.whoosh_engine.get_document_count())
             
             return len(nodes)
             
@@ -764,7 +772,29 @@ class RAGPipeline:
                     logger.info(f"Multiple document sources found for query, applying strict citation filters")
                 
                 response = await self._generate_response(query, retrieved_docs, user_context, conversation_history, session_id)
-                
+
+                # Apply structured response generation for quality control
+                if self.structured_generator:
+                    try:
+                        logger.info("🔧 Applying structured response generation for quality control")
+                        retrieved_chunks = [{
+                            'content': doc.get('content', ''),
+                            'metadata': doc.get('metadata', {}),
+                            'score': doc.get('score', 0.0)
+                        } for doc in retrieved_docs]
+
+                        structured_response = await self.structured_generator.generate_structured_response(
+                            query=query,
+                            retrieved_chunks=retrieved_chunks,
+                            conversation_history=conversation_history
+                        )
+
+                        # Extract the formatted answer from the structured response
+                        response = structured_response.answer
+                        logger.info("✅ Structured response generation completed successfully")
+                    except Exception as e:
+                        logger.warning(f"Structured response generation failed: {e}, using original response")
+
                 # Pass 2: Format the response using LLM-based formatting
                 response = self._format_response(response)
                 
@@ -791,6 +821,21 @@ class RAGPipeline:
                     # Use general knowledge response
                     logger.info(f"No relevant documents found, using general knowledge for: '{query[:50]}...'")
                     response = await self._generate_response(query, [], user_context, conversation_history, session_id)
+
+                    # Apply structured response generation for general knowledge responses
+                    if self.structured_generator:
+                        try:
+                            logger.info("🔧 Applying structured response generation for general knowledge")
+                            structured_response = await self.structured_generator.generate_structured_response(
+                                query=query,
+                                retrieved_chunks=[],  # No source documents for general knowledge
+                                conversation_history=conversation_history
+                            )
+                            response = structured_response.answer
+                            logger.info("✅ Structured response generation completed for general knowledge")
+                        except Exception as e:
+                            logger.warning(f"Structured response generation failed: {e}, using original response")
+
                     response = self._format_response(response)
                     response = self._remove_citations_from_response(response)
                     citations = []
@@ -1107,14 +1152,14 @@ class RAGPipeline:
         return all_results[:vector_limit] if 'vector_limit' in locals() else all_results
     
     async def _keyword_search(self, query: str, doc_type_filter: Optional[List[str]], filters: Optional[Dict[str, Any]] = None, buffer_limit: Optional[int] = None) -> List[Dict]:
-        """BM25-based keyword search"""
+        """Whoosh-based keyword search"""
         results = []
-        
+
         try:
-            if not self.bm25_index or not self.bm25_documents:
-                logger.info("BM25 index not available, skipping keyword search")
+            if not self.whoosh_engine or not self.keyword_search_ready:
+                logger.info("Whoosh search engine not available, skipping keyword search")
                 return results
-            
+
             # Use buffer limit if provided (for combined ranking), otherwise use dynamic calculation
             if buffer_limit is not None:
                 keyword_limit = buffer_limit
@@ -1123,95 +1168,63 @@ class RAGPipeline:
                 doc_limit = self._get_document_limit(query)
                 # For standalone search, allocate 30% to keyword search
                 keyword_limit = int(doc_limit * 0.3)
-            
-            # Tokenize query for BM25
-            query_tokens = self._tokenize_text(query)
-            
-            # Get BM25 scores for all documents
-            bm25_scores = self.bm25_index.get_scores(query_tokens)
-            
-            # Create results with scores
-            for i, score in enumerate(bm25_scores):
-                if score > 0 and i < len(self.bm25_metadata):  # Only include docs with positive scores
-                    doc_metadata = self.bm25_metadata[i]
-                    
-                    # Apply job_id filter if specified (highest priority)
-                    if filters and 'job_id' in filters:
-                        doc_job_id = doc_metadata['metadata'].get('job_id')
-                        if doc_job_id != filters['job_id']:
-                            continue  # Skip docs from different documents
-                    
-                    # Apply document type filter if specified
-                    if doc_type_filter:
-                        doc_type = doc_metadata['metadata'].get('doc_type')
-                        if doc_type not in doc_type_filter:
-                            continue
 
-                    # Apply smart metadata filters if specified
-                    if filters:
-                        node_metadata = doc_metadata['metadata']
+            # Convert filters to Whoosh format
+            whoosh_filters = self._convert_filters_for_whoosh(filters, doc_type_filter)
 
-                        # Apply required filters (must match exactly)
-                        skip_node = False
-                        for key, value in filters.items():
-                            if key.startswith('_'):  # Skip special filter keys
-                                continue
-                            if key in ['job_id']:  # Skip already handled filters
-                                continue
+            # Perform Whoosh search
+            search_results = self.whoosh_engine.search(
+                query=query,
+                filters=whoosh_filters,
+                limit=keyword_limit,
+                highlight=False
+            )
 
-                            node_value = node_metadata.get(key)
-                            if node_value != value:
-                                # For context_tags, also check if the required tag is in the list
-                                if key == 'context_tags' and isinstance(node_value, list):
-                                    if value not in node_value:
-                                        skip_node = True
-                                        break
-                                else:
-                                    skip_node = True
-                                    break
+            # Convert Whoosh SearchResults to our format
+            for search_result in search_results:
+                results.append({
+                    'content': search_result.content,
+                    'metadata': search_result.metadata,
+                    'score': search_result.score,
+                    'source_type': search_result.metadata.get('doc_type', 'unknown'),
+                    'node_id': search_result.doc_id,
+                    'search_type': 'keyword'
+                })
 
-                        if skip_node:
-                            continue
-
-                        # Apply excluded filters (must NOT match)
-                        if '_excluded' in filters:
-                            excluded_filters = filters['_excluded']
-                            skip_node = False
-                            for key, value in excluded_filters.items():
-                                node_value = node_metadata.get(key)
-                                if node_value == value:
-                                    # For context_tags, check if excluded tag is in the list
-                                    if key == 'context_tags' and isinstance(node_value, list):
-                                        if value in node_value:
-                                            skip_node = True
-                                            break
-                                    else:
-                                        skip_node = True
-                                        break
-
-                            if skip_node:
-                                continue
-
-                    results.append({
-                        'content': doc_metadata['text'],
-                        'metadata': doc_metadata['metadata'],
-                        'score': float(score),  # BM25 score
-                        'source_type': doc_metadata['metadata'].get('doc_type', 'unknown'),
-                        'node_id': doc_metadata['node_id'],
-                        'search_type': 'keyword'
-                    })
-            
-            # Sort by BM25 score and take top results
-            results.sort(key=lambda x: x['score'], reverse=True)
-            results = results[:keyword_limit]
-            
-            logger.info(f"BM25 keyword search found {len(results)} results")
+            logger.info(f"Whoosh keyword search found {len(results)} results")
             
         except Exception as e:
-            logger.error("Failed to perform BM25 keyword search", error=str(e))
+            logger.error("Failed to perform Whoosh keyword search", error=str(e))
         
         return results
-    
+
+    def _convert_filters_for_whoosh(self, filters: Optional[Dict[str, Any]], doc_type_filter: Optional[List[str]]) -> Optional[Dict[str, Any]]:
+        """Convert RAG pipeline filters to Whoosh filter format"""
+        if not filters and not doc_type_filter:
+            return None
+
+        whoosh_filters = {}
+
+        if filters:
+            # Handle primary_framework filter (most important for smart metadata)
+            if 'primary_framework' in filters:
+                whoosh_filters['primary_framework'] = filters['primary_framework']
+
+            # Handle content_domains filter
+            if 'content_domains' in filters:
+                whoosh_filters['content_domains'] = filters['content_domains']
+
+            # Handle document_type filter
+            if 'document_type' in filters:
+                whoosh_filters['document_type'] = filters['document_type']
+
+        # Convert doc_type_filter to Whoosh format
+        if doc_type_filter:
+            # Whoosh engine expects doc_type in the document_type field
+            whoosh_filters['document_type'] = doc_type_filter
+
+        return whoosh_filters if whoosh_filters else None
+
     def _combine_search_results(self, vector_results: List[Dict], keyword_results: List[Dict], query: str) -> List[Dict]:
         """Combine and rerank results from vector and keyword search with exact match boosting"""
         
@@ -1392,7 +1405,7 @@ Group documents by content similarity:"""
     
     def _generate_single_pass_response(self, query: str, documents: List[Dict], conversation_context: str) -> str:
         """Fallback single-pass response for smaller document sets"""
-        context = "\n\n".join([f"[Doc {i+1}]\n{doc['content']}" for i, doc in enumerate(documents)])
+        context = "\n\n".join([doc['content'] for doc in documents])
         
         prompt = f"""You are AAIRE, an expert in insurance accounting.
 {conversation_context}
@@ -1815,7 +1828,27 @@ Assessment:"""
             # enhanced_response = self._completeness_check(query, response, diverse_docs)
             logger.info("⚡ Completeness check disabled for speed optimization")
 
-            return response
+            # Apply structured response generation for quality control
+            if self.structured_generator is not None:
+                try:
+                    logger.info("🔧 Applying structured response generation for quality control")
+                    structured_response = await self.structured_generator.generate_response(
+                        query=query,
+                        raw_response=response,
+                        source_chunks=[{
+                            'content': doc.get('content', ''),
+                            'metadata': doc.get('metadata', {}),
+                            'score': doc.get('score', 0.0)
+                        } for doc in diverse_docs]
+                    )
+                    logger.info("✅ Structured response generation completed successfully")
+                    return structured_response
+                except Exception as e:
+                    logger.warning(f"Structured response generation failed: {e}, returning original response")
+                    return response
+            else:
+                logger.info("🔧 StructuredResponseGenerator not available, using original response")
+                return response
             
         except Exception as e:
             logger.error(f"Enhanced processing failed: {str(e)}")
@@ -1836,7 +1869,7 @@ Assessment:"""
     
     def _generate_organizational_response(self, query: str, documents: List[Dict], conversation_context: str) -> str:
         """Generate response for organizational structure queries"""
-        context = "\n\n".join([f"[Doc {i+1}]\n{doc['content']}" for i, doc in enumerate(documents)])
+        context = "\n\n".join([doc['content'] for doc in documents])
         
         prompt = f"""You are AAIRE, an expert in insurance accounting and actuarial matters.
 {conversation_context}
@@ -1853,7 +1886,7 @@ Use appropriate headings and structure the information clearly."""
     
     def _generate_enhanced_single_pass(self, query: str, documents: List[Dict], conversation_context: str) -> str:
         """Enhanced single-pass response for smaller document sets"""
-        context = "\n\n".join([f"[Doc {i+1}]\n{doc['content']}" for i, doc in enumerate(documents)])
+        context = "\n\n".join([doc['content'] for doc in documents])
         
         prompt = f"""You are AAIRE, an expert in insurance accounting.
 {conversation_context}
@@ -1894,7 +1927,7 @@ Structure your response to systematically cover every major topic found in the s
         
         # Process all groups in parallel using async for faster response
         async def process_group_async(group_index: int, doc_group: List[Dict]) -> str:
-            group_context = "\n\n".join([f"[Doc {i+1}]\n{doc['content']}" for i, doc in enumerate(doc_group)])
+            group_context = "\n\n".join([doc['content'] for doc in doc_group])
 
             group_prompt = f"""You are answering: {query}
 
@@ -2384,7 +2417,7 @@ Generate exactly 2-3 contextual follow-up questions that dig deeper into the spe
                 filename = doc.get('metadata', {}).get('filename', 'Unknown')
                 content = doc.get('content', '')[:400]  # First 400 chars
                 
-                specifics.append(f"Document {i} ({filename}):")
+                specifics.append(f"Source ({filename}):")
                 specifics.append(f"Content excerpt: \"{content}...\"")
                 
                 # Extract specific elements from this document
@@ -3571,7 +3604,7 @@ Use professional, precise language with specific details. Include relevant accou
         try:
             # Import the enhanced components
             from .enhanced_query_handler import EnhancedQueryHandler
-            from .intelligent_extractor import IntelligentDocumentExtractor
+            from .extraction.bridge_adapter import IntelligentDocumentExtractor
             
             # Initialize components
             query_handler = EnhancedQueryHandler(self.llm)
@@ -4121,7 +4154,183 @@ Do NOT add unnecessary information - only reformat what's provided."""
         result = re.sub(r'(Summary|Conclusion|Final)', r'✅ \1', result, flags=re.IGNORECASE)
         
         return result.strip()
-    
+
+    def _sample_document_for_metadata(self, doc_text: str, filename: str) -> str:
+        """
+        Sample document content for metadata extraction to avoid OpenAI rate limits.
+        Reduces from 237K tokens to ~30K tokens using strategic hierarchical sampling.
+
+        Industry benchmark approach:
+        - First 10 pages (executive summary, introduction)
+        - Random strategic samples from middle
+        - Last few pages (conclusions)
+        - Key section headers and structured content
+        """
+        import re
+        import random
+
+        # Target ~30K tokens (vs 237K full document) to stay under 200K/min rate limit
+        TARGET_TOKENS = 30000
+        CHARS_PER_TOKEN = 4  # Rough approximation for English text
+        TARGET_CHARS = TARGET_TOKENS * CHARS_PER_TOKEN
+
+        logger.info(f"Sampling document for metadata extraction",
+                   filename=filename,
+                   original_size=len(doc_text),
+                   target_size=TARGET_CHARS)
+
+        # If document is already small enough, return as-is
+        if len(doc_text) <= TARGET_CHARS:
+            logger.info("Document already within target size", size=len(doc_text))
+            return doc_text
+
+        # Split document into logical sections
+        lines = doc_text.split('\n')
+        total_lines = len(lines)
+
+        # Calculate proportional sampling
+        beginning_lines = int(total_lines * 0.15)  # First 15% (introduction, TOC)
+        ending_lines = int(total_lines * 0.10)     # Last 10% (conclusions)
+        middle_sample_lines = int(total_lines * 0.15) # 15% random sample from middle
+
+        sampled_sections = []
+
+        # 1. Beginning section (critical for framework identification)
+        beginning_section = lines[:beginning_lines]
+        sampled_sections.append("=== DOCUMENT BEGINNING ===")
+        sampled_sections.extend(beginning_section)
+
+        # 2. Strategic middle sampling (look for key sections)
+        middle_start = beginning_lines
+        middle_end = total_lines - ending_lines
+        middle_lines = lines[middle_start:middle_end]
+
+        # Dynamic content analysis for intelligent sampling
+        content_lower = doc_text.lower()
+
+        # Detect document frameworks dynamically
+        framework_keywords = {
+            'usstat': ['usstat', 'statutory', 'naic', 'reserve', 'rbc'],
+            'ifrs': ['ifrs', 'international', 'ias', 'fair value'],
+            'gaap': ['gaap', 'generally accepted', 'accounting principles'],
+            'actuarial': ['mortality', 'morbidity', 'lapse', 'policyholder', 'benefit'],
+            'valuation': ['valuation', 'methodology', 'assumption', 'discount rate'],
+            'regulatory': ['regulation', 'compliance', 'requirement', 'standard']
+        }
+
+        detected_frameworks = []
+        for framework, keywords in framework_keywords.items():
+            if any(kw in content_lower for kw in keywords):
+                detected_frameworks.append(framework)
+
+        # Build dynamic keyword list based on detected frameworks
+        dynamic_keywords = ['methodology', 'calculation', 'framework', 'standard', 'requirement', 'principle']
+        for framework in detected_frameworks:
+            dynamic_keywords.extend(framework_keywords[framework])
+
+        # Find important middle sections with dynamic content awareness
+        important_middle = []
+        framework_sections = []  # Prioritize framework-specific content
+
+        for i, line in enumerate(middle_lines):
+            line_clean = line.strip()
+
+            # Structural patterns (always important)
+            is_structural = (line_clean and (
+                re.match(r'^[A-Z][A-Z\s]{10,}$', line_clean) or  # ALL CAPS headers
+                re.match(r'^\d+\.', line_clean) or                # Numbered sections
+                re.match(r'^[IVXLC]+\.', line_clean) or          # Roman numerals
+                re.match(r'^Table \d+', line_clean) or           # Tables
+                re.match(r'^Section \d+', line_clean) or         # Sections
+                re.match(r'^Appendix', line_clean)               # Appendices
+            ))
+
+            # Framework-specific content (highest priority)
+            is_framework_specific = any(keyword in line_clean.lower() for keyword in dynamic_keywords)
+
+            if is_structural or is_framework_specific:
+                # Include this line and context
+                start_idx = max(0, i-1)
+                end_idx = min(len(middle_lines), i+4)
+                section_lines = middle_lines[start_idx:end_idx]
+
+                if is_framework_specific:
+                    framework_sections.extend(section_lines)
+                else:
+                    important_middle.extend(section_lines)
+
+        # Prioritize framework-specific content
+        important_middle = framework_sections + important_middle
+
+        # Remove duplicates while preserving order
+        seen = set()
+        deduplicated_middle = []
+        for line in important_middle:
+            if line not in seen:
+                seen.add(line)
+                deduplicated_middle.append(line)
+        important_middle = deduplicated_middle
+
+        # Use document-specific seed to prevent cross-contamination (define early for logging)
+        import hashlib
+        doc_hash = hashlib.md5(f"{filename}_{len(doc_text)}".encode()).hexdigest()
+
+        # Add document-specific random samples from middle if we haven't captured enough
+        if len(important_middle) < middle_sample_lines:
+            remaining_middle = [line for line in middle_lines if line not in important_middle]
+
+            doc_seed = int(doc_hash[:8], 16) % 2147483647  # Convert to valid seed
+            random.seed(doc_seed)
+
+            additional_samples = random.sample(
+                remaining_middle,
+                min(middle_sample_lines - len(important_middle), len(remaining_middle))
+            )
+            important_middle.extend(additional_samples)
+
+        sampled_sections.append("\n=== DOCUMENT MIDDLE (KEY SECTIONS) ===")
+        sampled_sections.extend(important_middle[:middle_sample_lines])
+
+        # 3. Ending section (conclusions, references)
+        ending_section = lines[-ending_lines:]
+        sampled_sections.append("\n=== DOCUMENT ENDING ===")
+        sampled_sections.extend(ending_section)
+
+        # Combine and check size
+        sampled_content = '\n'.join(sampled_sections)
+
+        # If still too large, do secondary trimming
+        if len(sampled_content) > TARGET_CHARS:
+            # Truncate each section proportionally
+            sections = sampled_content.split('=== DOCUMENT')
+            trimmed_sections = []
+
+            chars_per_section = TARGET_CHARS // len(sections)
+            for section in sections:
+                if len(section) > chars_per_section:
+                    # Keep first part of each section (most important)
+                    trimmed_sections.append(section[:chars_per_section] + "...[TRIMMED]")
+                else:
+                    trimmed_sections.append(section)
+
+            sampled_content = '=== DOCUMENT'.join(trimmed_sections)
+
+        final_size = len(sampled_content)
+        compression_ratio = final_size / len(doc_text)
+
+        logger.info(f"Document sampling completed",
+                   filename=filename,
+                   original_chars=len(doc_text),
+                   sampled_chars=final_size,
+                   compression_ratio=f"{compression_ratio:.3f}",
+                   estimated_tokens=final_size // CHARS_PER_TOKEN,
+                   detected_frameworks=detected_frameworks,
+                   doc_seed_hash=doc_hash[:8],
+                   framework_sections=len(framework_sections),
+                   total_middle_sections=len(important_middle))
+
+        return sampled_content
+
     def clear_cache(self):
         """Clear the response cache to force fresh responses"""
         try:
