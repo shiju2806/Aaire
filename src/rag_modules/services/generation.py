@@ -355,6 +355,101 @@ Group documents by content similarity:"""
             # Fallback: just join the parts
             return "\n\n".join(response_parts)
 
+    def assess_response_quality(self, response: str, query: str, documents: List[Dict]) -> Dict[str, float]:
+        """Score response quality on multiple dimensions"""
+        scores = {}
+
+        # Completeness: Does response address all aspects of the query?
+        query_terms = set(query.lower().split())
+        response_terms = set(response.lower().split())
+        coverage = len(query_terms & response_terms) / len(query_terms) if query_terms else 0
+        scores['completeness'] = min(coverage * 1.5, 1.0)  # Scale up but cap at 1.0
+
+        # Accuracy: Are facts from documents preserved?
+        doc_numbers = set()
+        response_numbers = set()
+        for doc in documents[:3]:  # Check top 3 docs
+            doc_numbers.update(re.findall(r'\d+(?:\.\d+)?%?', doc['content']))
+        response_numbers.update(re.findall(r'\d+(?:\.\d+)?%?', response))
+
+        if doc_numbers:
+            accuracy = len(doc_numbers & response_numbers) / len(doc_numbers)
+            scores['accuracy'] = min(accuracy * 2, 1.0)  # Numbers are important indicators
+        else:
+            scores['accuracy'] = 0.8  # Default if no numbers to compare
+
+        # Formatting: Check structure quality
+        has_sections = bool(re.search(r'^#{1,3}\s+\w+', response, re.MULTILINE))
+        has_bullets = '•' in response or '-' in response
+        has_proper_spacing = '\n\n' in response
+        formatting_score = sum([has_sections * 0.4, has_bullets * 0.3, has_proper_spacing * 0.3])
+        scores['formatting'] = formatting_score
+
+        # Relevance: How well does response match query intent?
+        # Simple keyword-based relevance
+        important_terms = ['calculate', 'formula', 'reserve', 'premium', 'liability', 'gaap', 'ifrs']
+        query_important = sum(1 for term in important_terms if term in query.lower())
+        response_important = sum(1 for term in important_terms if term in response.lower())
+
+        if query_important > 0:
+            scores['relevance'] = min(response_important / query_important, 1.0)
+        else:
+            scores['relevance'] = 0.8  # Default relevance
+
+        # Overall quality score
+        scores['overall'] = (
+            scores['completeness'] * 0.3 +
+            scores['accuracy'] * 0.3 +
+            scores['formatting'] * 0.2 +
+            scores['relevance'] * 0.2
+        )
+
+        return scores
+
+    async def regenerate_with_focus(self, response: str, quality_scores: Dict[str, float],
+                                   query: str, documents: List[Dict]) -> str:
+        """Regenerate response focusing on low-scoring aspects"""
+        focus_areas = []
+
+        if quality_scores['completeness'] < 0.7:
+            focus_areas.append("Ensure all aspects of the query are addressed")
+        if quality_scores['accuracy'] < 0.7:
+            focus_areas.append("Include specific numbers and formulas from the documents")
+        if quality_scores['formatting'] < 0.7:
+            focus_areas.append("Use clear sections, bullet points, and proper spacing")
+        if quality_scores['relevance'] < 0.7:
+            focus_areas.append("Focus on the specific topic asked about")
+
+        if not focus_areas:
+            return response  # Quality is acceptable
+
+        # Regenerate with specific focus
+        context = "\n\n".join([doc['content'] for doc in documents[:5]])
+        regeneration_prompt = f"""Improve this response to better answer the query.
+
+Query: {query}
+
+Current Response:
+{response}
+
+IMPROVEMENT FOCUS:
+{chr(10).join(f"- {area}" for area in focus_areas)}
+
+Documents for reference:
+{context[:3000]}
+
+Provide an improved response that addresses the focus areas:"""
+
+        improved = await self.async_client.chat.completions.create(
+            model=self.actual_model,
+            messages=[{"role": "user", "content": regeneration_prompt}],
+            temperature=0.3,
+            max_tokens=4000
+        )
+
+        logger.info(f"✨ Response regenerated with focus on: {', '.join(focus_areas)}")
+        return improved.choices[0].message.content.strip()
+
     async def generate_follow_up_questions(self, query: str, response: str, retrieved_docs: List[Dict]) -> List[str]:
         """Generate contextual follow-up questions based on the query and response"""
 
