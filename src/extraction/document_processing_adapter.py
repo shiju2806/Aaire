@@ -238,6 +238,7 @@ class DocumentProcessingAdapter:
         """Create fallback metadata when extraction fails"""
         return {
             'source_document': filename,
+            'filename': filename,  # CRITICAL: Preserve filename for citations
             'primary_framework': 'unknown',
             'frameworks': ['unknown'],
             'document_type': doc_type,

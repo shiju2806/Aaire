@@ -289,7 +289,7 @@ class WhooshSearchEngine:
                 self._update_search_stats(search_time)
 
                 logger.info("Search completed",
-                           query=query[:50],
+                           query=query,  # Don't truncate for debugging
                            results_count=len(search_results),
                            search_time_ms=f"{search_time:.2f}")
 
@@ -300,11 +300,65 @@ class WhooshSearchEngine:
             return []
 
     def _build_query(self, query_str: str, filters: Optional[Dict[str, Any]]) -> Query:
-        """Build Whoosh query with filters"""
+        """Build Whoosh query with filters and improved parsing"""
 
-        # Parse main content query
+        logger.info(f"🔍 DEBUG: Building query for full string: '{query_str}' (length: {len(query_str)})")
+
+        # Parse main content query with more robust error handling
         parser = MultifieldParser(['content', 'title'], self.index.schema)
-        content_query = parser.parse(query_str)
+
+        try:
+            # For longer queries, use smarter term selection instead of requiring ALL terms
+            if len(query_str.split()) > 6:
+                # Extract important content words (skip common words like "how", "do", "the", etc.)
+                import re
+                words = re.findall(r'\b\w{3,}\b', query_str.lower())  # Words 3+ chars
+                stop_words = {'how', 'the', 'and', 'for', 'are', 'can', 'what', 'when', 'where', 'why', 'will', 'would', 'should', 'could'}
+                content_words = [w for w in words if w not in stop_words][:5]  # Take first 5 content words
+
+                if content_words:
+                    # Use OR logic for content words - much more flexible
+                    from whoosh.query import Or, Term
+                    term_queries = []
+                    for word in content_words:
+                        term_queries.append(Term('content', word))
+                        term_queries.append(Term('title', word))
+                    content_query = Or(term_queries)
+                    logger.info(f"🔍 DEBUG: Using content-word OR query with terms: {content_words}")
+                else:
+                    content_query = parser.parse(query_str)
+            else:
+                # For shorter queries, use original parsing
+                content_query = parser.parse(query_str)
+
+            logger.info(f"🔍 DEBUG: Final parsed query: {content_query}")
+        except Exception as e:
+            logger.warning(f"Query parsing failed for '{query_str}': {e}")
+            # Fallback: try escaping special characters and parsing again
+            try:
+                from whoosh.qparser import escape
+                escaped_query = escape(query_str)
+                content_query = parser.parse(escaped_query)
+                logger.info(f"🔍 DEBUG: Used escaped query: {escaped_query}")
+            except Exception as e2:
+                logger.warning(f"Escaped query parsing also failed: {e2}")
+                # Last fallback: simple term-based search
+                from whoosh.query import Term, Or
+                words = query_str.split()
+                term_queries = []
+                for word in words[:10]:  # Limit to first 10 words to avoid complexity
+                    if len(word) > 2:  # Skip very short words
+                        term_queries.append(Term('content', word.lower()))
+                        term_queries.append(Term('title', word.lower()))
+
+                if term_queries:
+                    content_query = Or(term_queries)
+                    logger.info(f"🔍 DEBUG: Used fallback term-based query with {len(term_queries)} terms")
+                else:
+                    # Ultimate fallback: match everything
+                    from whoosh.query import Every
+                    content_query = Every()
+                    logger.warning("🔍 DEBUG: Using Every() query as ultimate fallback")
 
         # Add filters
         if not filters:

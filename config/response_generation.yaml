@@ -3,10 +3,10 @@
 
 # Semantic alignment validation - replaces ineffective grounding validation
 semantic_alignment:
-  enabled: true  # New LLM-based intent matching system
-  intent_match_threshold: 0.6  # Minimum score for query-content alignment
-  require_specific_content: true  # Prefer specific methodologies over general principles
-  fallback_when_misaligned: true
+  enabled: false  # DISABLED - Too restrictive, rejecting good responses
+  intent_match_threshold: 0.3  # Lowered threshold (when enabled)
+  require_specific_content: false  # Don't require specific content
+  fallback_when_misaligned: false  # Don't fallback even if misaligned
 
 # Prohibited content - prevent document references
 prohibited_content:
@@ -53,7 +53,7 @@ no_information_responses:
     general: |
       I don't have specific information about {topic} in the current documentation.
 
-      The available documents focus on {available_topics}. Would you like information about any of these related areas instead?
+      Please try rephrasing your question or ask about related insurance accounting topics I can help with.
 
     calculation: |
       I don't have the specific calculation methodology for {calculation_type} in the current documentation.

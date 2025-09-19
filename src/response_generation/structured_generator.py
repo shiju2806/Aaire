@@ -129,8 +129,22 @@ class StructuredResponseGenerator:
             self.logger.info(f"🚨 PIPELINE DEBUG 1: raw_response length={len(raw_response)}, preview='{raw_response[:200]}...'")
 
             # Semantic alignment validation - replaces old grounding validation
-            semantic_alignment = await self._validate_semantic_alignment(query, raw_response, retrieved_chunks)
-            self.logger.info(f"🚨 SEMANTIC ALIGNMENT: is_aligned={semantic_alignment.is_aligned}, intent_match={semantic_alignment.intent_match_score}, specificity={semantic_alignment.content_specificity}")
+            semantic_alignment_enabled = self.config.get('semantic_alignment', {}).get('enabled', True)
+            if semantic_alignment_enabled:
+                semantic_alignment = await self._validate_semantic_alignment(query, raw_response, retrieved_chunks)
+                self.logger.info(f"🚨 SEMANTIC ALIGNMENT: is_aligned={semantic_alignment.is_aligned}, intent_match={semantic_alignment.intent_match_score}, specificity={semantic_alignment.content_specificity}")
+            else:
+                # Skip semantic alignment validation when disabled
+                self.logger.info("🚨 SEMANTIC ALIGNMENT: DISABLED - using default alignment")
+                semantic_alignment = SemanticAlignmentResult(
+                    is_aligned=True,
+                    intent_match_score=1.0,
+                    content_specificity="specific",
+                    query_intent="user_query",
+                    content_intent="matching_content",
+                    confidence_level="high",
+                    explanation="Semantic alignment validation disabled in configuration"
+                )
 
             # Create dummy validation result for compatibility
             validation_result = GroundingValidationResult(
@@ -414,11 +428,11 @@ class StructuredResponseGenerator:
                 response.answer = template.format(topic=topic)
                 response.confidence_level = "none"
 
-        # Format final response
-        formatted_answer = self._format_response_template(response)
+        # Don't format template here - WebSocket already handles this
+        # Just return the response as-is
 
         return ResponseStructure(
-            answer=formatted_answer,
+            answer=response.answer,
             confidence_level=response.confidence_level,
             source_summary=response.source_summary,
             follow_up_questions=response.follow_up_questions,
@@ -561,7 +575,11 @@ Analyze the semantic alignment between the query intent and available content. R
 SCORING GUIDE:
 - intent_match_score: 0.9+ = excellent match, 0.7-0.9 = good match, 0.5-0.7 = partial match, <0.5 = poor match
 - content_specificity: "specific" = detailed methodologies/procedures, "general" = principles only, "unrelated" = different topic
-- is_aligned: true only if intent_match_score >= 0.6 AND content_specificity != "unrelated"
+- is_aligned: true if intent_match_score >= 0.4 OR (query asks for specific calculation/procedure AND content_specificity != "unrelated")
+
+SPECIAL CASES:
+- Calculation queries ("how to calculate", "reserve calculation", etc.) should be marked as "specific" if content contains relevant formulas or procedures
+- Policy-specific queries ("universal life", "whole life", etc.) should get higher alignment scores if content mentions those policy types
 """
 
             response_text = await self._call_llm(alignment_prompt, max_tokens=300)
@@ -570,10 +588,21 @@ SCORING GUIDE:
             try:
                 alignment_data = json.loads(response_text.strip())
 
+                # Apply business logic overrides for insurance calculation queries
+                intent_match_score = float(alignment_data.get("intent_match_score", 0.0))
+                content_specificity = alignment_data.get("content_specificity", "unrelated")
+                is_aligned = alignment_data.get("is_aligned", False)
+
+                # Override for specific calculation queries
+                if any(phrase in query.lower() for phrase in ["how to calculate", "calculate the reserves", "reserve calculation", "how do i calculate"]):
+                    if content_specificity != "unrelated" and intent_match_score >= 0.3:
+                        is_aligned = True
+                        self.logger.info(f"Calculation query override: Aligned due to specific calculation request")
+
                 return SemanticAlignmentResult(
-                    is_aligned=alignment_data.get("is_aligned", False),
-                    intent_match_score=float(alignment_data.get("intent_match_score", 0.0)),
-                    content_specificity=alignment_data.get("content_specificity", "unrelated"),
+                    is_aligned=is_aligned,
+                    intent_match_score=intent_match_score,
+                    content_specificity=content_specificity,
                     query_intent=alignment_data.get("query_intent", ""),
                     content_intent=alignment_data.get("content_intent", ""),
                     confidence_level=alignment_data.get("confidence_level", "none"),

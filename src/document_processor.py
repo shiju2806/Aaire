@@ -346,16 +346,17 @@ class DocumentProcessor:
     async def _extract_from_pdf(self, file_path: Path) -> str:
         """Extract text from PDF file with shape-aware processing and OCR fallback"""
         
-        # Try shape-aware processing first for better organizational chart extraction
-        if self.shape_processor:
+        # DISABLED: Shape-aware processing causing chunking regression
+        # Force basic PDF extraction to fix malformed chunks issue
+        if False:  # Disabled shape-aware processing
             try:
                 logger.info(f"🔍 Using shape-aware extraction for PDF: {file_path.name}")
                 result = await self.shape_processor.process_document(
-                    str(file_path), 
+                    str(file_path),
                     query_context="organizational structure analysis",
                     prefer_spatial=True
                 )
-                
+
                 if result and result.structured_content:
                     logger.info(f"✅ Shape-aware extraction successful: {len(result.structured_content)} chars")
                     return result.structured_content

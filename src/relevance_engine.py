@@ -121,10 +121,11 @@ class RelevanceEngine:
         }
     
     def _build_domain_knowledge(self) -> Dict[str, List[str]]:
-        """Build domain knowledge base (expandable)"""
-        return {
+        """Build minimal domain knowledge base (fully dynamic)"""
+        # Only keep essential domain patterns - no hardcoded technical terms
+        base_knowledge = {
             "accounting": [
-                "revenue", "recognition", "liability", "asset", "equity", "gaap", "ifrs", 
+                "revenue", "recognition", "liability", "asset", "equity", "gaap", "ifrs",
                 "fasb", "asc", "financial", "statement", "disclosure", "measurement"
             ],
             "insurance": [
@@ -136,6 +137,8 @@ class RelevanceEngine:
                 "functional", "reporting", "monetary", "nonmonetary"
             ]
         }
+
+        return base_knowledge
     
     def analyze_query(self, query: str) -> QueryAnalysis:
         """Analyze query to determine optimal search strategy"""
@@ -320,9 +323,54 @@ Return only the domain name (e.g., "accounting"):"""
                     self.domain_keywords[domain].extend(list(terms)[:20])  # Add top 20 new terms
                 
             logger.info(f"🧠 Learned domain patterns from {len(documents)} documents")
-            
+
         except Exception as e:
             logger.warning(f"Failed to learn from documents: {e}")
+
+    def _calculate_llm_methodology_boost(self, query_analysis: QueryAnalysis, content: str, metadata: Dict) -> float:
+        """Use LLM to determine if document contains methodology relevant to query"""
+        try:
+            if not self.openai_client:
+                return 0.0
+
+            # Extract query intent and document preview
+            query = query_analysis.entities[0] if query_analysis.entities else "general query"
+            doc_preview = content[:800]  # First 800 chars
+            filename = metadata.get('filename', 'Unknown')
+
+            methodology_prompt = f"""Analyze if this document contains specific methodology or technical procedures relevant to the user's query.
+
+Query context: Looking for information about "{query}"
+Document filename: {filename}
+Document preview: {doc_preview}
+
+Does this document contain:
+1. Specific calculation methods, formulas, or procedures?
+2. Technical terminology or industry-specific terms relevant to the query?
+3. Step-by-step processes or methodological guidance?
+
+Respond with a relevance score from 0.0 to 0.3 where:
+- 0.0 = No methodology content relevant to query
+- 0.1 = Some general methodology mentioned
+- 0.2 = Good methodology content relevant to query
+- 0.3 = Excellent methodology content directly addressing query
+
+Respond with only the number (e.g., "0.2"):"""
+
+            response = self.openai_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": methodology_prompt}],
+                temperature=0.1,
+                max_tokens=10
+            )
+
+            boost_score = float(response.choices[0].message.content.strip())
+            logger.debug(f"🤖 LLM methodology boost: {boost_score} for {filename}")
+            return min(max(boost_score, 0.0), 0.3)  # Clamp between 0.0 and 0.3
+
+        except Exception as e:
+            logger.warning(f"LLM methodology boost failed: {e}")
+            return 0.0
     
     def _infer_document_domain_from_content(self, filename: str, content: str) -> str:
         """Infer domain from document content and filename"""
@@ -391,43 +439,51 @@ Return only the domain name (e.g., "accounting"):"""
         return normalized_weights
     
     def score_document_relevance(self, query_analysis: QueryAnalysis, document: Dict[str, Any]) -> DocumentRelevance:
-        """Score document relevance using flexible, non-hardcoded approach"""
+        """Score document relevance using LLM-driven approach"""
         doc_id = document.get('node_id', 'unknown')
         content = document.get('content', '')
         metadata = document.get('metadata', {})
-        
+
         relevance = DocumentRelevance(document_id=doc_id)
-        
+
         # 1. Exact Match Score (flexible pattern matching)
         relevance.exact_match_score = self._calculate_exact_match_score(
             query_analysis, content, metadata
         )
-        
+
         # 2. Semantic Score (use existing vector score)
         relevance.semantic_score = document.get('score', 0.0)
-        
+
         # 3. Context Score (document type, domain alignment, etc.)
         relevance.context_score = self._calculate_context_score(
             query_analysis, content, metadata
         )
-        
+
         # 4. Entity Coverage Score
         relevance.entity_coverage_score = self._calculate_entity_coverage_score(
             query_analysis.entities, content
         )
-        
-        # 5. Calculate final weighted score
+
+        # 5. LLM-driven methodology relevance boost
+        methodology_boost = self._calculate_llm_methodology_boost(
+            query_analysis, content, metadata
+        )
+
+        # 6. Calculate final weighted score
         weights = query_analysis.search_weights
-        relevance.final_score = (
+        base_score = (
             relevance.exact_match_score * weights.get("exact_match", 0.3) +
             relevance.semantic_score * weights.get("semantic", 0.4) +
             relevance.context_score * weights.get("context", 0.2) +
             relevance.entity_coverage_score * weights.get("entity_coverage", 0.1)
         )
-        
+
+        # Apply methodology boost
+        relevance.final_score = base_score + methodology_boost
+
         # Generate explanation
         relevance.explanation = self._generate_explanation(relevance, query_analysis)
-        
+
         return relevance
     
     def _calculate_exact_match_score(self, query_analysis: QueryAnalysis, content: str, metadata: Dict) -> float:

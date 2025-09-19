@@ -5,7 +5,7 @@ Following SRS v2.0 specifications for weeks 3-4
 
 import os
 import yaml
-from typing import List, Dict, Any, Optional, AsyncGenerator
+from typing import List, Dict, Any, Optional, AsyncGenerator, Tuple
 from datetime import datetime
 import asyncio
 
@@ -18,7 +18,6 @@ import json
 import numpy as np
 from collections import defaultdict
 from .whoosh_search_engine import WhooshSearchEngine, SearchResult
-from .response_generation.structured_generator import StructuredResponseGenerator
 
 # LlamaIndex imports - current version structure  
 from llama_index.core import (
@@ -56,16 +55,18 @@ from .conversation_memory import ConversationMemoryManager
 from .extraction.document_processing_adapter import DocumentProcessingAdapter
 from .extraction.models import QueryIntent, LegacyDocumentMetadata as DocumentMetadata
 
-logger = structlog.get_logger()
+# Import modular components
+from .rag_modules.core.response import RAGResponse
+from .rag_modules.analysis.citations import CitationAnalyzer
+from .rag_modules.cache.manager import CacheManager
+from .rag_modules.formatting import FormattingManager, create_formatting_manager
+from .rag_modules.query import QueryAnalyzer, create_query_analyzer
+from .rag_modules.quality import QualityMetricsManager, create_quality_metrics_manager
+from .rag_modules.services import DocumentRetriever, create_document_retriever
+from .rag_modules.services import ResponseGenerator, create_response_generator
+from .rag_modules.storage import DocumentManager, create_document_manager
 
-class RAGResponse:
-    def __init__(self, answer: str, citations: List[Dict], confidence: float, session_id: str, follow_up_questions: List[str] = None, quality_metrics: Dict[str, float] = None):
-        self.answer = answer
-        self.citations = citations
-        self.confidence = confidence
-        self.session_id = session_id
-        self.follow_up_questions = follow_up_questions or []
-        self.quality_metrics = quality_metrics or {}
+logger = structlog.get_logger()
 
 class RAGPipeline:
     def __init__(self, config_path: str = "config/mvp_config.yaml"):
@@ -144,15 +145,14 @@ class RAGPipeline:
         # Initialize vector store: Qdrant primary, local fallback
         self.vector_store_type = None
         self.index_name = None
-        
-        # Try Qdrant
+
+        # Try Qdrant first - just test the connection, don't init indexes yet
         if self._try_qdrant():
             self.vector_store_type = "qdrant"
             self.index_name = self.collection_name
             logger.info("Using Qdrant vector store")
-        # Fall back to local storage if Qdrant unavailable
+        # Fall back to local storage if Qdrant unavailable - defer init
         else:
-            self._init_local_index()
             self.vector_store_type = "local"
             self.index_name = "local"
             logger.info("Using local vector store")
@@ -179,15 +179,51 @@ class RAGPipeline:
             llm_client=self.async_client  # Use AsyncOpenAI client instead of LlamaIndex wrapper
         )
 
-        # Initialize structured response generator for quality control
-        try:
-            self.structured_generator = StructuredResponseGenerator(
-                llm_client=self.async_client
-            )
-            logger.info("✅ StructuredResponseGenerator initialized successfully")
-        except Exception as e:
-            logger.warning(f"StructuredResponseGenerator initialization failed: {e}")
-            self.structured_generator = None
+        # Initialize modular components
+        self.citation_analyzer = CitationAnalyzer()
+        self.cache_manager = CacheManager(self.cache)
+
+        # Initialize new extracted modules
+        self.formatting_manager = create_formatting_manager(llm_client=self.llm)
+        self.query_analyzer = create_query_analyzer(llm_client=self.llm)
+        self.quality_metrics_manager = create_quality_metrics_manager(self.config.get('retrieval_config', {}))
+
+        # Initialize Phase 3 services modules
+        self.document_retriever = create_document_retriever(
+            vector_index=self.index,
+            whoosh_engine=self.whoosh_engine,
+            relevance_engine=self.relevance_engine,
+            metadata_analyzer=self.metadata_analyzer,
+            quality_metrics_manager=self.quality_metrics_manager,
+            config=self.config
+        )
+
+        self.response_generator = create_response_generator(
+            llm_client=self.llm,
+            async_client=self.async_client,
+            memory_manager=self.memory_manager,
+            formatting_manager=self.formatting_manager,
+            query_analyzer=self.query_analyzer,
+            config=self.config
+        )
+
+        # Initialize document manager
+        self.document_manager = create_document_manager(
+            index=self.index,
+            node_parser=self.node_parser,
+            metadata_analyzer=self.metadata_analyzer,
+            whoosh_engine=self.whoosh_engine,
+            cache=self.cache,
+            vector_store_type=self.vector_store_type,
+            qdrant_client=self.qdrant_client if hasattr(self, 'qdrant_client') else None,
+            collection_name=self.collection_name if hasattr(self, 'collection_name') else None
+        )
+
+        # Now perform deferred index initialization after document_manager is ready
+        if self.vector_store_type == "qdrant":
+            self.document_manager._init_qdrant_indexes()
+        else:
+            self.document_manager._init_local_index()
 
         logger.info("RAG Pipeline initialized",
                    model=self.config['llm_config']['model'],
@@ -233,70 +269,13 @@ class RAGPipeline:
             )
             
             logger.info("Initializing Qdrant indexes...")
-            self._init_qdrant_indexes()
+            self.document_manager._init_qdrant_indexes()
             logger.info("✅ Qdrant initialization complete")
             return True
             
         except Exception as e:
             logger.error("❌ Qdrant initialization failed", error=str(e), exc_info=True)
             return False
-    
-    def _init_qdrant_indexes(self):
-        """Initialize Qdrant collection and indexes"""
-        try:
-            # Check if collection exists
-            collections = self.qdrant_client.get_collections().collections
-            collection_names = [c.name for c in collections]
-            
-            if self.collection_name not in collection_names:
-                # Create collection if it doesn't exist
-                from qdrant_client.models import Distance, VectorParams
-                
-                self.qdrant_client.create_collection(
-                    collection_name=self.collection_name,
-                    vectors_config=VectorParams(
-                        size=1536,  # OpenAI embedding dimension
-                        distance=Distance.COSINE
-                    )
-                )
-                logger.info(f"Created Qdrant collection: {self.collection_name}")
-            
-            # Create index for job_id field to enable filtered deletion
-            try:
-                from qdrant_client.models import PayloadSchemaType
-                self.qdrant_client.create_payload_index(
-                    collection_name=self.collection_name,
-                    field_name="job_id",
-                    field_schema=PayloadSchemaType.KEYWORD
-                )
-                logger.info("Created index for job_id field")
-            except Exception as e:
-                # Index might already exist, which is fine
-                logger.info(f"job_id index status: {str(e)[:50]}")
-            
-            # Initialize storage context with Qdrant
-            self.storage_context = StorageContext.from_defaults(
-                vector_store=self.vector_store
-            )
-            
-            # Create or load index with Qdrant
-            try:
-                self.index = VectorStoreIndex.from_vector_store(
-                    vector_store=self.vector_store
-                )
-                logger.info("Loaded existing Qdrant index")
-            except:
-                self.index = VectorStoreIndex(
-                    nodes=[],
-                    storage_context=self.storage_context
-                )
-                logger.info("Created new Qdrant index")
-            
-            logger.info("Qdrant indexes initialized")
-            
-        except Exception as e:
-            logger.error("Failed to initialize Qdrant indexes", error=str(e))
-            raise
     
     def _init_cache(self):
         """Initialize Redis cache"""
@@ -436,263 +415,9 @@ class RAGPipeline:
             logger.error(f"Full error trace: {traceback.format_exc()}")
             self.keyword_search_ready = True  # Mark as ready even if failed
     
-    def _update_whoosh_index(self, nodes):
-        """Update Whoosh index with new document nodes"""
-        try:
-            if not self.whoosh_engine:
-                logger.warning("Whoosh engine not available for indexing")
-                return
-
-            # Convert nodes to Whoosh document format
-            whoosh_docs = []
-            for node in nodes:
-                text = node.get_content() if hasattr(node, 'get_content') else str(node.text)
-                node_id = node.node_id if hasattr(node, 'node_id') else str(uuid.uuid4())
-                metadata = node.metadata or {}
-
-                whoosh_doc = {
-                    'doc_id': node_id,
-                    'content': text,
-                    'title': metadata.get('filename', 'Unknown'),
-                    'metadata': {
-                        'node_id': node_id,
-                        'filename': metadata.get('filename', 'Unknown'),
-                        'doc_type': metadata.get('doc_type', 'company'),
-                        'added_at': metadata.get('added_at', ''),
-                        'page': metadata.get('page', 0),
-                        'primary_framework': metadata.get('primary_framework', 'unknown'),
-                        'content_domains': metadata.get('content_domains', []),
-                        'document_type': metadata.get('document_type', 'unknown'),
-                        'file_path': metadata.get('filename', 'Unknown'),
-                        'confidence_score': metadata.get('confidence_score', 0.5),
-                        **metadata  # Include all existing metadata
-                    }
-                }
-                whoosh_docs.append(whoosh_doc)
-
-            # Index documents in Whoosh (incremental)
-            if whoosh_docs:
-                indexed_count = self.whoosh_engine.add_documents(whoosh_docs, batch_processing=True)
-                logger.info(f"✅ Whoosh index updated with {indexed_count} documents")
-                self.keyword_search_ready = True
-        except Exception as e:
-            logger.error("Failed to update Whoosh index", error=str(e))
-    
-    def _init_local_index(self):
-        """Initialize local vector store as fallback"""
-        # Create a simple in-memory vector store
-        self.index = VectorStoreIndex(
-            nodes=[]
-        )
-        logger.info("Initialized local vector store")
-    
     async def add_documents(self, documents: List[Document], doc_type: str = "company"):
-        """
-        Add documents to the single index with document type metadata
-        """
-        try:
-            # Add document type metadata to each document
-            for doc in documents:
-                if not doc.metadata:
-                    doc.metadata = {}
-                doc.metadata['doc_type'] = doc_type
-                doc.metadata['added_at'] = datetime.utcnow().isoformat()
-            
-            # Parse documents into nodes
-            nodes = self.node_parser.get_nodes_from_documents(documents)
-
-            # Extract document-level metadata for each document using new approach
-            logger.info(f"Extracting document-level metadata for {len(documents)} documents")
-            document_metadata_cache = {}
-
-            for doc in documents:
-                try:
-                    filename = doc.metadata.get('filename', 'Unknown') if doc.metadata else 'Unknown'
-
-                    # Step 1: Extract document-level metadata (primary framework detection)
-                    # Use hierarchical sampling instead of full document to avoid OpenAI rate limits
-                    sampled_content = self._sample_document_for_metadata(doc.text, filename)
-                    doc_level_metadata = await self.metadata_analyzer.extract_document_level_metadata(
-                        content=sampled_content,
-                        filename=filename,
-                        doc_type=doc_type
-                    )
-
-                    # Store for chunk inheritance
-                    document_metadata_cache[filename] = doc_level_metadata
-
-                    # Add document-level metadata to the document
-                    if not doc.metadata:
-                        doc.metadata = {}
-                    doc.metadata.update(doc_level_metadata)
-
-                    logger.info(f"Document-level metadata extracted for {filename}",
-                               primary_framework=doc_level_metadata.get('primary_framework'),
-                               frameworks=doc_level_metadata.get('frameworks', []),
-                               document_type=doc_level_metadata.get('document_type'))
-
-                except Exception as e:
-                    logger.warning(f"Document-level metadata extraction failed for document",
-                                 filename=filename, error=str(e))
-                    # Create fallback document metadata
-                    document_metadata_cache[filename] = {
-                        'source_document': filename,
-                        'primary_framework': 'unknown',
-                        'frameworks': ['unknown'],
-                        'document_type': 'other',
-                        'content_domain': 'general',
-                        'context_tags': []
-                    }
-
-            # Step 2: Process chunks with document-level inheritance + chunk-level refinement
-            logger.info(f"Processing {len(nodes)} chunks with inheritance + refinement")
-            processed_chunks = 0
-
-            # Parallel processing with controlled concurrency
-            import asyncio
-            parallel_limit = 8  # Process 8 chunks concurrently
-            semaphore = asyncio.Semaphore(parallel_limit)
-
-            async def process_chunk(chunk_index, node):
-                async with semaphore:
-                    if not node.metadata:
-                        node.metadata = {}
-
-                    # Find the source document for this chunk
-                    source_doc = None
-                    if hasattr(node, 'ref_doc_id') and documents:
-                        # Try to match by document ID
-                        for doc in documents:
-                            if hasattr(doc, 'doc_id') and doc.doc_id == node.ref_doc_id:
-                                source_doc = doc
-                                break
-                        # Fallback to first document if no match found
-                        if source_doc is None:
-                            source_doc = documents[0]
-                    elif documents:
-                        source_doc = documents[0]
-
-                    # Get document-level metadata
-                    filename = source_doc.metadata.get('filename', 'Unknown') if source_doc and source_doc.metadata else 'Unknown'
-                    doc_metadata = document_metadata_cache.get(filename, {})
-
-                    try:
-                        # Generate chunk metadata with inheritance + refinement
-                        chunk_metadata_obj = await self.metadata_analyzer.extract_chunk_metadata(
-                            chunk_content=getattr(node, 'text', '') or getattr(node, 'content', ''),
-                            document_metadata=doc_metadata,
-                            chunk_index=chunk_index
-                        )
-
-                        # Convert chunk metadata to dictionary
-                        chunk_metadata_dict = self.metadata_analyzer.create_metadata_dict(chunk_metadata_obj)
-
-                        # Add chunk metadata to node
-                        node.metadata.update(chunk_metadata_dict)
-
-                        # Add system metadata
-                        node.metadata['doc_type'] = doc_type
-                        node.metadata['added_at'] = datetime.utcnow().isoformat()
-
-                        # Ensure job_id and filename are preserved for deletion tracking
-                        if source_doc and source_doc.metadata:
-                            if 'job_id' in source_doc.metadata:
-                                node.metadata['job_id'] = source_doc.metadata['job_id']
-                            if 'filename' in source_doc.metadata:
-                                node.metadata['filename'] = source_doc.metadata['filename']
-
-                        # Log chunk processing (every 20th chunk or if it's refined)
-                        if chunk_index % 20 == 0 or (hasattr(chunk_metadata_obj, 'attributes') and
-                                                    chunk_metadata_obj.attributes.get('chunk_focus') !=
-                                                    doc_metadata.get('primary_framework')):
-                            logger.debug(f"Chunk {chunk_index} processed",
-                                       filename=filename,
-                                       primary_framework=doc_metadata.get('primary_framework'),
-                                       chunk_focus=chunk_metadata_obj.attributes.get('chunk_focus') if hasattr(chunk_metadata_obj, 'attributes') else None)
-
-                        return 1  # Success count
-
-                    except Exception as e:
-                        logger.warning(f"Chunk metadata processing failed for chunk {chunk_index}",
-                                     filename=filename, error=str(e))
-                        return 0  # Failure count
-
-            # Process all chunks in parallel
-            logger.info(f"🚀 Starting parallel processing with {parallel_limit} concurrent workers")
-            tasks = [process_chunk(chunk_index, node) for chunk_index, node in enumerate(nodes)]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-
-            # Count successful processes
-            processed_chunks = sum(r for r in results if isinstance(r, int) and r > 0)
-            failed_chunks = len(results) - processed_chunks
-
-            if failed_chunks > 0:
-                logger.warning(f"⚠️ {failed_chunks} chunks failed processing")
-
-            logger.info(f"✅ Parallel processing completed: {processed_chunks}/{len(nodes)} chunks processed successfully")
-
-            # Process fallback for chunks that didn't get metadata
-            for chunk_index, node in enumerate(nodes):
-                if 'chunk_index' not in node.metadata:
-                    # This chunk didn't get processed, apply fallback metadata
-                    if doc_metadata:
-                        node.metadata.update(doc_metadata)
-                    node.metadata['doc_type'] = doc_type
-                    node.metadata['added_at'] = datetime.utcnow().isoformat()
-                    node.metadata['chunk_index'] = chunk_index
-
-                    # Ensure job_id and filename are preserved
-                    if source_doc and source_doc.metadata:
-                        if 'job_id' in source_doc.metadata:
-                            node.metadata['job_id'] = source_doc.metadata['job_id']
-                        if 'filename' in source_doc.metadata:
-                            node.metadata['filename'] = source_doc.metadata['filename']
-                
-                # Preserve page information if available in node start_char_idx
-                if hasattr(node, 'start_char_idx') and hasattr(node, 'ref_doc_id'):
-                    # Try to estimate page number from character position
-                    # This is approximate but better than no page info
-                    char_idx = getattr(node, 'start_char_idx', 0)
-                    # Rough estimate: 2000 characters per page
-                    estimated_page = max(1, (char_idx // 2000) + 1)
-                    node.metadata['estimated_page'] = estimated_page
-                
-                # Check if the node content contains page information from shape-aware extraction
-                node_content = getattr(node, 'text', '') or getattr(node, 'content', '')
-                if 'Source: Page' in node_content:
-                    import re
-                    page_match = re.search(r'Source: Page (\d+)', node_content)
-                    if page_match:
-                        node.metadata['page'] = int(page_match.group(1))
-            
-            # Add to single index
-            self.index.insert_nodes(nodes)
-            
-            # Update BM25 index for hybrid search
-            self._update_whoosh_index(nodes)
-            
-            # Invalidate cache for this document type
-            if self.cache:
-                pattern = f"query_cache:{doc_type}:*"
-                for key in self.cache.scan_iter(match=pattern):
-                    self.cache.delete(key)
-            
-            # Log summary of document-level metadata processing
-            logger.info(f"Document-level metadata processing completed",
-                       documents_processed=len(documents),
-                       chunks_processed=processed_chunks,
-                       total_chunks=len(nodes))
-
-            logger.info(f"Added {len(documents)} documents to index",
-                       doc_type=doc_type,
-                       total_nodes=len(nodes),
-                       whoosh_docs=self.whoosh_engine.get_document_count())
-            
-            return len(nodes)
-            
-        except Exception as e:
-            logger.error("Failed to add documents", error=str(e), doc_type=doc_type)
-            raise
+        """Add documents using the document manager"""
+        return await self.document_manager.add_documents(documents, doc_type)
     
     async def process_query(
         self, 
@@ -714,7 +439,7 @@ class RAGPipeline:
         
         try:
             # Check cache first (but skip cache for debugging if needed)
-            cache_key = self._get_cache_key(query, filters)
+            cache_key = self.cache_manager.get_cache_key(query, filters, self.vector_store, self.index_name)
             use_cache = (self.cache and 
                         self.config['retrieval_config']['use_cache'] and
                         not os.getenv('DISABLE_CACHE', '').lower() in ('true', '1', 'yes'))
@@ -723,11 +448,11 @@ class RAGPipeline:
                 cached_response = self.cache.get(cache_key)
                 if cached_response:
                     logger.info("Returning cached response", query_hash=cache_key[:8])
-                    return self._deserialize_response(cached_response, session_id)
+                    return self.cache_manager.deserialize_response(cached_response, session_id)
             
             # Check if query is within AAIRE's domain expertise
             logger.info(f"🔍 Classifying query topic: '{query[:50]}...'")
-            topic_check = await self._classify_query_topic(query)
+            topic_check = await self.query_analyzer.classify_query_topic(query)
             logger.info(f"🎯 Topic classification result: {topic_check}")
             
             if not topic_check['is_relevant']:
@@ -744,16 +469,16 @@ class RAGPipeline:
             doc_type_filter = self._get_doc_type_filter(filters)
             
             # Expand query for better retrieval
-            expanded_query = self._expand_query(query)
+            expanded_query = self.query_analyzer.expand_query(query)
             
             # Get adaptive similarity threshold
-            similarity_threshold = self._get_similarity_threshold(query)
+            similarity_threshold = self.quality_metrics_manager.get_similarity_threshold(query)
             
             # Store current query for citation filtering
             self._current_query = query
             
             # ALWAYS search uploaded documents first
-            retrieved_docs = await self._retrieve_documents(expanded_query, doc_type_filter, similarity_threshold, filters)
+            retrieved_docs = await self.document_retriever.retrieve_documents(expanded_query, doc_type_filter, similarity_threshold, filters)
             
             # Check if we found relevant documents in uploaded content
             if retrieved_docs and len(retrieved_docs) > 0:
@@ -771,40 +496,22 @@ class RAGPipeline:
                 if len(unique_sources) > 1:
                     logger.info(f"Multiple document sources found for query, applying strict citation filters")
                 
-                response = await self._generate_response(query, retrieved_docs, user_context, conversation_history, session_id)
+                response = await self.response_generator.generate_response(query, retrieved_docs, user_context, conversation_history, session_id)
 
-                # Apply structured response generation for quality control
-                if self.structured_generator:
-                    try:
-                        logger.info("🔧 Applying structured response generation for quality control")
-                        # Use processed context instead of raw chunks
-                        processed_context = "\n\n".join([doc.get('content', '') for doc in retrieved_docs])
-
-                        structured_response = await self.structured_generator.generate_structured_response(
-                            query=query,
-                            processed_context=processed_context,
-                            conversation_history=conversation_history
-                        )
-
-                        # Extract the formatted answer from the structured response
-                        response = structured_response.answer
-                        logger.info("✅ Structured response generation completed successfully")
-                    except Exception as e:
-                        logger.warning(f"Structured response generation failed: {e}, using original response")
 
                 # Pass 2: Format the response using LLM-based formatting
-                response = self._format_response(response)
+                response = self.formatting_manager.format_response(response)
                 
-                citations = self._extract_citations(retrieved_docs, query)
-                confidence = self._calculate_confidence(retrieved_docs, response)
+                citations = self.citation_analyzer.extract_citations(retrieved_docs, query, response)
+                confidence = self.quality_metrics_manager.calculate_confidence(retrieved_docs, response)
             else:
                 # No relevant documents found - check if this could be relevant general knowledge
-                is_general_query = self._is_general_knowledge_query(query)
+                is_general_query = self.query_analyzer.is_general_knowledge_query(query)
                 
                 # Even if it's a general query, it must still be within AAIRE's domain
                 if is_general_query:
                     # Re-check topic relevance for general knowledge questions
-                    topic_check = await self._classify_query_topic(query)
+                    topic_check = await self.query_analyzer.classify_query_topic(query)
                     if not topic_check['is_relevant']:
                         return RAGResponse(
                             answer=topic_check['polite_response'],
@@ -817,24 +524,11 @@ class RAGPipeline:
                 if is_general_query:
                     # Use general knowledge response
                     logger.info(f"No relevant documents found, using general knowledge for: '{query[:50]}...'")
-                    response = await self._generate_response(query, [], user_context, conversation_history, session_id)
+                    response = await self.response_generator.generate_response(query, [], user_context, conversation_history, session_id)
 
-                    # Apply structured response generation for general knowledge responses
-                    if self.structured_generator:
-                        try:
-                            logger.info("🔧 Applying structured response generation for general knowledge")
-                            structured_response = await self.structured_generator.generate_structured_response(
-                                query=query,
-                                processed_context="",  # No source documents for general knowledge
-                                conversation_history=conversation_history
-                            )
-                            response = structured_response.answer
-                            logger.info("✅ Structured response generation completed for general knowledge")
-                        except Exception as e:
-                            logger.warning(f"Structured response generation failed: {e}, using original response")
 
-                    response = self._format_response(response)
-                    response = self._remove_citations_from_response(response)
+                    response = self.formatting_manager.format_response(response)
+                    response = self.citation_analyzer.remove_citations_from_response(response)
                     citations = []
                     confidence = 0.3  # Low confidence for general knowledge responses
                 else:
@@ -846,7 +540,7 @@ class RAGPipeline:
                     try:
                         if hasattr(self, 'vector_store') and self.vector_store:
                             # Try to get some info about available documents
-                            sample_docs = await self._vector_search("document", None, 0.1)  # Very low threshold
+                            sample_docs = await self.document_retriever.vector_search("document", None, 0.1)  # Very low threshold
                             available_docs = list(set([doc['metadata'].get('filename', 'Unknown') for doc in sample_docs[:5]]))
                     except:
                         pass
@@ -862,10 +556,10 @@ class RAGPipeline:
             # Response formatting handled by prompt engineering
             
             # Generate contextual follow-up questions
-            follow_up_questions = await self._generate_follow_up_questions(query, response, retrieved_docs)
+            follow_up_questions = await self.response_generator.generate_follow_up_questions(query, response, retrieved_docs)
             
             # Calculate quality metrics
-            quality_metrics = self._calculate_quality_metrics(query, response, retrieved_docs, citations)
+            quality_metrics = self.quality_metrics_manager.calculate_quality_metrics(query, response, retrieved_docs, citations)
             
             rag_response = RAGResponse(
                 answer=response,
@@ -881,7 +575,7 @@ class RAGPipeline:
                 self.cache.setex(
                     cache_key, 
                     self.config['retrieval_config']['cache_ttl'],
-                    self._serialize_response(rag_response)
+                    self.cache_manager.serialize_response(rag_response)
                 )
             
             # Record assistant response in conversation memory
@@ -969,356 +663,6 @@ class RAGPipeline:
         
         return doc_types if doc_types else None
     
-    async def _retrieve_documents(self, query: str, doc_type_filter: Optional[List[str]], similarity_threshold: Optional[float] = None, filters: Optional[Dict[str, Any]] = None) -> List[Dict]:
-        """Hybrid retrieval: combines vector search with BM25 keyword search using buffer approach"""
-
-        # Analyze query intent for smart filtering
-        try:
-            query_intent = await self.metadata_analyzer.analyze_query_intent(query)
-            logger.info(f"Query intent analyzed",
-                       query=query[:50],
-                       confidence=query_intent.confidence,
-                       domains=query_intent.content_domains,
-                       framework=query_intent.required_filters.get('framework'),
-                       tags=query_intent.context_tags[:3])  # First 3 tags for brevity
-
-            # Apply smart filtering if confidence is high enough
-            if query_intent.confidence > 0.6 and self.metadata_analyzer.smart_filtering_enabled:
-                # Merge intent-based filters with existing filters
-                smart_filters = filters.copy() if filters else {}
-
-                # Apply required filters from intent analysis
-                for key, value in query_intent.required_filters.items():
-                    smart_filters[key] = value
-
-                # Apply excluded filters (handled in vector/keyword search methods)
-                if query_intent.excluded_filters:
-                    smart_filters['_excluded'] = query_intent.excluded_filters
-
-                logger.info(f"Smart filtering applied",
-                           original_filters=filters,
-                           smart_filters=smart_filters,
-                           confidence=query_intent.confidence)
-
-                filters = smart_filters
-            else:
-                logger.debug(f"Smart filtering skipped",
-                           confidence=query_intent.confidence,
-                           enabled=self.metadata_analyzer.smart_filtering_enabled)
-
-        except Exception as e:
-            logger.warning(f"Query intent analysis failed, proceeding without smart filtering",
-                         error=str(e))
-
-        # Get the target document limit
-        doc_limit = self._get_document_limit(query)
-        
-        # Use buffer approach: both searches get the full limit to ensure we don't miss important documents
-        # This allows the best documents from either method to compete fairly
-        vector_results = await self._vector_search(query, doc_type_filter, similarity_threshold, filters, buffer_limit=doc_limit)
-        keyword_results = await self._keyword_search(query, doc_type_filter, filters, buffer_limit=doc_limit)
-        
-        logger.info(f"Buffer approach: Retrieved {len(vector_results)} vector + {len(keyword_results)} keyword results, target limit: {doc_limit}")
-        
-        # Combine results using advanced relevance engine
-        all_results = vector_results + keyword_results
-        
-        # Remove duplicates while preserving all scoring info
-        unique_results = {}
-        for result in all_results:
-            node_id = result['node_id']
-            if node_id not in unique_results:
-                unique_results[node_id] = result
-            else:
-                # Merge scoring information from both searches
-                existing = unique_results[node_id]
-                existing['search_type'] = 'hybrid'
-                # Keep the higher score
-                if result['score'] > existing['score']:
-                    existing['score'] = result['score']
-        
-        # Use advanced relevance engine for ranking
-        combined_results = self.relevance_engine.rank_documents(query, list(unique_results.values()))
-        
-        # Apply the document limit to the final combined results
-        if len(combined_results) > doc_limit:
-            logger.info(f"Trimming combined results from {len(combined_results)} to {doc_limit}")
-            combined_results = combined_results[:doc_limit]
-        
-        return combined_results
-    
-    async def _vector_search(self, query: str, doc_type_filter: Optional[List[str]], similarity_threshold: Optional[float] = None, filters: Optional[Dict[str, Any]] = None, buffer_limit: Optional[int] = None) -> List[Dict]:
-        """Original vector-based semantic search with filtering support"""
-        all_results = []
-        
-        try:
-            # Use buffer limit if provided (for combined ranking), otherwise use dynamic calculation
-            if buffer_limit is not None:
-                vector_limit = buffer_limit
-            else:
-                # Get dynamic document limit based on query
-                doc_limit = self._get_document_limit(query)
-                # For standalone search, allocate 70% to vector search
-                vector_limit = int(doc_limit * 0.7)
-            
-            # Create retriever from single index with dynamic limit
-            retriever = self.index.as_retriever(
-                similarity_top_k=vector_limit
-            )
-            
-            # Retrieve documents
-            nodes = retriever.retrieve(query)
-            
-            # Use adaptive threshold if provided, otherwise fall back to config
-            threshold = similarity_threshold if similarity_threshold is not None else self.config['retrieval_config']['similarity_threshold']
-            
-            for node in nodes:
-                if node.score >= threshold:
-                    # Apply job_id filter if specified (highest priority)
-                    if filters and 'job_id' in filters:
-                        node_job_id = node.metadata.get('job_id') if node.metadata else None
-                        if node_job_id != filters['job_id']:
-                            continue  # Skip nodes from different documents
-                    
-                    # Apply document type filter if specified
-                    if doc_type_filter:
-                        node_doc_type = node.metadata.get('doc_type') if node.metadata else None
-                        if node_doc_type not in doc_type_filter:
-                            continue  # Skip nodes that don't match filter
-
-                    # Apply smart metadata filters if specified
-                    if filters:
-                        node_metadata = node.metadata or {}
-
-                        # Apply required filters (must match exactly)
-                        skip_node = False
-                        for key, value in filters.items():
-                            if key.startswith('_'):  # Skip special filter keys
-                                continue
-                            if key in ['job_id']:  # Skip already handled filters
-                                continue
-
-                            node_value = node_metadata.get(key)
-                            if node_value != value:
-                                # For context_tags, also check if the required tag is in the list
-                                if key == 'context_tags' and isinstance(node_value, list):
-                                    if value not in node_value:
-                                        skip_node = True
-                                        break
-                                else:
-                                    skip_node = True
-                                    break
-
-                        if skip_node:
-                            continue
-
-                        # Apply excluded filters (must NOT match)
-                        if '_excluded' in filters:
-                            excluded_filters = filters['_excluded']
-                            skip_node = False
-                            for key, value in excluded_filters.items():
-                                node_value = node_metadata.get(key)
-                                if node_value == value:
-                                    # For context_tags, check if excluded tag is in the list
-                                    if key == 'context_tags' and isinstance(node_value, list):
-                                        if value in node_value:
-                                            skip_node = True
-                                            break
-                                    else:
-                                        skip_node = True
-                                        break
-
-                            if skip_node:
-                                continue
-
-                    all_results.append({
-                        'content': node.text,
-                        'metadata': node.metadata or {},
-                        'score': node.score,
-                        'source_type': node.metadata.get('doc_type', 'unknown') if node.metadata else 'unknown',
-                        'node_id': node.id_,
-                        'search_type': 'vector'
-                    })
-                    
-        except Exception as e:
-            logger.warning("Failed to retrieve from index", error=str(e))
-        
-        # Sort by relevance score
-        all_results.sort(key=lambda x: x['score'], reverse=True)
-        # Note: vector_limit is already applied in retriever, but trimming here for safety
-        return all_results[:vector_limit] if 'vector_limit' in locals() else all_results
-    
-    async def _keyword_search(self, query: str, doc_type_filter: Optional[List[str]], filters: Optional[Dict[str, Any]] = None, buffer_limit: Optional[int] = None) -> List[Dict]:
-        """Whoosh-based keyword search"""
-        results = []
-
-        try:
-            if not self.whoosh_engine or not self.keyword_search_ready:
-                logger.info("Whoosh search engine not available, skipping keyword search")
-                return results
-
-            # Use buffer limit if provided (for combined ranking), otherwise use dynamic calculation
-            if buffer_limit is not None:
-                keyword_limit = buffer_limit
-            else:
-                # Get dynamic document limit based on query
-                doc_limit = self._get_document_limit(query)
-                # For standalone search, allocate 30% to keyword search
-                keyword_limit = int(doc_limit * 0.3)
-
-            # Convert filters to Whoosh format
-            whoosh_filters = self._convert_filters_for_whoosh(filters, doc_type_filter)
-
-            # Perform Whoosh search
-            search_results = self.whoosh_engine.search(
-                query=query,
-                filters=whoosh_filters,
-                limit=keyword_limit,
-                highlight=False
-            )
-
-            # Convert Whoosh SearchResults to our format
-            for search_result in search_results:
-                results.append({
-                    'content': search_result.content,
-                    'metadata': search_result.metadata,
-                    'score': search_result.score,
-                    'source_type': search_result.metadata.get('doc_type', 'unknown'),
-                    'node_id': search_result.doc_id,
-                    'search_type': 'keyword'
-                })
-
-            logger.info(f"Whoosh keyword search found {len(results)} results")
-            
-        except Exception as e:
-            logger.error("Failed to perform Whoosh keyword search", error=str(e))
-        
-        return results
-
-    def _convert_filters_for_whoosh(self, filters: Optional[Dict[str, Any]], doc_type_filter: Optional[List[str]]) -> Optional[Dict[str, Any]]:
-        """Convert RAG pipeline filters to Whoosh filter format"""
-        if not filters and not doc_type_filter:
-            return None
-
-        whoosh_filters = {}
-
-        if filters:
-            # Handle primary_framework filter (most important for smart metadata)
-            if 'primary_framework' in filters:
-                whoosh_filters['primary_framework'] = filters['primary_framework']
-
-            # Handle content_domains filter
-            if 'content_domains' in filters:
-                whoosh_filters['content_domains'] = filters['content_domains']
-
-            # Handle document_type filter
-            if 'document_type' in filters:
-                whoosh_filters['document_type'] = filters['document_type']
-
-        # Convert doc_type_filter to Whoosh format
-        if doc_type_filter:
-            # Whoosh engine expects doc_type in the document_type field
-            whoosh_filters['document_type'] = doc_type_filter
-
-        return whoosh_filters if whoosh_filters else None
-
-    def _combine_search_results(self, vector_results: List[Dict], keyword_results: List[Dict], query: str) -> List[Dict]:
-        """Combine and rerank results from vector and keyword search with exact match boosting"""
-        
-        try:
-            # Create a combined results dictionary to avoid duplicates
-            combined_dict = {}
-            
-            # Check for exact matches in query (like ASC codes)
-            exact_match_patterns = re.findall(r'\b(ASC\s+\d{3}-\d{2}-\d{2}-\d{1,2})\b', query, re.IGNORECASE)
-            has_exact_patterns = len(exact_match_patterns) > 0
-            
-            # Normalize scores and add vector results
-            max_vector_score = max([r['score'] for r in vector_results], default=1.0)
-            for result in vector_results:
-                node_id = result['node_id']
-                normalized_score = result['score'] / max_vector_score if max_vector_score > 0 else 0
-                
-                # Check for exact pattern matches in content
-                exact_match_bonus = 0.0
-                if has_exact_patterns:
-                    content = result.get('content', '')
-                    for pattern in exact_match_patterns:
-                        if re.search(re.escape(pattern), content, re.IGNORECASE):
-                            exact_match_bonus += 0.5  # Significant boost for exact matches
-                            logger.info(f"Exact match bonus applied for '{pattern}' in {result['metadata'].get('filename', 'Unknown')}")
-                
-                combined_dict[node_id] = result.copy()
-                combined_dict[node_id]['vector_score'] = normalized_score
-                combined_dict[node_id]['keyword_score'] = 0.0
-                combined_dict[node_id]['exact_match_bonus'] = exact_match_bonus
-                combined_dict[node_id]['combined_score'] = (normalized_score * 0.6) + exact_match_bonus  # Vector + exact match bonus
-            
-            # Normalize scores and add/update keyword results
-            max_keyword_score = max([r['score'] for r in keyword_results], default=1.0)
-            for result in keyword_results:
-                node_id = result['node_id']
-                normalized_score = result['score'] / max_keyword_score if max_keyword_score > 0 else 0
-                
-                # Check for exact matches in keyword results too
-                exact_match_bonus = 0.0
-                if has_exact_patterns:
-                    content = result.get('content', '')
-                    for pattern in exact_match_patterns:
-                        if re.search(re.escape(pattern), content, re.IGNORECASE):
-                            exact_match_bonus += 0.5
-                
-                if node_id in combined_dict:
-                    # Update existing result with keyword score
-                    combined_dict[node_id]['keyword_score'] = normalized_score
-                    # Recalculate with all components
-                    combined_dict[node_id]['combined_score'] = (
-                        combined_dict[node_id]['vector_score'] * 0.6 + 
-                        normalized_score * 0.4 + 
-                        combined_dict[node_id]['exact_match_bonus']  # Keep existing bonus
-                    )
-                    combined_dict[node_id]['search_type'] = 'hybrid'
-                else:
-                    # Add new keyword-only result
-                    combined_dict[node_id] = result.copy()
-                    combined_dict[node_id]['vector_score'] = 0.0
-                    combined_dict[node_id]['keyword_score'] = normalized_score
-                    combined_dict[node_id]['exact_match_bonus'] = exact_match_bonus
-                    combined_dict[node_id]['combined_score'] = (normalized_score * 0.4) + exact_match_bonus
-            
-            # Convert back to list and sort by combined score
-            final_results = list(combined_dict.values())
-            final_results.sort(key=lambda x: x['combined_score'], reverse=True)
-            
-            # Take top results and clean up temporary scoring fields
-            doc_limit = self._get_document_limit(query)
-            final_results = final_results[:doc_limit]
-            for result in final_results:
-                result['score'] = result['combined_score']  # Set final score
-                # Keep detailed scores for debugging but rename
-                result.pop('combined_score', None)
-                # Optionally remove detailed scores to clean up
-                # result.pop('vector_score', None)
-                # result.pop('keyword_score', None)
-            
-            logger.info(f"Hybrid search combined {len(vector_results)} vector + {len(keyword_results)} keyword results into {len(final_results)} final results")
-            
-            return final_results
-            
-        except Exception as e:
-            logger.error("Failed to combine search results", error=str(e))
-            # Fallback to vector results only with dynamic limit
-            doc_limit = self._get_document_limit(query)
-            return vector_results[:doc_limit]
-    
-    
-    def _get_diverse_context_documents(self, documents: List[Dict]) -> List[Dict]:
-        """Select diverse documents for context to ensure comprehensive coverage"""
-        # FIXED: Return all documents for maximum comprehensive coverage
-        # The issue was complex deduplication logic that was too aggressive
-        logger.info(f"🔍 DIVERSE SELECTION DEBUG: Input={len(documents)}, Output={len(documents)} (returning all)")
-        return documents
-    
     def _create_semantic_document_groups(self, documents: List[Dict]) -> List[List[Dict]]:
         """Group documents by semantic similarity without hard-coded topics"""
         try:
@@ -1400,417 +744,19 @@ Group documents by content similarity:"""
         
         return groups
     
-    def _generate_single_pass_response(self, query: str, documents: List[Dict], conversation_context: str) -> str:
-        """Fallback single-pass response for smaller document sets"""
-        context = "\n\n".join([doc['content'] for doc in documents])
-        
-        prompt = f"""You are AAIRE, an expert in insurance accounting.
-{conversation_context}
-Question: {query}
-
-Documents:
-{context}
-
-Provide a comprehensive response using all the information in the documents above.
-
-Focus on providing comprehensive, accurate actuarial content. Don't worry about formatting - that will be handled separately.
-- Include all formulas, calculations, and requirements found"""
-        
-        raw_response = self.llm.complete(prompt)
-        
-        # Pass 2: Format the response
-        formatted_response = self._format_response(raw_response.text.strip())
-        return formatted_response
-    
-    def _format_response(self, raw_content: str) -> str:
-        """Pass 2: Clean formatting of the generated content with error handling"""
-        try:
-            logger.info("🔧 Pass 2: Starting formatting cleanup")
-            logger.info(f"🔍 Pass 2: Input content length: {len(raw_content)} characters")
-            logger.info(f"🔍 Pass 2: Content preview: {raw_content[:200]}...")
-
-            # Create a dedicated formatting LLM using GPT-4 for better performance
-            from llama_index.llms.openai import OpenAI
-            formatting_llm = OpenAI(
-                model="gpt-4o-mini",
-                temperature=0,
-                max_tokens=4000
-            )
-            logger.info("🔧 Pass 2: Using GPT-4o-mini for enhanced formatting capabilities")
-
-            # Check if self.llm exists and is properly configured
-            logger.info(f"🔍 Pass 2: LLM object exists: {self.llm is not None}")
-            if hasattr(self.llm, 'client'):
-                logger.info(f"🔍 Pass 2: LLM client exists: {self.llm.client is not None}")
-
-            format_prompt = f"""You are an EXPERT document formatter. Your SOLE PURPOSE is to fix ALL formatting issues while preserving EVERY word, number, and formula exactly.
-
-===== RAW TEXT TO FORMAT =====
-{raw_content}
-===== END RAW TEXT =====
-
-YOUR MISSION: Transform this into perfectly formatted text by fixing ALL these issues:
-
-🔴 CRITICAL ISSUE #1: ORPHANED ASTERISKS
-Search for these EXACT patterns and DELETE them:
-- Any line containing ONLY: **
-- Any line starting with: **<newline>
-- Any occurrence of: **<newline><newline>**
-- Standalone ** not part of bold text
-
-🔴 CRITICAL ISSUE #2: BROKEN LIST FORMATTING
-Transform EVERY instance of these patterns:
-
-PATTERN: "-<newline>The text"
-TRANSFORM TO: "• The text"
-
-PATTERN: "- **XXX**=Description" (all on one line)
-TRANSFORM TO: "• **XXX** = Description" (with spaces)
-
-PATTERN: Multiple codes on one line like "-**061**=text-**062**=text-**063**=text"
-TRANSFORM TO: Each on its own line:
-• **061** = text
-• **062** = text  
-• **063** = text
-
-🔴 CRITICAL ISSUE #3: BROKEN HEADERS
-Find and fix:
-- Headers followed by orphaned ** symbols
-- Headers with trailing ** at the end
-- Double asterisks that aren't creating bold text
-
-🔴 CRITICAL ISSUE #4: TRAILING ARTIFACTS
-Remove ALL instances of:
-- ",**" at end of sentences → remove the ,**
-- ")**" at end of parentheses → keep just )
-- Random ** at line ends → delete them
-- Unnecessary commas before line breaks
-
-🔴 CRITICAL ISSUE #5: SPACING AND STRUCTURE
-Ensure:
-- Blank line before and after each header
-- Each list item on its own line
-- Consistent bullet symbol (•) throughout
-- Proper spacing around equals signs in formulas
-
-STEP-BY-STEP PROCESSING ORDER:
-1. Read through the ENTIRE text first
-2. Identify ALL instances of the patterns above
-3. Fix orphaned asterisks FIRST
-4. Fix list formatting SECOND
-5. Fix headers THIRD
-6. Remove trailing artifacts FOURTH
-7. Fix spacing LAST
-
-VALIDATION REQUIREMENTS:
-Before returning the text, verify:
-✓ Zero lines contain only **
-✓ Zero instances of ** at start of lines (unless bold text)
-✓ All bullets use • symbol
-✓ Every list item is on a separate line
-✓ No ",**" or ")**" patterns remain
-✓ Headers are clean without trailing symbols
-✓ Proper spacing between sections
-
-ABSOLUTE REQUIREMENTS:
-1. PRESERVE every word, number, formula, and technical term
-2. NEVER add or remove actual content
-3. ONLY fix formatting issues
-4. Use • for ALL bullet points (not -, *, or •)
-5. Ensure professional, clean output
-
-EXAMPLE TRANSFORMATIONS YOU MUST APPLY:
-
-INPUT: "**2. Additional Considerations**\n\n**\n\nSecondary Guarantees:"
-OUTPUT: "**2. Additional Considerations**\n\nSecondary Guarantees:"
-
-INPUT: "- \nThe adjusted gross premium"  
-OUTPUT: "• The adjusted gross premium"
-
-INPUT: "costs),**"
-OUTPUT: "costs)"
-
-INPUT: "-**061**=Single premium-**062**=Universal life"
-OUTPUT: "• **061** = Single premium\n• **062** = Universal life"
-
-NOW FORMAT THE TEXT - Return ONLY the perfectly formatted version:"""
-
-            logger.info(f"🔍 Pass 2: Format prompt length: {len(format_prompt)} characters")
-            logger.info("🚀 Pass 2: About to call formatting_llm.complete() with GPT-4")
-
-            # Add timeout and more specific error handling
-            import time
-            start_time = time.time()
-
-            formatted_response = formatting_llm.complete(format_prompt)
-
-            end_time = time.time()
-            logger.info(f"🚀 Pass 2: LLM call completed in {end_time - start_time:.2f} seconds")
-            logger.info(f"🔍 Pass 2: Response object type: {type(formatted_response)}")
-            logger.info(f"🔍 Pass 2: Response has text attribute: {hasattr(formatted_response, 'text')}")
-
-            if hasattr(formatted_response, 'text'):
-                logger.info(f"🔍 Pass 2: Response text length: {len(formatted_response.text)} characters")
-                logger.info(f"🔍 Pass 2: Response preview: {formatted_response.text[:200]}...")
-
-                cleaned_text = formatted_response.text.strip()
-                
-                # Optional: Second pass for stubborn issues
-                if "**\n\n**" in cleaned_text or ",**" in cleaned_text or "-**" in cleaned_text:
-                    logger.info("🔄 Pass 2: Detected remaining issues, attempting focused cleanup")
-                    
-                    focused_prompt = f"""The formatting still has issues. Focus ONLY on these specific problems:
-
-TEXT WITH REMAINING ISSUES:
-{cleaned_text}
-
-FIND AND FIX ONLY THESE:
-1. Any "**\\n\\n**" → Delete the orphaned **
-2. Any ",**" → Remove ,**  
-3. Any "-**XXX**=" → Change to "• **XXX** = "
-4. Any line with ONLY ** → Delete entire line
-
-CRITICAL: Keep ALL other content EXACTLY the same.
-
-Return the corrected text:"""
-                    
-                    second_response = formatting_llm.complete(focused_prompt)
-                    if hasattr(second_response, 'text'):
-                        cleaned_text = second_response.text.strip()
-                        logger.info("✅ Pass 2: Focused cleanup completed")
-                
-                logger.info(f"🔍 Pass 2: Final cleaned text length: {len(cleaned_text)} characters")
-                logger.info("✅ Pass 2: Formatting cleanup completed successfully")
-                return cleaned_text
-            else:
-                logger.error("❌ Pass 2: Response object has no 'text' attribute")
-                logger.info("🔄 Pass 2: Falling back to original content")
-                return raw_content
-
-        except Exception as e:
-            logger.error(f"❌ Pass 2: Formatting cleanup failed with exception: {str(e)}")
-            logger.error(f"❌ Pass 2: Exception type: {type(e).__name__}")
-            import traceback
-            logger.error(f"❌ Pass 2: Full traceback: {traceback.format_exc()}")
-            logger.info("🔄 Pass 2: Falling back to original content")
-            return raw_content
-    
-    def _merge_response_parts(self, query: str, response_parts: List[str]) -> str:
-        """Merge multiple response parts into a coherent final response"""
-        if len(response_parts) == 1:
-            return response_parts[0]
-        
-        merge_prompt = f"""Combine these related responses into a single, well-organized answer to: {query}
-
-Response parts to merge:
-{chr(10).join([f"PART {i+1}:\n{part}\n" for i, part in enumerate(response_parts)])}
-
-FORMATTING REQUIREMENTS:
-- Use proper markdown formatting: # for main sections, ## for subsections
-- Use numbered lists (1., 2., 3.) with proper spacing
-- Use bullet points (-) for sub-items
-- Use **bold** only for emphasis within text, not for headers
-- Ensure clear spacing between sections and lists
-
-CONTENT REQUIREMENTS:
-- Eliminate any redundancy between parts
-- Organize information logically with clear markdown headers
-- Maintain ALL technical details, formulas, and calculations from each part
-- Keep EXACT formulas and preserve specific values like 90%, $2.50 per $1,000, etc.
-- Ensure the response flows naturally as a complete answer
-
-Create a cohesive response using proper markdown formatting:"""
-        
-        response = self.llm.complete(merge_prompt)
-        return response.text.strip()
-    
-    def _completeness_check(self, query: str, response: str, documents: List[Dict]) -> str:
-        """Check if response missed important content and add it"""
-        try:
-            # Optimize: Only check top 20 most relevant documents for completeness
-            # These contain the most important information and reduce processing time
-            top_docs = documents[:20] if len(documents) > 20 else documents
-            
-            # Create condensed view of top document content
-            all_content_snippets = []
-            for i, doc in enumerate(top_docs, 1):
-                snippet = doc['content'][:500].replace('\n', ' ')
-                all_content_snippets.append(f"Doc {i}: {snippet}...")
-            
-            logger.info(f"Completeness check: Analyzing {len(top_docs)} top documents (out of {len(documents)} total)")
-            
-            check_prompt = f"""Compare this response against the source documents to identify missing content.
-
-User Question: {query}
-
-Current Response:
-{response[:1500]}...
-
-Source Documents:
-{chr(10).join(all_content_snippets)}
-
-Identify any important concepts, methods, calculations, or considerations mentioned in the documents that are missing from the response.
-Focus on content that would be relevant to answering the user's question.
-
-If significant content is missing, list it. If the response is complete, respond with "COMPLETE".
-
-Missing content:"""
-            
-            missing_check = self.llm.complete(check_prompt)
-            missing_content = missing_check.text.strip()
-            
-            logger.info(f"🔍 COMPLETENESS CHECK RESULT: {missing_content[:200]}...")
-            
-            # Enhanced debugging for completeness check
-            logger.info(f"🔍 DEBUG: missing_content length: {len(missing_content) if missing_content else 0}")
-            logger.info(f"🔍 DEBUG: missing_content truthy: {bool(missing_content)}")
-            logger.info(f"🔍 DEBUG: 'COMPLETE' in upper: {'COMPLETE' in missing_content.upper() if missing_content else 'N/A'}")
-            
-            # Check if the response is exactly "COMPLETE" (not just containing the word)
-            if missing_content and missing_content.strip():
-                if missing_content.strip().upper() == "COMPLETE" or missing_content.strip().upper().startswith("COMPLETE."):
-                    logger.info("✅ Response marked as COMPLETE by completeness check")
-                else:
-                    logger.info("✅ Missing content identified, enhancing response")
-                    # Add missing content
-                    enhancement_prompt = f"""Enhance this response by adding the missing content identified below.
-
-Original Response:
-{response}
-
-Missing Content to Add:
-{missing_content}
-
-Create an enhanced response that includes the original content plus the missing information.
-
-FORMATTING REQUIREMENTS:
-- Use **bold** ONLY for section headings and key terms (NO # symbols)
-- Put each numbered list item on its own line (1. on one line, 2. on next line, etc.)
-- Use proper line breaks between sections for readability
-- Regular text should NOT be bold
-- Add blank lines between major sections
-- Use bullet points (-) with proper spacing
-
-Enhanced Response:"""
-                    
-                    enhanced = self.llm.complete(enhancement_prompt)
-                    logger.info("✅ Added missing content via completeness check")
-                    return enhanced.text.strip()
-            else:
-                logger.info("❌ No missing content response received")
-            
-            return response
-            
-        except Exception as e:
-            logger.warning(f"Completeness check failed: {str(e)}")
-            return response
-    
-    def _fix_reserve_terminology(self, response: str) -> str:
-        """Fix common terminology errors in reserve calculations"""
-        import re
-        
-        try:
-            # Fix Deferred Reserve -> Deterministic Reserve
-            response = re.sub(r'\bDeferred Reserve\b', 'Deterministic Reserve', response, flags=re.IGNORECASE)
-            response = re.sub(r'\bDeferred Reserves\b', 'Deterministic Reserves', response, flags=re.IGNORECASE)
-            
-            # Ensure DR is correctly defined
-            response = re.sub(r'\bDR\s*=\s*Deferred', 'DR = Deterministic', response, flags=re.IGNORECASE)
-            
-            # Fix Scenario Reserve -> Stochastic Reserve (if needed)
-            # Note: Scenario Reserve is sometimes acceptable, but Stochastic is more precise
-            response = re.sub(r'\bScenario Reserve\s*\(SR\)', 'Stochastic Reserve (SR)', response)
-            
-            # Fix inconsistent header formatting
-            response = re.sub(r'\*\*([A-Z][a-z]+.*?):\*\*\s*([A-Z])', r'\n**\1**\n\2', response)
-            response = re.sub(r'•\s*\*\*(.*?):\*\*', r'• **\1:**', response)
-            
-            logger.info("Fixed reserve terminology and formatting")
-            return response
-            
-        except Exception as e:
-            logger.warning(f"Failed to fix terminology: {str(e)}")
-            return response
-    
-    # Formula cleaning removed - trust LLM formatting through prompt engineering
-    
-    def _preserve_formulas(self, response: str, documents: List[Dict]) -> str:
-        """Extract and preserve mathematical formulas from documents"""
-        try:
-            # Extract all mathematical content from documents
-            all_content = " ".join([doc['content'] for doc in documents])
-            
-            formula_prompt = f"""Extract ALL mathematical formulas, equations, and calculations from this content.
-
-Content:
-{all_content[:4000]}
-
-Find every formula, equation, calculation method, or mathematical expression.
-Preserve the exact notation including LaTeX markup, variables, subscripts, etc.
-
-Output each formula with a brief description:
-1. [Description]: [Exact formula as written]
-2. [Description]: [Exact formula as written]
-
-If no formulas found, respond with "NO_FORMULAS".
-
-Extracted formulas:"""
-            
-            formula_response = self.llm.complete(formula_prompt)
-            extracted_formulas = formula_response.text.strip()
-            
-            logger.info(f"🧮 FORMULA EXTRACTION RESULT: {extracted_formulas[:300]}...")
-            
-            if extracted_formulas and "NO_FORMULAS" not in extracted_formulas:
-                # Check if formulas are already well-represented in response
-                formula_check_prompt = f"""Are these mathematical formulas adequately represented in the response?
-
-Response:
-{response[:1000]}...
-
-Formulas from documents:
-{extracted_formulas}
-
-If key formulas are missing or oversimplified, respond with "ADD_FORMULAS".
-If formulas are well-represented, respond with "FORMULAS_ADEQUATE".
-
-Assessment:"""
-                
-                formula_check = self.llm.complete(formula_check_prompt)
-                
-                logger.info(f"🧮 FORMULA CHECK RESULT: {formula_check.text.strip()}")
-                
-                if "ADD_FORMULAS" in formula_check.text:
-                    # Add mathematical formulas section
-                    enhanced_response = f"""{response}
-
-## Mathematical Formulas and Calculations
-
-{extracted_formulas}"""
-                    
-                    logger.info("✅ Added mathematical formulas section")
-                    return enhanced_response
-                else:
-                    logger.info("❌ Formulas determined to be adequately represented")
-            else:
-                logger.info("❌ No formulas extracted or NO_FORMULAS returned")
-            
-            return response
-            
-        except Exception as e:
-            logger.warning(f"Formula preservation failed: {str(e)}")
-            return response
-    
     async def _process_with_chunked_enhancement(self, query: str, retrieved_docs: List[Dict], conversation_context: str) -> str:
         """Main processing method that combines all our enhancements"""
         try:
+            # 🔧 APPLY ENHANCED METHODOLOGICAL RANKING
+            enhanced_docs = self._apply_methodological_ranking(query, retrieved_docs)
+
             # Get diverse documents for processing
-            diverse_docs = self._get_diverse_context_documents(retrieved_docs)
-            logger.info(f"📚 Processing {len(diverse_docs)} diverse documents (out of {len(retrieved_docs)} total)")
+            diverse_docs = self._get_diverse_context_documents(enhanced_docs)
+            logger.info(f"📚 Processing {len(diverse_docs)} diverse documents (out of {len(enhanced_docs)} total)")
             
             # Check for organizational queries first
-            if self._is_organizational_query(query, diverse_docs):
-                return self._generate_organizational_response(query, diverse_docs, conversation_context)
+            if self.query_analyzer.is_organizational_query(query, diverse_docs):
+                return self.query_analyzer.generate_organizational_response(query, diverse_docs, conversation_context)
             
             # Use chunked processing for comprehensive coverage
             if len(diverse_docs) <= 8:
@@ -1825,98 +771,15 @@ Assessment:"""
             # enhanced_response = self._completeness_check(query, response, diverse_docs)
             logger.info("⚡ Completeness check disabled for speed optimization")
 
-            # Apply structured response generation for quality control
-            if self.structured_generator is not None:
-                try:
-                    logger.info("🔧 Applying structured response generation for quality control")
-                    # Extract the processed context that was actually used for response generation
-                    # This is the same context processing used in _generate_enhanced_single_pass
-                    processed_context = "\n\n".join([doc['content'] for doc in diverse_docs])
+            # Note: Structured response generation is already handled in the individual methods above
+            # Removing duplicate call to prevent double processing and API errors
 
-                    structured_response = await self.structured_generator.generate_structured_response(
-                        query=query,
-                        processed_context=processed_context,
-                        conversation_history=None  # No conversation history available in this method
-                    )
+            return response  # CRITICAL FIX: Return the successful response!
 
-                    # Extract the formatted answer from the structured response
-                    response = structured_response.answer
-                    logger.info("✅ Structured response generation completed successfully")
-                except Exception as e:
-                    logger.warning(f"Structured response generation failed: {e}, returning original response")
-                    return response
-            else:
-                logger.info("🔧 StructuredResponseGenerator not available, using original response")
-                return response
-            
         except Exception as e:
             logger.error(f"Enhanced processing failed: {str(e)}")
             # Fallback to simple approach
             return self._generate_enhanced_single_pass(query, diverse_docs[:5], conversation_context)
-    
-    def _is_organizational_query(self, query: str, documents: List[Dict]) -> bool:
-        """Check if this is an organizational structure query"""
-        org_terms = ['breakdown by job', 'organizational structure', 'job titles', 'hierarchy']
-        has_org_query = any(term in query.lower() for term in org_terms)
-        
-        if has_org_query:
-            # Check if documents contain spatial extraction data
-            sample_content = " ".join([doc['content'][:300] for doc in documents[:3]])
-            return '[SHAPE-AWARE ORGANIZATIONAL EXTRACTION]' in sample_content
-        
-        return False
-    
-    def _generate_organizational_response(self, query: str, documents: List[Dict], conversation_context: str) -> str:
-        """Generate response for organizational structure queries"""
-        context = "\n\n".join([doc['content'] for doc in documents])
-        
-        prompt = f"""You are AAIRE, an expert in insurance accounting and actuarial matters.
-{conversation_context}
-Question: {query}
-
-Organizational data:
-{context}
-
-Provide a clear organizational breakdown based on the spatial extraction data found in the documents.
-Use appropriate headings and structure the information clearly."""
-        
-        response = self.llm.complete(prompt)
-        return response.text.strip()
-    
-    def _generate_enhanced_single_pass(self, query: str, documents: List[Dict], conversation_context: str) -> str:
-        """Enhanced single-pass response for smaller document sets"""
-        context = "\n\n".join([doc['content'] for doc in documents])
-        
-        prompt = f"""You are AAIRE, an expert in insurance accounting.
-{conversation_context}
-Question: {query}
-
-Documents:
-{context}
-
-Create a comprehensive response that addresses ALL aspects covered in the retrieved documents.
-
-FORMATTING REQUIREMENTS:
-- Use proper markdown formatting with headers: # for main sections, ## for subsections
-- Use numbered lists (1., 2., 3.) with proper line breaks
-- Use bullet points (-) for sub-items
-- Keep mathematical formulas and expressions clear and readable
-- Use **bold** only for emphasis within text, not for headers
-- Ensure proper spacing between sections and lists
-
-CONTENT REQUIREMENTS:
-- Include ALL relevant regulatory sections, formulas, and calculations
-- Address ALL distinct concepts and methodologies mentioned
-- Preserve ALL technical details and specific requirements
-- Convert complex mathematical notation to readable text format (e.g., 𝐸𝑥+𝑡 = 𝑉𝑁𝑃𝑅⦁𝑎̈𝑥+𝑡:𝑣−𝑡| becomes E(x+t) = VNPR × annuity(x+t):v-t)
-- Replace complex Unicode symbols with readable text
-- Convert actuarial notation to plain English equivalents
-- Maintain mathematical accuracy while ensuring accessibility
-
-Structure your response to systematically cover every major topic found in the source material using clear markdown formatting."""
-        
-        response = self.llm.complete(prompt)
-        return response.text.strip()
     
     async def _generate_chunked_response(self, query: str, documents: List[Dict], conversation_context: str) -> str:
         """Generate response using semantic chunking for large document sets"""
@@ -1997,1181 +860,8 @@ Provide a detailed response covering all information that relates to the questio
         merged_response = self._merge_response_parts(query, response_parts)
         
         # Apply basic normalization only (no heavy post-processing since structured failed)
-        return self._normalize_spacing(merged_response)
+        return self.formatting_manager.normalize_spacing(merged_response)
     
-    
-    async def _generate_response(
-        self, 
-        query: str, 
-        retrieved_docs: List[Dict],
-        user_context: Optional[Dict[str, Any]] = None,
-        conversation_history: Optional[List[Dict]] = None,
-        session_id: Optional[str] = None
-    ) -> str:
-        """Generate response using retrieved documents and conversation context"""
-        
-        # Build conversation context using memory manager
-        conversation_context = ""
-        if self.memory_manager and session_id:
-            conversation_context = await self.memory_manager.get_conversation_context(session_id)
-            if conversation_context:
-                conversation_context = f"\n\n{conversation_context}\n"
-        
-        # Check if we have relevant documents
-        if not retrieved_docs:
-            # No relevant documents found - check topic classification before general knowledge response
-            topic_check = await self._classify_query_topic(query)
-            if not topic_check['is_relevant']:
-                logger.info(f"❌ General knowledge request rejected as off-topic: '{query[:50]}...'")
-                return topic_check['polite_response']
-                
-            # Query is relevant, provide general knowledge response
-            # Check if this is a calculation request
-            calc_config = self.config.get('calculation_config', {})
-            calc_enhancement = ""
-            if calc_config.get('enable_structured_calculations') and any(kw in query.lower() for kw in ['calculate', 'amortization', 'schedule', 'table', 'payment', 'journal']):
-                calc_enhancement = f"\n\nCalculation Instructions:\n{calc_config.get('calculation_instructions', '')}"
-            
-            prompt = f"""You are AAIRE, an expert in insurance accounting and actuarial matters.
-You provide accurate information based on US GAAP, IFRS, and general accounting principles.
-{conversation_context}
-Current User Question: {query}
-
-This appears to be a general accounting question. I will provide a standard accounting explanation.{calc_enhancement}
-
-Instructions:
-- Consider the conversation history to provide contextual answers
-- Provide a helpful general answer based on standard accounting and actuarial principles
-- This is general accounting knowledge, not from any specific company documents
-- Mention relevant accounting standards (US GAAP, IFRS) where applicable
-- Never provide tax or legal advice
-- CRITICAL: If performing ANY calculations, double-check ALL arithmetic (25×19,399×45=21,823,875 NOT 21,074,875)
-- Show step-by-step calculations with accurate intermediate results
-- Do NOT include any citation numbers like [1], [2], etc.
-- Do NOT reference any specific documents or sources
-- Make it clear this is general knowledge, not company-specific information
-
-Response:"""
-        else:
-            # Use dynamic chunked processing for all non-general queries
-            return await self._process_with_chunked_enhancement(query, retrieved_docs, conversation_context)
-        
-        # General knowledge response
-        response = self.llm.complete(prompt)
-        return response.text.strip()
-    
-    def _determine_question_categories(self, query: str, response: str, retrieved_docs: List[Dict]) -> List[str]:
-        """Determine appropriate question categories based on context"""
-        categories = []
-        
-        query_lower = query.lower()
-        response_lower = response.lower()
-        
-        # Check for specific topics and suggest relevant categories
-        if any(term in query_lower for term in ['gaap', 'ifrs', 'standard', 'compliance']):
-            categories.extend(['comparison', 'compliance'])
-        
-        if any(term in query_lower for term in ['reserve', 'calculation', 'premium', 'claim']):
-            categories.extend(['examples', 'technical'])
-        
-        if any(term in query_lower for term in ['audit', 'test', 'review']):
-            categories.extend(['application', 'compliance'])
-        
-        if any(term in response_lower for term in ['require', 'must', 'shall']):
-            categories.append('clarification')
-        
-        # Default categories if none detected
-        if not categories:
-            categories = ['clarification', 'examples', 'application']
-        
-        return list(set(categories))  # Remove duplicates
-    
-    def _get_category_examples(self, categories: List[str]) -> Dict[str, List[str]]:
-        """Get example questions for each category"""
-        category_questions = {
-            'clarification': [
-                "Can you explain this in simpler terms?",
-                "What does this mean in practice?",
-                "Could you break this down further?"
-            ],
-            'examples': [
-                "Can you provide a real-world example?",
-                "How would this work for a life insurance company?",
-                "What would this look like in financial statements?"
-            ],
-            'comparison': [
-                "How does this differ under IFRS vs US GAAP?",
-                "What are the key differences from previous standards?",
-                "How does this compare to industry practice?"
-            ],
-            'technical': [
-                "What are the detailed calculation steps?",
-                "What assumptions are typically used?",
-                "How do you handle edge cases?"
-            ],
-            'application': [
-                "How do companies typically implement this?",
-                "What systems support this process?",
-                "How often should this be performed?"
-            ],
-            'compliance': [
-                "What are the audit requirements?",
-                "How do regulators typically examine this?",
-                "What documentation is needed?"
-            ]
-        }
-        
-        return {cat: category_questions.get(cat, []) for cat in categories}
-
-    async def _generate_follow_up_questions(self, query: str, response: str, retrieved_docs: List[Dict]) -> List[str]:
-        """Generate contextual follow-up questions based on the query and response"""
-        
-        # Determine appropriate question categories
-        categories = self._determine_question_categories(query, response, retrieved_docs)
-        category_examples = self._get_category_examples(categories)
-        
-        # Analyze actual document content for specific follow-up opportunities
-        content_insights = self._analyze_document_content_for_followups(retrieved_docs[:2])  # Analyze top 2 docs
-        
-        # Build rich context from document content analysis
-        topic_context = ""
-        if content_insights:
-            context_parts = []
-            for insight_type, items in content_insights.items():
-                if items and insight_type != 'source_docs':
-                    context_parts.append(f"{insight_type}: {', '.join(items[:3])}")  # Top 3 items per type
-            
-            if context_parts:
-                topic_context = f"Document content analysis:\n" + "\n".join(context_parts)
-            
-            # Add source document info
-            source_docs = content_insights.get('source_docs', [])
-            if source_docs:
-                topic_context += f"\nSource documents: {', '.join(source_docs[:2])}"
-        
-        # Build category guidance
-        category_guidance = ""
-        for cat, examples in category_examples.items():
-            category_guidance += f"\n{cat.title()}: {', '.join(examples[:2])}"
-        
-        # Create content-specific guidance for better follow-ups
-        content_guidance = ""
-        if content_insights:
-            guidance_parts = []
-            
-            if content_insights.get('standards_mentioned'):
-                guidance_parts.append(f"Consider asking about other standards: {', '.join(content_insights['standards_mentioned'][:3])}")
-            
-            if content_insights.get('examples_found'):
-                guidance_parts.append("Ask about specific examples or scenarios mentioned in the documents")
-            
-            if content_insights.get('tables_data'):
-                guidance_parts.append(f"Reference specific data: {', '.join(content_insights['tables_data'][:2])}")
-            
-            if content_insights.get('key_concepts'):
-                guidance_parts.append(f"Explore concepts like: {', '.join(content_insights['key_concepts'][:3])}")
-            
-            if content_insights.get('implementation_terms'):
-                guidance_parts.append("Ask about implementation, transition, or adoption aspects")
-            
-            if guidance_parts:
-                content_guidance = f"\nContent-specific opportunities:\n" + "\n".join([f"- {part}" for part in guidance_parts])
-
-        # Extract specific elements from the actual response to create targeted follow-ups
-        response_elements = self._extract_response_elements(response)
-        document_specifics = self._get_document_specifics(retrieved_docs[:2])
-        
-        prompt = f"""Generate 2-3 highly specific follow-up questions based on this EXACT conversation and documents.
-
-USER ASKED: "{query}"
-
-MY RESPONSE: "{response[:500]}..." 
-
-SPECIFIC DOCUMENT CONTENT USED:
-{document_specifics}
-
-RESPONSE ANALYSIS:
-{response_elements}
-
-CRITICAL INSTRUCTIONS:
-- Questions must be DIRECTLY related to what I just explained to the user
-- Reference SPECIFIC information from the documents that were actually cited
-- Build upon the EXACT conversation context and dig deeper into specifics
-- NO generic business/insurance questions
-- Focus on specific metrics, segments, time periods, or data points I mentioned
-- If discussing financial results, ask about specific components or related metrics
-- If discussing business segments, ask about other segments or comparative performance
-- If discussing time periods, ask about trends or comparisons to other periods
-
-Examples of GOOD contextual questions for financial discussions:
-- "What drove the unfavorable claims experience in U.S. Traditional that you mentioned?"
-- "How did the other business segments perform compared to the 14.3% ROE you cited?"
-- "What specific factors contributed to the $276 million capital deployment figure?"
-- "Can you break down the components of the variable investment income mentioned?"
-
-Examples of GOOD contextual questions for technical documents:
-- "What does the PWC document say about the implementation timeline for this standard?"
-- "How does the calculation method in section 3.2 apply to different scenarios?"
-- "What are the disclosure requirements mentioned alongside this guidance?"
-
-Examples of BAD generic questions to COMPLETELY AVOID:
-- "How do claims impact profitability?" 
-- "What strategies do insurers use for capital management?"
-- "Can you explain adjusted operating income?"
-- "What are the benefits of this approach?"
-
-Generate exactly 2-3 contextual follow-up questions that dig deeper into the specific information I just provided:"""
-
-        try:
-            response_obj = self.llm.complete(prompt)
-            questions_text = response_obj.text.strip()
-            
-            # Parse the response into individual questions
-            questions = []
-            logger.info(f"🎯 AI generated follow-up questions: {questions_text}")
-            for line in questions_text.split('\n'):
-                line = line.strip()
-                if line and len(line) > 10:  # Filter out empty or very short lines
-                    # Clean up any unwanted formatting - remove numbers, bullets, quotes
-                    clean_question = line.strip('- •').strip()
-                    # Remove numbering like "1. " or "2. "
-                    clean_question = re.sub(r'^\d+\.\s*', '', clean_question)
-                    # Remove surrounding quotes
-                    clean_question = clean_question.strip('"\'').strip()
-                    
-                    if clean_question.endswith('?') and len(clean_question) > 10:
-                        # Validate question is contextual (not generic)
-                        is_contextual = self._is_contextual_question(clean_question, query, response)
-                        logger.info(f"🔍 Question validation: '{clean_question}' -> {'✅' if is_contextual else '❌'}")
-                        if is_contextual:
-                            questions.append(clean_question)
-            
-            # Return max 3 questions, fallback if none are contextual
-            if questions:
-                return questions[:3]
-            else:
-                logger.warning("No contextual follow-up questions generated, using response-based fallback")
-                return self._generate_response_based_fallback(query, response, retrieved_docs)
-            
-        except Exception as e:
-            logger.error("Failed to generate follow-up questions", error=str(e))
-            # Return fallback questions if generation fails
-            return [
-                "Can you explain this in more detail?",
-                "What are the practical implications?",
-                "How does this apply in practice?"
-            ]
-    
-    def _analyze_document_content_for_followups(self, retrieved_docs: List[Dict]) -> Dict[str, List[str]]:
-        """Analyze document content to extract specific elements for targeted follow-up questions"""
-        insights = {
-            'standards_mentioned': [],
-            'examples_found': [],
-            'tables_data': [],
-            'implementation_terms': [],
-            'key_concepts': [],
-            'cross_references': [],
-            'source_docs': []
-        }
-        
-        try:
-            for doc in retrieved_docs:
-                content = doc.get('content', '').lower()
-                filename = doc.get('metadata', {}).get('filename', 'Unknown')
-                insights['source_docs'].append(filename)
-                
-                # Extract accounting standards (ASC, IFRS, etc.)
-                standards = re.findall(r'\b(?:asc|ifrs|ias|fas)\s+\d+(?:[-\.\s]\d+)*\b', content)
-                insights['standards_mentioned'].extend([std.upper() for std in standards])
-                
-                # Find examples in the document
-                examples = re.findall(r'example\s+\d+[:\s][^\.]*\.', content)
-                insights['examples_found'].extend([ex.strip()[:50] + "..." for ex in examples[:2]])
-                
-                # Detect tables and data references
-                table_refs = re.findall(r'table\s+\d+|schedule\s+\d+|appendix\s+[a-z]', content)
-                insights['tables_data'].extend([ref.title() for ref in table_refs])
-                
-                # Find implementation-related terms
-                impl_patterns = [
-                    r'transition\s+requirements?',
-                    r'implementation\s+guidance',
-                    r'effective\s+date',
-                    r'adoption\s+process',
-                    r'system\s+changes?'
-                ]
-                for pattern in impl_patterns:
-                    matches = re.findall(pattern, content)
-                    insights['implementation_terms'].extend([match.title() for match in matches])
-                
-                # Extract key financial/actuarial concepts
-                concept_patterns = [
-                    r'present\s+value',
-                    r'discount\s+rate',
-                    r'fair\s+value',
-                    r'amortization',
-                    r'reserve\s+adequacy',
-                    r'capital\s+ratio',
-                    r'risk\s+adjustment'
-                ]
-                for pattern in concept_patterns:
-                    matches = re.findall(pattern, content)
-                    insights['key_concepts'].extend([match.title() for match in matches])
-                
-                # Find cross-references to other standards/sections
-                cross_refs = re.findall(r'see\s+(?:also\s+)?(?:asc|ifrs|section|paragraph)\s+\d+(?:[-\.\s]\d+)*', content)
-                insights['cross_references'].extend([ref.upper() for ref in cross_refs])
-            
-            # Clean up and deduplicate
-            for key in insights:
-                if key != 'source_docs':
-                    insights[key] = list(set(insights[key]))[:5]  # Max 5 unique items per category
-            
-            logger.info(f"📊 Content analysis extracted: {sum(len(v) if isinstance(v, list) else 0 for v in insights.values())} content elements")
-            return insights
-            
-        except Exception as e:
-            logger.error(f"Failed to analyze document content: {e}")
-            return {'source_docs': [doc.get('metadata', {}).get('filename', 'Unknown') for doc in retrieved_docs]}
-
-    def _extract_response_elements(self, response: str) -> str:
-        """Extract specific elements mentioned in the response for targeted follow-ups"""
-        elements = []
-        response_lower = response.lower()
-        
-        try:
-            # Extract specific financial metrics and dollar amounts
-            financial_metrics = []
-            dollar_amounts = re.findall(r'\$[\d,]+(?:\.\d+)?\s*(?:million|billion|thousand)?', response_lower)
-            percentages = re.findall(r'\d+\.\d+%', response_lower)
-            
-            if dollar_amounts:
-                elements.append(f"Financial amounts: {', '.join(dollar_amounts[:3])}")
-            if percentages:
-                elements.append(f"Performance metrics: {', '.join(percentages[:3])}")
-            
-            # Extract specific business segments mentioned
-            segments = re.findall(r'(?:u\.s\.|us|canada|emea|latin america)\s+(?:traditional|group|individual life|financial solutions)', response_lower)
-            if segments:
-                elements.append(f"Business segments: {', '.join(set([s.title() for s in segments[:3]]))}")
-            
-            # Extract time periods and quarters
-            periods = re.findall(r'q[1-4]\s+(?:20\d{2}|results?)|(?:second|first|third|fourth)\s+quarter', response_lower)
-            if periods:
-                elements.append(f"Time periods discussed: {', '.join(set([p.upper() for p in periods]))}")
-            
-            # Extract company/entity names
-            companies = re.findall(r'\b(?:rga|reinsurance group|equitable holdings?)\b', response_lower)
-            if companies:
-                elements.append(f"Companies mentioned: {', '.join(set([c.upper() for c in companies]))}")
-            
-            # Extract performance trends and outcomes
-            performance_terms = []
-            if 'favorable' in response_lower:
-                favorable_items = re.findall(r'favorable\s+(?:\w+\s+){0,2}(?:experience|performance|results?|investment)', response_lower)
-                performance_terms.extend(favorable_items)
-            if 'unfavorable' in response_lower:
-                unfavorable_items = re.findall(r'unfavorable\s+(?:\w+\s+){0,2}(?:experience|claims?|results?)', response_lower)
-                performance_terms.extend(unfavorable_items)
-            
-            if performance_terms:
-                elements.append(f"Performance trends: {', '.join(set(performance_terms[:3]))}")
-            
-            # Extract specific standards mentioned
-            standards_mentioned = re.findall(r'\b(?:asc|ifrs|ias|fas)\s+\d+(?:[-\.\s]\d+)*\b', response_lower)
-            if standards_mentioned:
-                elements.append(f"Standards referenced: {', '.join(set([s.upper() for s in standards_mentioned]))}")
-            
-            # Extract key financial concepts
-            financial_concepts = []
-            concept_patterns = [
-                r'adjusted\s+operating\s+income',
-                r'return\s+on\s+equity',
-                r'excess\s+capital',
-                r'variable\s+investment\s+income',
-                r'claims?\s+experience',
-                r'premium\s+growth',
-                r'reserve\s+adequacy',
-                r'capital\s+deployment'
-            ]
-            for pattern in concept_patterns:
-                matches = re.findall(pattern, response_lower)
-                financial_concepts.extend([match.title() for match in matches])
-            
-            if financial_concepts:
-                elements.append(f"Key concepts: {', '.join(set(financial_concepts[:3]))}")
-            
-            return "\n".join([f"- {element}" for element in elements]) if elements else "- General financial/business information provided"
-            
-        except Exception as e:
-            logger.error(f"Failed to extract response elements: {e}")
-            return "- Unable to analyze response elements"
-    
-    def _get_document_specifics(self, retrieved_docs: List[Dict]) -> str:
-        """Extract specific information from the documents that were actually used"""
-        specifics = []
-        
-        try:
-            for i, doc in enumerate(retrieved_docs[:2], 1):
-                filename = doc.get('metadata', {}).get('filename', 'Unknown')
-                content = doc.get('content', '')[:400]  # First 400 chars
-                
-                specifics.append(f"Source ({filename}):")
-                specifics.append(f"Content excerpt: \"{content}...\"")
-                
-                # Extract specific elements from this document
-                content_lower = content.lower()
-                doc_elements = []
-                
-                # Standards in this specific document
-                doc_standards = re.findall(r'\b(?:asc|ifrs|ias|fas)\s+\d+(?:[-\.\s]\d+)*\b', content_lower)
-                if doc_standards:
-                    doc_elements.append(f"Standards: {', '.join(set([s.upper() for s in doc_standards]))}")
-                
-                # Tables or data references
-                tables = re.findall(r'table\s+\d+|schedule\s+\d+|appendix\s+[a-z]', content_lower)
-                if tables:
-                    doc_elements.append(f"Data references: {', '.join(set(tables))}")
-                
-                if doc_elements:
-                    specifics.append(f"Specific elements: {'; '.join(doc_elements)}")
-                
-                specifics.append("")  # Add blank line between documents
-            
-            return "\n".join(specifics) if specifics else "No specific document content available"
-            
-        except Exception as e:
-            logger.error(f"Failed to get document specifics: {e}")
-            return "Unable to analyze document specifics"
-    
-    def _is_contextual_question(self, question: str, original_query: str, response: str) -> bool:
-        """Validate that a follow-up question is contextual to the conversation"""
-        question_lower = question.lower()
-        response_lower = response.lower()
-        query_lower = original_query.lower()
-        
-        # Generic phrases that indicate non-contextual questions
-        generic_phrases = [
-            'how do insurers typically',
-            'what strategies do insurers',
-            'how does claims impact profitability',
-            'what are some strategies for',
-            'how do companies typically handle',
-            'what are the benefits of this approach',
-            'how can organizations improve',
-            'what factors influence profitability',
-            'what are some common practices',
-            'how can we improve our',
-            'what does this mean for the industry',
-            'what are the implications for',
-            'how should companies approach',
-            'what best practices should',
-            'how does this compare to industry standards'
-        ]
-        
-        # Check if question contains generic phrases
-        if any(phrase in question_lower for phrase in generic_phrases):
-            return False
-        
-        # Extract specific metrics, amounts, or data points from response
-        response_specifics = []
-        response_specifics.extend(re.findall(r'\$[\d,]+(?:\.\d+)?\s*(?:million|billion)', response_lower))
-        response_specifics.extend(re.findall(r'\d+\.\d+%', response_lower))
-        response_specifics.extend(re.findall(r'q[1-4]\s+(?:20\d{2}|results?)', response_lower))
-        response_specifics.extend(re.findall(r'(?:u\.s\.|canada|emea)\s+(?:traditional|group)', response_lower))
-        
-        # Check if question references something mentioned in the response or query
-        contextual_indicators = [
-            # References specific financial amounts/metrics from response
-            any(specific in question_lower for specific in response_specifics),
-            # References specific elements from response/query
-            any(word in question_lower for word in ['mentioned', 'explained', 'described', 'discussed', 'cited']),
-            # References specific standards that appear in response
-            bool(re.search(r'\b(?:asc|ifrs|ias|fas)\s+\d+', question_lower)) and bool(re.search(r'\b(?:asc|ifrs|ias|fas)\s+\d+', response_lower)),
-            # References document-specific terms
-            any(term in question_lower for term in ['document', 'section', 'example', 'table', 'schedule', 'presentation']),
-            # References calculation or specific concept from response
-            any(term in question_lower and term in response_lower for term in ['calculation', 'method', 'approach', 'guidance', 'component', 'breakdown']),
-            # References specific company/business terms that appear in both
-            any(term in question_lower and term in response_lower for term in ['rga', 'equitable', 'segment', 'traditional', 'group']),
-            # References specific time periods or comparative language
-            any(term in question_lower for term in ['compared to', 'other segments', 'different', 'breakdown', 'components']),
-        ]
-        
-        # Must have at least one strong contextual indicator
-        return any(contextual_indicators)
-    
-    def _generate_response_based_fallback(self, query: str, response: str, retrieved_docs: List[Dict]) -> List[str]:
-        """Generate simple, contextual follow-ups based on the actual response content"""
-        fallback_questions = []
-        
-        try:
-            # Extract key terms from the response to create specific follow-ups
-            response_lower = response.lower()
-            
-            # If response mentions specific standards, ask about related ones
-            standards = re.findall(r'\b(?:asc|ifrs|ias|fas)\s+\d+(?:[-\.\s]\d+)*\b', response_lower)
-            if standards:
-                fallback_questions.append(f"How does {standards[0].upper()} relate to other accounting standards?")
-            
-            # If response mentions calculations, ask for details
-            if any(word in response_lower for word in ['calculate', 'computation', 'formula']):
-                fallback_questions.append("Can you walk through the calculation steps in more detail?")
-            
-            # If response mentions examples, ask for more
-            if 'example' in response_lower:
-                fallback_questions.append("Can you provide another example of this concept?")
-            
-            # If response mentions implementation, ask about challenges
-            if any(word in response_lower for word in ['implement', 'apply', 'adopt']):
-                fallback_questions.append("What are the main challenges in implementing this?")
-            
-            # Document-specific fallback
-            if retrieved_docs:
-                filename = retrieved_docs[0].get('metadata', {}).get('filename', '')
-                if filename:
-                    fallback_questions.append(f"What else does the {filename} document cover on this topic?")
-            
-            # If no specific fallbacks, use minimal contextual ones
-            if not fallback_questions:
-                fallback_questions = [
-                    "Can you clarify any part of this explanation?",
-                    "Are there related concepts I should understand?",
-                    "How would this apply in practice?"
-                ]
-            
-            return fallback_questions[:3]
-            
-        except Exception as e:
-            logger.error(f"Failed to generate fallback questions: {e}")
-            return [
-                "Can you elaborate on this topic?",
-                "What are the key takeaways?",
-                "How does this relate to our previous discussion?"
-            ]
-    
-    async def _classify_query_topic(self, query: str) -> Dict[str, Any]:
-        """Classify whether the query is within AAIRE's domain expertise"""
-        
-        logger.info(f"📋 Starting topic classification for: '{query[:30]}...'")
-        
-        # Define relevant financial/insurance/accounting domains
-        relevant_keywords = {
-            'financial': [
-                'financial', 'finance', 'revenue', 'profit', 'loss', 'earnings', 'income', 'expense',
-                'assets', 'liabilities', 'equity', 'balance sheet', 'cash flow', 'statement',
-                'budget', 'forecast', 'valuation', 'investment', 'portfolio', 'returns',
-                'capital', 'funding', 'financing', 'debt', 'credit', 'loan', 'mortgage'
-            ],
-            'accounting': [
-                'accounting', 'gaap', 'ifrs', 'asc', 'fas', 'ias', 'standard', 'compliance',
-                'audit', 'auditing', 'journal', 'ledger', 'depreciation', 'amortization',
-                'accrual', 'recognition', 'measurement', 'disclosure', 'reporting',
-                'consolidation', 'segment', 'fair value', 'impairment', 'tax'
-            ],
-            'insurance': [
-                'insurance', 'insurer', 'policy', 'premium', 'claim', 'coverage', 'underwriting',
-                'reinsurance', 'actuarial', 'risk', 'reserve', 'liability', 'benefit',
-                'annuity', 'life insurance', 'health insurance', 'property', 'casualty',
-                'solvency', 'capital adequacy', 'licat', 'regulatory'
-            ],
-            'banking': [
-                'bank', 'banking', 'deposit', 'withdrawal', 'account', 'lending', 'borrowing',
-                'interest rate', 'mortgage', 'loan', 'credit', 'debit', 'payment',
-                'financial institution', 'federal reserve', 'monetary policy', 'currency'
-            ],
-            'investment': [
-                'investment', 'investing', 'stock', 'bond', 'security', 'portfolio',
-                'mutual fund', 'etf', 'dividend', 'yield', 'return', 'risk', 'volatility',
-                'market', 'trading', 'hedge fund', 'private equity', 'venture capital'
-            ],
-            'mathematical': [
-                'calculation', 'formula', 'equation', 'mathematical', 'statistics', 'probability',
-                'model', 'modeling', 'quantitative', 'analysis', 'ratio', 'percentage',
-                'present value', 'future value', 'discount rate', 'compound', 'regression'
-            ],
-            'economics': [
-                'economic', 'economics', 'inflation', 'deflation', 'gdp', 'recession',
-                'growth', 'unemployment', 'monetary', 'fiscal', 'policy', 'market',
-                'supply', 'demand', 'price', 'cost', 'microeconomic', 'macroeconomic'
-            ]
-        }
-        
-        # Quick keyword-based check first
-        query_lower = query.lower()
-        has_relevant_keywords = False
-        
-        for domain, keywords in relevant_keywords.items():
-            if any(keyword in query_lower for keyword in keywords):
-                has_relevant_keywords = True
-                break
-        
-        # If obvious keywords found, likely relevant
-        if has_relevant_keywords:
-            return {'is_relevant': True, 'confidence': 0.9}
-        
-        # Use AI classification for ambiguous cases
-        classification_prompt = f"""Determine if this question is relevant to AAIRE, an AI assistant specialized in:
-- Financial analysis and reporting
-- Accounting standards (GAAP, IFRS, ASC, etc.)
-- Insurance and actuarial topics
-- Banking and investment concepts  
-- Mathematical and statistical analysis
-- Economics and business finance
-
-Question: "{query}"
-
-Is this question within AAIRE's expertise domain?
-
-Respond with either:
-"RELEVANT" - if the question relates to finance, accounting, insurance, banking, investments, mathematics/statistics, or economics
-"NOT_RELEVANT" - if the question is about other topics like sports, entertainment, cooking, travel, personal relationships, general knowledge, etc.
-
-Answer:"""
-
-        try:
-            response = self.llm.complete(classification_prompt)
-            classification = response.text.strip().upper()
-            
-            if "RELEVANT" in classification:
-                return {'is_relevant': True, 'confidence': 0.8}
-            else:
-                polite_responses = [
-                    "I'm AAIRE, a specialized AI assistant focused on financial, accounting, insurance, and actuarial topics. I'd be happy to help you with questions related to these areas instead!",
-                    "I specialize in financial, accounting, insurance, banking, and related business topics. Could you ask me something within these domains? I'd love to help!",
-                    "As an insurance and financial industry specialist, I'm designed to assist with accounting standards, financial analysis, insurance topics, and related mathematical concepts. How can I help you with these areas?",
-                    "I'm focused on providing expert assistance with financial, accounting, actuarial, and insurance-related questions. Is there something in these areas I can help you with instead?"
-                ]
-                
-                import random
-                selected_response = random.choice(polite_responses)
-                
-                return {
-                    'is_relevant': False, 
-                    'polite_response': selected_response,
-                    'confidence': 0.8
-                }
-                
-        except Exception as e:
-            logger.error(f"Failed to classify query topic: {e}")
-            # Default to allowing the query if classification fails
-            return {'is_relevant': True, 'confidence': 0.3}
-
-    def _expand_query(self, query: str) -> str:
-        """Expand general queries with specific domain terms for better retrieval"""
-        query_lower = query.lower()
-        
-        # Domain-specific term mappings for insurance and accounting
-        expansion_mappings = {
-            # Capital and financial health terms
-            'capital health': 'capital health LICAT ratio core ratio total ratio capital adequacy',
-            'company capital': 'company capital LICAT ratio core ratio total ratio regulatory capital',
-            'assess capital': 'assess capital LICAT ratio core ratio total ratio capital adequacy',
-            'financial strength': 'financial strength LICAT ratio core ratio total ratio capital adequacy',
-            'capital adequacy': 'capital adequacy LICAT ratio core ratio total ratio regulatory capital',
-            
-            # Insurance specific expansions
-            'insurance': 'insurance LICAT OSFI regulatory capital solvency',
-            'regulatory': 'regulatory OSFI LICAT compliance capital requirements',
-            'solvency': 'solvency LICAT ratio capital adequacy regulatory capital',
-            
-            # Accounting standard expansions
-            'accounting': 'accounting GAAP IFRS standards disclosure requirements',
-            'financial reporting': 'financial reporting GAAP IFRS disclosure standards',
-            'compliance': 'compliance regulatory requirements OSFI GAAP IFRS',
-            
-            # Risk management expansions
-            'risk': 'risk management capital risk regulatory risk operational risk',
-            'management': 'management risk management capital management regulatory management'
-        }
-        
-        # Apply expansions
-        expanded_query = query
-        for general_term, expansion in expansion_mappings.items():
-            if general_term in query_lower:
-                # Add specific terms to the query
-                specific_terms = expansion.replace(general_term, '').strip()
-                if specific_terms:
-                    expanded_query = f"{query} {specific_terms}"
-                break
-        
-        # Log expansion for debugging
-        if expanded_query != query:
-            logger.info("Query expanded", 
-                       original=query, 
-                       expanded=expanded_query)
-        
-        return expanded_query
-    
-    def _calculate_quality_metrics(self, query: str, response: str, retrieved_docs: List[Dict], citations: List[Dict]) -> Dict[str, float]:
-        """Calculate automated quality metrics for the response"""
-        try:
-            # Initialize metrics
-            metrics = {}
-            
-            # 1. Citation Coverage - How well the response is supported by sources
-            if retrieved_docs:
-                # Count how many retrieved docs are actually cited
-                cited_docs = len(citations) if citations else 0
-                total_docs = len(retrieved_docs)
-                metrics['citation_coverage'] = cited_docs / total_docs if total_docs > 0 else 0.0
-            else:
-                metrics['citation_coverage'] = 0.0
-            
-            # 2. Response Length Appropriateness - Not too short, not too long
-            response_words = len(response.split())
-            if response_words < 20:
-                metrics['length_score'] = 0.3  # Too short
-            elif response_words > 500:
-                metrics['length_score'] = 0.7  # Might be too long
-            else:
-                metrics['length_score'] = 1.0  # Appropriate length
-            
-            # 3. Query-Response Relevance - Basic keyword overlap
-            query_words = set(query.lower().split())
-            response_words_set = set(response.lower().split())
-            
-            # Remove common words
-            stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'is', 'are', 'was', 'were', 'be', 'been', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'may', 'might', 'can'}
-            query_keywords = query_words - stop_words
-            response_keywords = response_words_set - stop_words
-            
-            if query_keywords:
-                overlap = len(query_keywords & response_keywords)
-                metrics['keyword_relevance'] = overlap / len(query_keywords)
-            else:
-                metrics['keyword_relevance'] = 0.5  # Neutral if no keywords
-            
-            # 4. Source Quality - Average similarity scores of retrieved docs
-            if retrieved_docs:
-                scores = [doc.get('score', 0.0) for doc in retrieved_docs]
-                metrics['source_quality'] = sum(scores) / len(scores) if scores else 0.0
-            else:
-                metrics['source_quality'] = 0.0
-            
-            # 5. Response Completeness - Basic heuristics
-            has_structured_response = any(marker in response for marker in ['1.', '2.', '•', '-', 'Steps:', 'Requirements:'])
-            has_specific_details = any(term in response.lower() for term in ['ratio', 'percentage', '%', '$', 'requirement', 'standard', 'regulation'])
-            
-            completeness_score = 0.5  # Base score
-            if has_structured_response:
-                completeness_score += 0.25
-            if has_specific_details:
-                completeness_score += 0.25
-            
-            metrics['completeness'] = min(completeness_score, 1.0)
-            
-            # 6. Overall Quality Score (weighted average)
-            weights = {
-                'citation_coverage': 0.25,
-                'length_score': 0.15,
-                'keyword_relevance': 0.25,
-                'source_quality': 0.20,
-                'completeness': 0.15
-            }
-            
-            overall_score = sum(metrics[key] * weights[key] for key in weights if key in metrics)
-            metrics['overall_quality'] = overall_score
-            
-            # Log quality metrics for monitoring
-            logger.info("Response quality metrics calculated",
-                       overall_quality=overall_score,
-                       citation_coverage=metrics['citation_coverage'],
-                       keyword_relevance=metrics['keyword_relevance'],
-                       source_quality=metrics['source_quality'])
-            
-            return metrics
-            
-        except Exception as e:
-            logger.error("Failed to calculate quality metrics", error=str(e))
-            return {
-                "citation_coverage": 0.0,
-                "length_score": 0.5,
-                "keyword_relevance": 0.5,
-                "source_quality": 0.0,
-                "completeness": 0.5,
-                "overall_quality": 0.3
-            }
-    
-    def _get_similarity_threshold(self, query: str) -> float:
-        """Determine optimal similarity threshold based on query type"""
-        query_lower = query.lower()
-        
-        # Use stricter threshold for specific/critical queries that need precision
-        specific_indicators = [
-            'specific', 'exact', 'precise', 'what is the', 'define',
-            'calculation', 'formula', 'ratio', 'compliance requirement',
-            'regulatory requirement', 'standard requires', 'rule states',
-            'policy says', 'according to', 'as per', 'mandate'
-        ]
-        
-        # Use relaxed threshold for general/exploratory queries that need comprehensiveness
-        general_indicators = [
-            'how to', 'what are ways', 'assess', 'evaluate', 'overview',
-            'explain', 'understand', 'approach', 'methods', 'strategies',
-            'best practices', 'considerations', 'factors', 'guidance',
-            'help me', 'show me how'
-        ]
-        
-        # Check for specific indicators first
-        if any(indicator in query_lower for indicator in specific_indicators):
-            threshold = 0.75  # Stricter for precision
-            reason = "specific query"
-        elif any(indicator in query_lower for indicator in general_indicators):
-            threshold = 0.65  # Relaxed for comprehensiveness  
-            reason = "general query"
-        else:
-            threshold = 0.70  # Balanced middle ground
-            reason = "neutral query"
-        
-        logger.info("Adaptive threshold selected", 
-                   query=query[:50] + "..." if len(query) > 50 else query,
-                   threshold=threshold,
-                   reason=reason)
-        
-        return threshold
-    
-    def _get_document_limit(self, query: str) -> int:
-        """Dynamically determine document limit based on query complexity"""
-        
-        # Get config
-        config = self.config.get('retrieval_config', {})
-        base_limit = config.get('base_document_limit', 15)
-        standard_limit = config.get('standard_document_limit', 20)
-        complex_limit = config.get('complex_document_limit', 30)
-        max_limit = config.get('max_document_limit', 40)
-        
-        # Analyze query complexity
-        query_lower = query.lower()
-        words = query_lower.split()
-        word_count = len(words)
-        
-        # Initialize complexity score
-        complexity_score = 0
-        
-        # Word count indicator
-        if word_count > 15:
-            complexity_score += 2  # Very long query
-        elif word_count > 10:
-            complexity_score += 1  # Long query
-        
-        # Question complexity indicators  
-        comprehensive_words = ['how', 'why', 'what', 'explain', 'describe', 'discuss']
-        if any(word in words for word in comprehensive_words):
-            complexity_score += 1
-        
-        # Technical procedure indicators
-        technical_words = ['calculate', 'determine', 'implement', 'process', 'analyze', 'evaluate']
-        if any(word in words for word in technical_words):
-            complexity_score += 1
-        
-        # Multi-part query indicators
-        multi_indicators = ['and', 'also', 'additionally', 'furthermore', 'moreover', 'including']
-        if sum(1 for word in multi_indicators if word in words) >= 2:
-            complexity_score += 1  # Multiple aspects to address
-        
-        # Regulatory/compliance complexity (generic patterns)
-        import re
-        if len(re.findall(r'\b[A-Z]{2,}\b', query)) > 2:  # Multiple acronyms
-            complexity_score += 1
-        
-        # Choose limit based on complexity score
-        if complexity_score >= 4:
-            final_limit = min(complex_limit, max_limit)  # Complex: 45 docs
-            complexity_name = "Complex"
-        elif complexity_score >= 2:
-            final_limit = min(standard_limit, max_limit)  # Standard: 35 docs  
-            complexity_name = "Standard"
-        else:
-            final_limit = min(base_limit, max_limit)      # Simple: 25 docs
-            complexity_name = "Simple"
-        
-        logger.info(f"Dynamic document limit: {final_limit} ({complexity_name} query, complexity score: {complexity_score})")
-        
-        return final_limit
-    
-    def _is_general_knowledge_query(self, query: str) -> bool:
-        """Check if query is asking for general knowledge vs specific document content"""
-        query_lower = query.lower()
-        
-        # First check for document-specific indicators (these override general patterns)
-        document_indicators = [
-            r'\bour company\b',
-            r'\bthe uploaded\b',
-            r'\bthe document\b',
-            r'\bin the document\b',
-            r'\bshow me\b',
-            r'\bfind\b.*\bin\b',
-            r'\banalyze\b',
-            r'\bspecific\b.*\bmentioned\b',
-            r'\bpolicy\b',
-            r'\bprocedure\b',
-            r'\bin the.*image\b',  # "in the chatgpt image"
-            r'\bfrom the.*image\b',  # "from the image"
-            r'\bthe.*chart\b',  # "the revenue chart"
-            r'\buploaded.*image\b',  # "uploaded image"
-            r'\bASC\s+\d{3}-\d{2}-\d{2}-\d{2}\b',  # ASC codes like "ASC 255-10-50-51"
-            r'\bFASB\b',  # FASB references
-            r'\bGAAP\b',  # GAAP references
-            r'\bIFRS\b'   # IFRS references
-        ]
-        
-        import re
-        for pattern in document_indicators:
-            if re.search(pattern, query_lower):
-                return False  # Document-specific query
-        
-        # Common general knowledge question patterns (only if no document indicators)
-        general_patterns = [
-            r'^\s*what is\s+[a-z\s]+\??$',  # Simple "what is X?" questions
-            r'^\s*define\s+[a-z\s]+\??$',   # Simple "define X" questions
-            r'^\s*what\s+does\s+[a-z\s]+\s+mean\??$',  # Simple "what does X mean" questions
-            r'^\s*what\s+are\s+the\s+types\s+of\s+[a-z\s?]+\??$',  # "what are the types of X" questions
-            r'^\s*how\s+does\s+[a-z\s]+\s+work\??$'  # Simple "how does X work" questions
-        ]
-        
-        for pattern in general_patterns:
-            if re.search(pattern, query_lower):
-                return True
-                
-        return False
-    
-    def _extract_citations(self, retrieved_docs: List[Dict], query: str = "") -> List[Dict[str, Any]]:
-        """Extract citation information - if document was used for response, it should be cited"""
-        citations = []
-        
-        if not retrieved_docs:
-            logger.warning("❌ NO CITATIONS GENERATED - no retrieved documents")
-            return citations
-        
-        logger.info(f"🎯 CITATION EXTRACTION: Processing {len(retrieved_docs)} documents")
-        logger.info("📋 All retrieved documents:")
-        for i, doc in enumerate(retrieved_docs):
-            filename = doc['metadata'].get('filename', 'Unknown')
-            relevance_score = doc.get('relevance_score', doc.get('score', 0.0))
-            logger.info(f"  Doc {i+1}: {filename} - relevance: {relevance_score:.3f}")
-        
-        # CORE PRINCIPLE: If a document contributed to the response, it deserves citation
-        # Use the top documents that were actually used for response generation
-        max_citations = 3
-        
-        for i, doc in enumerate(retrieved_docs[:max_citations]):
-            relevance_score = doc.get('relevance_score', doc.get('score', 0.0))
-            filename = doc['metadata'].get('filename', 'Unknown')
-            
-            logger.info(f"📄 Processing citation {i+1}: {filename}, relevance_score={relevance_score:.3f}")
-            
-            # Simple quality filter - only skip obviously bad documents
-            if relevance_score < 0.1:  # Very permissive threshold
-                logger.info(f"❌ SKIPPING - Extremely low relevance: {relevance_score:.3f}")
-                continue
-            
-            # Skip obvious generic responses only
-            content_lower = doc.get('content', '').lower()
-            if any(phrase in content_lower for phrase in [
-                'how can i assist you today',
-                'feel free to share',
-                'what can i help you with'
-            ]):
-                logger.info(f"❌ SKIPPING - Generic assistant response")
-                continue
-                
-            # Get filename for source
-            filename = doc['metadata'].get('filename', 'Unknown')
-            
-            # Extract page information if available
-            page_info = ""
-            if 'page' in doc['metadata']:
-                page_info = f", Page {doc['metadata']['page']}"
-            elif 'page_label' in doc['metadata']:
-                page_info = f", Page {doc['metadata']['page_label']}"
-            elif hasattr(doc, 'node_id') and 'page_' in str(doc.get('node_id', '')):
-                # Extract page from node_id like "page_1_chunk_2"
-                try:
-                    page_num = str(doc.get('node_id', '')).split('page_')[1].split('_')[0]
-                    page_info = f", Page {page_num}"
-                except:
-                    pass
-            
-            # Check if content contains page references from shape-aware extraction
-            content = doc.get('content', '')
-            if 'Source: Page' in content:
-                # Extract page number from content like "Source: Page 2, cluster_1_page_2"
-                import re
-                page_match = re.search(r'Source: Page (\d+)', content)
-                if page_match:
-                    page_info = f", Page {page_match.group(1)}"
-            
-            citation = {
-                "id": len(citations) + 1,  # Use actual citation count, not doc index
-                "text": doc['content'][:200] + "..." if len(doc['content']) > 200 else doc['content'],
-                "source": f"{filename}{page_info}",
-                "source_type": doc['source_type'],
-                "confidence": round(relevance_score, 3)  # Use relevance score instead of original score
-            }
-            
-            # Add additional metadata if available
-            if 'page' in doc['metadata']:
-                citation['page'] = doc['metadata']['page']
-            if 'section' in doc['metadata']:
-                citation['section'] = doc['metadata']['section']
-            if 'standard' in doc['metadata']:
-                citation['standard'] = doc['metadata']['standard']
-                
-            citations.append(citation)
-            logger.info(f"✅ ADDED citation from: {filename} (relevance: {relevance_score:.3f})")
-        
-        logger.info(f"🎯 FINAL RESULT: Generated {len(citations)} citations from {len(retrieved_docs)} retrieved documents")
-        
-        # DEBUG: Print citation details for troubleshooting
-        if citations:
-            for i, citation in enumerate(citations):
-                logger.info(f"Citation {i+1}: source={citation.get('source')}, confidence={citation.get('confidence')}")
-        else:
-            logger.warning("❌ NO CITATIONS GENERATED - this explains missing citation display")
-        
-        return citations
-    
-    def _infer_document_domain(self, filename: str, content: str) -> str:
-        """Dynamically infer document domain from filename and content"""
-        filename_lower = filename.lower()
-        content_lower = content.lower()
-        
-        # Insurance/Regulatory domain
-        if any(term in filename_lower for term in ['licat', 'insurance', 'regulatory', 'capital']):
-            return 'insurance'
-        
-        # Accounting standards domain
-        if any(term in filename_lower for term in ['pwc', 'asc', 'ifrs', 'gaap']) or \
-           any(term in content_lower for term in ['asc ', 'ifrs', 'accounting standard']):
-            return 'accounting_standards'
-        
-        # Foreign currency domain
-        if any(term in filename_lower for term in ['foreign', 'currency', 'fx']) or \
-           any(term in content_lower for term in ['foreign currency', 'exchange rate']):
-            return 'foreign_currency'
-        
-        # Actuarial domain
-        if any(term in filename_lower for term in ['actuarial', 'valuation', 'reserves']) or \
-           any(term in content_lower for term in ['actuarial', 'present value', 'discount rate']):
-            return 'actuarial'
-        
-        return 'general'
-    
-    def _check_domain_compatibility(self, query_domain: str, doc_domain: str, doc_filename: str) -> Dict[str, Any]:
-        """Check if query domain is compatible with document domain"""
-        
-        # Define domain compatibility matrix - make more permissive for debugging
-        compatibility_matrix = {
-            'accounting_standards': ['accounting_standards', 'foreign_currency', 'general', 'accounting'],
-            'foreign_currency': ['foreign_currency', 'accounting_standards', 'general', 'accounting'],
-            'insurance': ['insurance', 'actuarial', 'general'],
-            'actuarial': ['actuarial', 'insurance', 'general'],
-            'accounting': ['accounting', 'accounting_standards', 'foreign_currency', 'general'],
-            'general': ['general', 'accounting_standards', 'foreign_currency', 'insurance', 'actuarial', 'accounting'],
-            None: ['general', 'accounting_standards', 'foreign_currency', 'insurance', 'actuarial', 'accounting']  # Handle None domain
-        }
-        
-        # Get compatible domains for query
-        compatible_domains = compatibility_matrix.get(query_domain, ['general'])
-        
-        # Check compatibility
-        if doc_domain in compatible_domains:
-            return {
-                'compatible': True,
-                'reason': f"Query domain '{query_domain}' compatible with document domain '{doc_domain}'"
-            }
-        else:
-            return {
-                'compatible': False,
-                'reason': f"Query domain '{query_domain}' incompatible with document domain '{doc_domain}' (file: {doc_filename})"
-            }
-    
-    def _calculate_confidence(self, retrieved_docs: List[Dict], response: str) -> float:
-        """Calculate confidence score for the response"""
-        if not retrieved_docs:
-            return 0.0
-        
-        # Average similarity score of top documents
-        top_scores = [doc['score'] for doc in retrieved_docs[:3]]
-        avg_score = sum(top_scores) / len(top_scores) if top_scores else 0.0
-        
-        # Adjust based on number of relevant documents
-        doc_count_factor = min(len(retrieved_docs) / 3.0, 1.0)
-        
-        # Basic confidence calculation
-        confidence = avg_score * doc_count_factor
-        
-        return round(confidence, 3)
-    
-    def _get_cache_key(self, query: str, filters: Optional[Dict]) -> str:
-        """Generate cache key for query that includes document state"""
-        import hashlib
-        
-        # Include document state in cache key so it invalidates when documents change
-        try:
-            # Get document count and last modification from vector store
-            doc_count = 0
-            last_modified = "unknown"
-            
-            if hasattr(self, 'vector_store') and self.vector_store:
-                try:
-                    # Try to get basic stats from vector store
-                    if hasattr(self.vector_store, 'client'):
-                        collection_info = self.vector_store.client.get_collection(self.index_name)
-                        if collection_info:
-                            doc_count = collection_info.vectors_count or 0
-                except:
-                    # Fallback to zero if we can't get collection info
-                    doc_count = 0
-            
-            cache_data = {
-                'query': query,
-                'filters': filters or {},
-                'doc_count': doc_count,  # Cache invalidates when document count changes
-                'version': '2.0'  # Manual version bump to invalidate old cache entries
-            }
-        except Exception as e:
-            # Fallback cache key if we can't get document state
-            cache_data = {
-                'query': query,
-                'filters': filters or {},
-                'version': '2.0'  # This will invalidate all old cache entries
-            }
-        
-        return hashlib.md5(str(cache_data).encode()).hexdigest()
-    
-    def _serialize_response(self, response: RAGResponse) -> str:
-        """Serialize response for caching"""
-        import json
-        return json.dumps({
-            'answer': response.answer,
-            'citations': response.citations,
-            'confidence': response.confidence,
-            'follow_up_questions': response.follow_up_questions
-        })
-    
-    def _deserialize_response(self, cached_data: str, session_id: str) -> RAGResponse:
-        """Deserialize cached response"""
-        import json
-        data = json.loads(cached_data)
-        return RAGResponse(
-            answer=data['answer'],
-            citations=data['citations'],
-            confidence=data['confidence'],
-            session_id=session_id,
-            follow_up_questions=data.get('follow_up_questions', []),
-            quality_metrics=data.get('quality_metrics', {})
-        )
-    
-    def _remove_citations_from_response(self, response: str) -> str:
-        """Remove any citation numbers [1], [2], etc. from response text"""
-        import re
-        # Remove citation patterns like [1], [2], [1][2][3], etc.
-        cleaned_response = re.sub(r'\[[\d\s,]+\]', '', response)
-        # Clean up any double spaces left behind
-        cleaned_response = re.sub(r'\s+', ' ', cleaned_response)
-        return cleaned_response.strip()
     
     async def clear_all_documents(self) -> Dict[str, Any]:
         """Clear all documents from the vector store - use with caution"""
@@ -3179,23 +869,30 @@ Answer:"""
             if self.vector_store_type == "qdrant":
                 # Delete and recreate the entire collection
                 self.qdrant_client.delete_collection(self.collection_name)
-                
+
                 # Recreate the collection
                 from qdrant_client.models import Distance, VectorParams
                 self.qdrant_client.create_collection(
                     collection_name=self.collection_name,
                     vectors_config=VectorParams(size=1536, distance=Distance.COSINE)
                 )
-                
+
                 # Reinitialize the index
-                self._init_qdrant_indexes()
-                
-                logger.info("Successfully cleared all documents from Qdrant")
+                self.document_manager._init_qdrant_indexes()
+
+                # Clear Whoosh index as well
+                self._clear_whoosh_index()
+
+                logger.info("Successfully cleared all documents from Qdrant and Whoosh")
                 return {"status": "success", "message": "All documents cleared", "method": "qdrant_recreate"}
             else:
                 # For local storage, recreate the index
-                self._init_local_index()
-                logger.info("Successfully cleared all documents from local storage")
+                self.document_manager._init_local_index()
+
+                # Clear Whoosh index as well
+                self._clear_whoosh_index()
+
+                logger.info("Successfully cleared all documents from local storage and Whoosh")
                 return {"status": "success", "message": "All documents cleared", "method": "local_recreate"}
                 
         except Exception as e:
@@ -3203,94 +900,9 @@ Answer:"""
             return {"status": "error", "error": str(e)}
 
     async def delete_document(self, job_id: str) -> Dict[str, Any]:
-        """Delete all chunks associated with a document from the vector store"""
-        try:
-            deleted_count = 0
-            
-            if self.vector_store_type == "qdrant":
-                # Delete from Qdrant using metadata filter
-                from qdrant_client.models import Filter, FieldCondition, MatchValue
-                
-                # Search for all points with this job_id
-                search_result = self.qdrant_client.scroll(
-                    collection_name=self.collection_name,
-                    scroll_filter=Filter(
-                        must=[
-                            FieldCondition(
-                                key="job_id",
-                                match=MatchValue(value=job_id)
-                            )
-                        ]
-                    ),
-                    limit=1000  # Get all chunks for this document
-                )
-                
-                # Extract point IDs to delete
-                point_ids = [point.id for point in search_result[0]]
-                
-                if point_ids:
-                    # Delete the points
-                    self.qdrant_client.delete(
-                        collection_name=self.collection_name,
-                        points_selector=point_ids
-                    )
-                    deleted_count = len(point_ids)
-                    logger.info(f"Deleted {deleted_count} chunks from Qdrant for job_id: {job_id}")
-                else:
-                    logger.warning(f"No chunks found in Qdrant for job_id: {job_id}")
-                    
-                
-            else:
-                # Local index doesn't support deletion by metadata easily
-                logger.warning("Local index deletion not implemented - rebuild index recommended")
-            
-            # Clear cache entries related to this document
-            if self.cache:
-                # Clear all cache entries (simple approach for now)
-                pattern = "query_cache:*"
-                for key in self.cache.scan_iter(match=pattern):
-                    self.cache.delete(key)
-                logger.info("Cleared query cache after document deletion")
-            
-            return {
-                "status": "success",
-                "deleted_chunks": deleted_count,
-                "job_id": job_id,
-                "vector_store": self.vector_store_type
-            }
-            
-        except Exception as e:
-            logger.error(f"Failed to delete document from vector store", error=str(e), job_id=job_id)
-            return {
-                "status": "error",
-                "error": str(e),
-                "job_id": job_id
-            }
+        """Delete all chunks associated with a document using the document manager"""
+        return await self.document_manager.delete_document(job_id)
     
-    async def _clear_cache_pattern(self, pattern: str) -> int:
-        """Clear cache entries matching a specific pattern"""
-        try:
-            if not self.cache:
-                return 0
-            
-            cleared_count = 0
-            cache_pattern = f"query_cache:*{pattern}*"
-            
-            # Use scan_iter to find matching keys
-            matching_keys = []
-            for key in self.cache.scan_iter(match=cache_pattern):
-                matching_keys.append(key)
-            
-            # Delete matching keys
-            if matching_keys:
-                cleared_count = self.cache.delete(*matching_keys)
-                logger.info(f"Cleared {cleared_count} cache entries matching pattern: {pattern}")
-            
-            return cleared_count
-            
-        except Exception as e:
-            logger.error(f"Failed to clear cache pattern {pattern}: {str(e)}")
-            return 0
     
     async def cleanup_orphaned_chunks(self) -> Dict[str, Any]:
         """Clean up chunks that don't have valid job_ids (legacy data)"""
@@ -3814,204 +1426,6 @@ Generate an enhanced response that combines the original information with the ex
         return followups[:3]  # Limit to 3 follow-ups for optimal user experience
     
     
-    def _apply_llm_formatting_fix(self, response: str, detected_issues: list) -> str:
-        """Apply LLM-based formatting correction for detected issues"""
-        
-        issues_description = ', '.join(detected_issues)
-        
-        correction_prompt = f"""Fix the formatting issues in this insurance/actuarial response.
-
-DETECTED ISSUES: {issues_description}
-
-SPECIFIC FIXES NEEDED:
-1. Put blank line BEFORE each **numbered item** (like **1.** or **2.**)
-2. Separate numbered list items (1. 2. 3.) onto different lines  
-3. Add line break after "Where:" before definitions
-4. Fix bold formatting artifacts like **includes or **excludes
-5. Keep ALL formulas and mathematical content intact
-
-EXAMPLE OF CORRECT FORMAT:
-**Section Title**
-
-Regular paragraph text here.
-
-**1.** First numbered point
-
-**2.** Second numbered point
-
-Formula: NPR = APV(Benefits) - APV(Premiums)
-
-Where:
-- NPR = Net Premium Reserve
-- APV = Actuarial Present Value
-
-Original text to fix:
-{response}
-
-Provide the corrected version:"""
-        
-        try:
-            corrected = self.llm.complete(correction_prompt, temperature=0.1)
-            logger.info("🔧 Applied LLM-based formatting correction")
-            return corrected.text.strip()
-        except Exception as e:
-            logger.warning(f"LLM formatting correction failed: {e}")
-            return response
-    
-    def _generate_structured_response(self, query: str, context: str) -> str:
-        """Generate response with structured JSON output for consistent formatting"""
-        
-        structured_prompt = f"""You are AAIRE, an insurance accounting expert.
-        
-Question: {query}
-
-Context: {context}
-
-Generate a response in this EXACT JSON structure (be precise with formulas):
-{{
-    "summary": "Brief 2-3 sentence overview",
-    "sections": [
-        {{
-            "title": "Section heading",
-            "content": "Detailed explanation",
-            "formulas": [
-                {{
-                    "name": "Reserve Calculation",
-                    "latex": "R_t = PV(benefits_t) - PV(premiums_t)",
-                    "readable": "R(t) = PV(benefits at time t) - PV(premiums at time t)",
-                    "components": {{
-                        "R_t": "Reserve at time t",
-                        "PV": "Present Value function"
-                    }}
-                }}
-            ],
-            "numbered_items": ["Step 1 description", "Step 2 description"]
-        }}
-    ],
-    "key_values": {{
-        "rates": ["90% confidence level", "2.5% discount rate"],
-        "references": ["ASC 944-40-25-25", "IFRS 17.32"]
-    }}
-}}
-
-Ensure ALL mathematical notation is included in both latex and readable formats.
-Only return the JSON - no other text."""
-        
-        try:
-            response = self.llm.complete(structured_prompt, temperature=0.2)
-            structured_data = json.loads(response.text.strip())
-            logger.info("✅ Successfully generated structured JSON response")
-            return self._structured_to_markdown(structured_data)
-        except json.JSONDecodeError as e:
-            logger.warning(f"JSON parsing failed: {e}")
-            # Fallback to existing correction method
-            return self._apply_llm_formatting_fix(response.text, ["JSON structure invalid"])
-        except Exception as e:
-            logger.warning(f"Structured generation failed: {e}")
-            raise
-    
-    def _structured_to_markdown(self, data: Dict) -> str:
-        """Convert structured JSON to formatted markdown with proper formula handling"""
-        
-        output = []
-        
-        # Summary
-        if 'summary' in data:
-            output.append(f"{data['summary']}\n")
-        
-        # Process each section
-        for section in data.get('sections', []):
-            # Section title
-            output.append(f"\n**{section['title']}**\n")
-            
-            # Content
-            if 'content' in section:
-                output.append(f"{section['content']}\n")
-            
-            # Formulas - with special handling
-            if 'formulas' in section:
-                output.append("\n**Key Formulas:**\n")
-                for formula in section['formulas']:
-                    # Use readable format as primary
-                    output.append(f"\n• {formula['name']}:\n")
-                    output.append(f"  {formula['readable']}\n")
-                    
-                    # Add component definitions if present
-                    if 'components' in formula:
-                        output.append("  Where:\n")
-                        for var, desc in formula['components'].items():
-                            output.append(f"  - {var} = {desc}\n")
-            
-            # Numbered items with proper spacing
-            if 'numbered_items' in section:
-                output.append("\n")
-                for i, item in enumerate(section['numbered_items'], 1):
-                    output.append(f"**{i}.** {item}\n\n")
-        
-        # Key values
-        if 'key_values' in data:
-            output.append("\n**Important Values:**\n")
-            for category, values in data['key_values'].items():
-                for value in values:
-                    output.append(f"• {value}\n")
-        
-        return ''.join(output)
-    
-    def _validate_formula_formatting(self, response: str) -> bool:
-        """Check if formulas are properly formatted"""
-        
-        validation_prompt = f"""Check if this text has properly formatted formulas:
-
-{response[:1000]}
-
-Look for:
-1. LaTeX notation that wasn't converted (\\sum, \\times, _{{subscript}})
-2. Unreadable mathematical expressions
-3. Complex subscripts not converted to parentheses
-
-Reply with just: VALID or NEEDS_FIXING"""
-        
-        try:
-            result = self.llm.complete(validation_prompt, temperature=0)
-            return "VALID" in result.text.upper()
-        except Exception as e:
-            logger.warning(f"Formula validation failed: {e}")
-            return True  # Default to assuming it's valid
-    
-    def _normalize_spacing(self, response: str) -> str:
-        """Simplified cleanup to fix persistent formatting issues without breaking content"""
-        import re
-        
-        # Step 1: Fix the most critical issues - text running together
-        # Ensure proper spacing around numbered sections (1., 2., etc.)
-        result = re.sub(r'([a-z\.])(\d+\.)', r'\1\n\n\2', response)
-        
-        # Fix text immediately following bold markers without space
-        result = re.sub(r'\*\*([^*]+)\*\*([A-Z])', r'**\1**\n\n\2', result)
-        
-        # Step 2: Conservative bold formatting cleanup (only clear issues)
-        # Fix excessive asterisks  
-        result = re.sub(r'\*{3,}', '**', result)
-        
-        # Only convert numbered sections to headers if they're clearly headers
-        result = re.sub(r'\*\*(\d+\.\s*[A-Z][^*]{10,}?)\*\*', r'## \1', result)
-        
-        # Step 3: Clean up whitespace issues
-        # Remove extra spaces but preserve line breaks
-        result = re.sub(r'[ \t]+', ' ', result)
-        
-        # Control excessive newlines
-        result = re.sub(r'\n{4,}', '\n\n\n', result)
-        
-        # Step 4: Fix spacing after punctuation
-        result = re.sub(r'([\.!?])([A-Z])', r'\1 \2', result)
-        
-        # Step 5: Ensure proper spacing around list items
-        result = re.sub(r'([^\n])\n-\s', r'\1\n\n- ', result)
-        
-        result = result.strip()
-        return result
-    
     async def _apply_professional_formatting(self, response: str, query: str) -> str:
         """Apply ChatGPT-style professional formatting to responses"""
         try:
@@ -4048,7 +1462,7 @@ Do NOT add unnecessary information - only reformat what's provided."""
             result = formatted_response.choices[0].message.content
             
             # Apply final clean-up
-            result = self._final_formatting_cleanup(result)
+            result = self.formatting_manager.final_formatting_cleanup(result)
             
             logger.info("✅ Professional formatting applied successfully")
             return result
@@ -4056,290 +1470,88 @@ Do NOT add unnecessary information - only reformat what's provided."""
         except Exception as e:
             logger.warning(f"Could not apply professional formatting: {e}")
             # Fall back to basic cleanup
-            return self._basic_professional_format(response)
+            return self.formatting_manager.basic_professional_format(response)
     
-    def _final_formatting_cleanup(self, text: str) -> str:
-        """Final cleanup for professional formatting"""
-        import re
-        
-        # Ensure consistent spacing
-        text = re.sub(r'\n{4,}', '\n\n\n', text)
-        
-        # Ensure space after emoji markers
-        text = re.sub(r'(🔹|✅|📌|📍|🎯|💡|⚠️|❌|✔️)([A-Za-z])', r'\1 \2', text)
-        
-        # Clean up any remaining formatting issues
-        text = re.sub(r'\*{3,}', '**', text)
-        
-        return text.strip()
-    
-    def _apply_simple_professional_formatting(self, response: str) -> str:
-        """Simple, reliable professional formatting without API calls"""
-        import re
-        
-        # Split into paragraphs
-        paragraphs = response.split('\n\n')
-        formatted_paragraphs = []
-        
-        for para in paragraphs:
-            para = para.strip()
-            if not para:
-                continue
-                
-            # Detect and format different types of content
-            if re.match(r'^\d+\.', para):
-                # Main numbered section - add emoji marker
-                para = re.sub(r'^(\d+\.)', r'🔹 \1', para)
-                # Ensure space after the number
-                para = re.sub(r'^(🔹\s*\d+\.)([A-Z])', r'\1 \2', para)
-            elif re.match(r'^##?\s', para):
-                # Already a header, leave it
-                pass
-            elif 'summary' in para.lower() or 'conclusion' in para.lower():
-                # Summary sections
-                if not para.startswith('✅'):
-                    para = f"✅ {para}"
-            elif re.match(r'^-\s', para):
-                # Bullet point
-                para = re.sub(r'^-\s', '• ', para)
-            
-            # Fix excessive bold - only keep for important terms
-            if para.count('**') > 6:
-                # Too much bold, reduce it
-                para = re.sub(r'\*\*([^*]{1,15})\*\*', r'\1', para)
-            
-            formatted_paragraphs.append(para)
-        
-        result = '\n\n'.join(formatted_paragraphs)
-        
-        # Final cleanup
-        result = re.sub(r'\n{3,}', '\n\n', result)
-        result = re.sub(r'\*{3,}', '**', result)
-        
-        return result.strip()
-    
-    def _basic_professional_format(self, response: str) -> str:
-        """Fallback basic professional formatting without LLM"""
-        import re
-        
-        lines = response.split('\n')
-        formatted_lines = []
-        
-        for line in lines:
-            line = line.strip()
-            if not line:
-                formatted_lines.append('')
-                continue
-                
-            # Add emoji markers for numbered items
-            if re.match(r'^\d+\.', line):
-                # Main numbered sections
-                line = f"🔹 {line}"
-            elif re.match(r'^[a-z]\)', line):
-                # Sub-points
-                line = f"  • {line[2:].strip()}"
-            elif line.startswith('-'):
-                # Bullet points
-                line = f"  • {line[1:].strip()}"
-            
-            formatted_lines.append(line)
-        
-        result = '\n'.join(formatted_lines)
-        
-        # Add proper spacing
-        result = re.sub(r'(🔹[^\n]+)\n([^🔹\n])', r'\1\n\n\2', result)
-        
-        # Add summary marker if there's a summary section
-        result = re.sub(r'(Summary|Conclusion|Final)', r'✅ \1', result, flags=re.IGNORECASE)
-        
-        return result.strip()
-
-    def _sample_document_for_metadata(self, doc_text: str, filename: str) -> str:
-        """
-        Sample document content for metadata extraction to avoid OpenAI rate limits.
-        Reduces from 237K tokens to ~30K tokens using strategic hierarchical sampling.
-
-        Industry benchmark approach:
-        - First 10 pages (executive summary, introduction)
-        - Random strategic samples from middle
-        - Last few pages (conclusions)
-        - Key section headers and structured content
-        """
-        import re
-        import random
-
-        # Target ~30K tokens (vs 237K full document) to stay under 200K/min rate limit
-        TARGET_TOKENS = 30000
-        CHARS_PER_TOKEN = 4  # Rough approximation for English text
-        TARGET_CHARS = TARGET_TOKENS * CHARS_PER_TOKEN
-
-        logger.info(f"Sampling document for metadata extraction",
-                   filename=filename,
-                   original_size=len(doc_text),
-                   target_size=TARGET_CHARS)
-
-        # If document is already small enough, return as-is
-        if len(doc_text) <= TARGET_CHARS:
-            logger.info("Document already within target size", size=len(doc_text))
-            return doc_text
-
-        # Split document into logical sections
-        lines = doc_text.split('\n')
-        total_lines = len(lines)
-
-        # Calculate proportional sampling
-        beginning_lines = int(total_lines * 0.15)  # First 15% (introduction, TOC)
-        ending_lines = int(total_lines * 0.10)     # Last 10% (conclusions)
-        middle_sample_lines = int(total_lines * 0.15) # 15% random sample from middle
-
-        sampled_sections = []
-
-        # 1. Beginning section (critical for framework identification)
-        beginning_section = lines[:beginning_lines]
-        sampled_sections.append("=== DOCUMENT BEGINNING ===")
-        sampled_sections.extend(beginning_section)
-
-        # 2. Strategic middle sampling (look for key sections)
-        middle_start = beginning_lines
-        middle_end = total_lines - ending_lines
-        middle_lines = lines[middle_start:middle_end]
-
-        # Dynamic content analysis for intelligent sampling
-        content_lower = doc_text.lower()
-
-        # Detect document frameworks dynamically
-        framework_keywords = {
-            'usstat': ['usstat', 'statutory', 'naic', 'reserve', 'rbc'],
-            'ifrs': ['ifrs', 'international', 'ias', 'fair value'],
-            'gaap': ['gaap', 'generally accepted', 'accounting principles'],
-            'actuarial': ['mortality', 'morbidity', 'lapse', 'policyholder', 'benefit'],
-            'valuation': ['valuation', 'methodology', 'assumption', 'discount rate'],
-            'regulatory': ['regulation', 'compliance', 'requirement', 'standard']
-        }
-
-        detected_frameworks = []
-        for framework, keywords in framework_keywords.items():
-            if any(kw in content_lower for kw in keywords):
-                detected_frameworks.append(framework)
-
-        # Build dynamic keyword list based on detected frameworks
-        dynamic_keywords = ['methodology', 'calculation', 'framework', 'standard', 'requirement', 'principle']
-        for framework in detected_frameworks:
-            dynamic_keywords.extend(framework_keywords[framework])
-
-        # Find important middle sections with dynamic content awareness
-        important_middle = []
-        framework_sections = []  # Prioritize framework-specific content
-
-        for i, line in enumerate(middle_lines):
-            line_clean = line.strip()
-
-            # Structural patterns (always important)
-            is_structural = (line_clean and (
-                re.match(r'^[A-Z][A-Z\s]{10,}$', line_clean) or  # ALL CAPS headers
-                re.match(r'^\d+\.', line_clean) or                # Numbered sections
-                re.match(r'^[IVXLC]+\.', line_clean) or          # Roman numerals
-                re.match(r'^Table \d+', line_clean) or           # Tables
-                re.match(r'^Section \d+', line_clean) or         # Sections
-                re.match(r'^Appendix', line_clean)               # Appendices
-            ))
-
-            # Framework-specific content (highest priority)
-            is_framework_specific = any(keyword in line_clean.lower() for keyword in dynamic_keywords)
-
-            if is_structural or is_framework_specific:
-                # Include this line and context
-                start_idx = max(0, i-1)
-                end_idx = min(len(middle_lines), i+4)
-                section_lines = middle_lines[start_idx:end_idx]
-
-                if is_framework_specific:
-                    framework_sections.extend(section_lines)
-                else:
-                    important_middle.extend(section_lines)
-
-        # Prioritize framework-specific content
-        important_middle = framework_sections + important_middle
-
-        # Remove duplicates while preserving order
-        seen = set()
-        deduplicated_middle = []
-        for line in important_middle:
-            if line not in seen:
-                seen.add(line)
-                deduplicated_middle.append(line)
-        important_middle = deduplicated_middle
-
-        # Use document-specific seed to prevent cross-contamination (define early for logging)
-        import hashlib
-        doc_hash = hashlib.md5(f"{filename}_{len(doc_text)}".encode()).hexdigest()
-
-        # Add document-specific random samples from middle if we haven't captured enough
-        if len(important_middle) < middle_sample_lines:
-            remaining_middle = [line for line in middle_lines if line not in important_middle]
-
-            doc_seed = int(doc_hash[:8], 16) % 2147483647  # Convert to valid seed
-            random.seed(doc_seed)
-
-            additional_samples = random.sample(
-                remaining_middle,
-                min(middle_sample_lines - len(important_middle), len(remaining_middle))
-            )
-            important_middle.extend(additional_samples)
-
-        sampled_sections.append("\n=== DOCUMENT MIDDLE (KEY SECTIONS) ===")
-        sampled_sections.extend(important_middle[:middle_sample_lines])
-
-        # 3. Ending section (conclusions, references)
-        ending_section = lines[-ending_lines:]
-        sampled_sections.append("\n=== DOCUMENT ENDING ===")
-        sampled_sections.extend(ending_section)
-
-        # Combine and check size
-        sampled_content = '\n'.join(sampled_sections)
-
-        # If still too large, do secondary trimming
-        if len(sampled_content) > TARGET_CHARS:
-            # Truncate each section proportionally
-            sections = sampled_content.split('=== DOCUMENT')
-            trimmed_sections = []
-
-            chars_per_section = TARGET_CHARS // len(sections)
-            for section in sections:
-                if len(section) > chars_per_section:
-                    # Keep first part of each section (most important)
-                    trimmed_sections.append(section[:chars_per_section] + "...[TRIMMED]")
-                else:
-                    trimmed_sections.append(section)
-
-            sampled_content = '=== DOCUMENT'.join(trimmed_sections)
-
-        final_size = len(sampled_content)
-        compression_ratio = final_size / len(doc_text)
-
-        logger.info(f"Document sampling completed",
-                   filename=filename,
-                   original_chars=len(doc_text),
-                   sampled_chars=final_size,
-                   compression_ratio=f"{compression_ratio:.3f}",
-                   estimated_tokens=final_size // CHARS_PER_TOKEN,
-                   detected_frameworks=detected_frameworks,
-                   doc_seed_hash=doc_hash[:8],
-                   framework_sections=len(framework_sections),
-                   total_middle_sections=len(important_middle))
-
-        return sampled_content
-
-    def clear_cache(self):
-        """Clear the response cache to force fresh responses"""
+    async def clear_all_documents(self) -> Dict[str, Any]:
+        """Clear all documents from Qdrant database"""
         try:
-            if self.cache:
-                self.cache.flushdb()
-                logger.info("✅ Response cache cleared successfully")
-                return {"status": "success", "message": "Cache cleared successfully"}
-            else:
-                logger.warning("⚠️ No cache configured")
-                return {"status": "warning", "message": "No cache configured"}
+            if not hasattr(self, 'qdrant_client') or not self.qdrant_client:
+                return {
+                    "status": "error",
+                    "message": "Qdrant client not initialized"
+                }
+
+            # Get current document count before clearing
+            doc_count_before = 0
+            try:
+                search_result = self.qdrant_client.scroll(
+                    collection_name=self.collection_name,
+                    limit=1000
+                )
+                doc_count_before = len(search_result[0])
+            except Exception as e:
+                logger.warning(f"Could not get document count before clearing: {e}")
+
+            # Delete the collection and recreate it
+            logger.info(f"🗑️ Clearing all documents from Qdrant collection: {self.collection_name}")
+
+            # Delete collection
+            self.qdrant_client.delete_collection(self.collection_name)
+            logger.info(f"✅ Deleted collection: {self.collection_name}")
+
+            # Recreate collection with same configuration
+            from qdrant_client.models import Distance, VectorParams
+            self.qdrant_client.create_collection(
+                collection_name=self.collection_name,
+                vectors_config=VectorParams(
+                    size=1536,  # OpenAI embedding dimension
+                    distance=Distance.COSINE
+                )
+            )
+            logger.info(f"✅ Recreated empty collection: {self.collection_name}")
+
+            # Recreate payload indexes for filtering
+            try:
+                from qdrant_client.models import PayloadSchemaType
+                self.qdrant_client.create_payload_index(
+                    collection_name=self.collection_name,
+                    field_name="filename",
+                    field_schema=PayloadSchemaType.KEYWORD
+                )
+                self.qdrant_client.create_payload_index(
+                    collection_name=self.collection_name,
+                    field_name="doc_type",
+                    field_schema=PayloadSchemaType.KEYWORD
+                )
+                self.qdrant_client.create_payload_index(
+                    collection_name=self.collection_name,
+                    field_name="job_id",
+                    field_schema=PayloadSchemaType.KEYWORD
+                )
+                logger.info("✅ Recreated payload indexes")
+            except Exception as e:
+                logger.warning(f"Could not recreate payload indexes: {e}")
+
+            # Clear Whoosh search index as well
+            self._clear_whoosh_index()
+
+            # Clear cache
+            self.clear_cache()
+
+            logger.info(f"🎯 Successfully cleared all documents from Qdrant database")
+
+            return {
+                "status": "success",
+                "message": f"Successfully cleared all documents from {self.collection_name}",
+                "documents_cleared": doc_count_before,
+                "collection_name": self.collection_name,
+                "whoosh_index_cleared": True,
+                "cache_cleared": True
+            }
+
         except Exception as e:
-            logger.error(f"❌ Failed to clear cache: {str(e)}")
-            return {"status": "error", "message": f"Failed to clear cache: {str(e)}"}
+            logger.error(f"❌ Failed to clear Qdrant documents: {str(e)}")
+            return {
+                "status": "error",
+                "message": f"Failed to clear documents: {str(e)}"
+            }
