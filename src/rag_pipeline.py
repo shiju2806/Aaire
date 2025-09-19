@@ -185,12 +185,12 @@ class RAGPipeline:
 
         # Initialize new extracted modules
         self.formatting_manager = create_formatting_manager(llm_client=self.llm)
-        self.query_analyzer = create_query_analyzer(llm_client=self.llm)
+        self.query_analyzer = create_query_analyzer(llm=self.llm)
         self.quality_metrics_manager = create_quality_metrics_manager(self.config.get('retrieval_config', {}))
 
-        # Initialize Phase 3 services modules
+        # Initialize Phase 3 services modules (index will be set later)
         self.document_retriever = create_document_retriever(
-            vector_index=self.index,
+            vector_index=None,  # Will be set after index creation
             whoosh_engine=self.whoosh_engine,
             relevance_engine=self.relevance_engine,
             metadata_analyzer=self.metadata_analyzer,
@@ -207,9 +207,9 @@ class RAGPipeline:
             config=self.config
         )
 
-        # Initialize document manager
+        # Initialize document manager (will create the index)
         self.document_manager = create_document_manager(
-            index=self.index,
+            index=None,  # Will be created by document manager
             node_parser=self.node_parser,
             metadata_analyzer=self.metadata_analyzer,
             whoosh_engine=self.whoosh_engine,
@@ -219,11 +219,14 @@ class RAGPipeline:
             collection_name=self.collection_name if hasattr(self, 'collection_name') else None
         )
 
-        # Now perform deferred index initialization after document_manager is ready
+        # Now perform deferred index initialization and get reference
         if self.vector_store_type == "qdrant":
-            self.document_manager._init_qdrant_indexes()
+            self.index = self.document_manager._init_qdrant_indexes()
         else:
-            self.document_manager._init_local_index()
+            self.index = self.document_manager._init_local_index()
+
+        # Update document retriever with the created index
+        self.document_retriever.vector_index = self.index
 
         logger.info("RAG Pipeline initialized",
                    model=self.config['llm_config']['model'],
@@ -268,9 +271,7 @@ class RAGPipeline:
                 collection_name=self.collection_name
             )
             
-            logger.info("Initializing Qdrant indexes...")
-            self.document_manager._init_qdrant_indexes()
-            logger.info("✅ Qdrant initialization complete")
+            logger.info("✅ Qdrant connection established")
             return True
             
         except Exception as e:

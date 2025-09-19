@@ -184,10 +184,28 @@ Use appropriate headings and structure the information clearly."""
             any(term in question_lower and term in response_lower for term in ['rga', 'equitable', 'segment', 'traditional', 'group']),
             # References specific time periods or comparative language
             any(term in question_lower for term in ['compared to', 'other segments', 'different', 'breakdown', 'components']),
+            # References specific technical terms from insurance/accounting domain
+            any(term in question_lower and term in response_lower for term in ['reserve', 'reserves', 'liability', 'premium', 'valuation', 'actuarial', 'capital', 'ratio']),
+            # References specific regulatory or compliance terms
+            any(term in question_lower and term in response_lower for term in ['regulatory', 'compliance', 'standard', 'requirement', 'disclosure']),
+            # References specific business concepts that appear in both
+            any(term in question_lower and term in response_lower for term in ['analysis', 'assessment', 'evaluation', 'review', 'implementation']),
+            # Contains words from original query (indicates building on the conversation)
+            len([word for word in query_lower.split() if len(word) > 3 and word in question_lower]) >= 2,
+            # Contains words from response (indicates referencing the answer)
+            len([word for word in response_lower.split() if len(word) > 4 and word in question_lower]) >= 3,
         ]
 
-        # Must have at least one strong contextual indicator
-        return any(contextual_indicators)
+        # More lenient: if it has at least one contextual indicator OR is clearly building on the conversation
+        has_contextual_indicator = any(contextual_indicators)
+
+        # Additional check: if question length is reasonable and contains domain-specific terms
+        has_domain_terms = any(term in question_lower for term in [
+            'reserve', 'liability', 'premium', 'actuarial', 'capital', 'ratio', 'valuation',
+            'standard', 'compliance', 'regulatory', 'gaap', 'ifrs', 'calculation', 'method'
+        ])
+
+        return has_contextual_indicator or (len(question_lower) > 20 and has_domain_terms)
 
     async def classify_query_topic(self, query: str) -> Dict[str, Any]:
         """

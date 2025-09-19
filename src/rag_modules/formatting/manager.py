@@ -6,7 +6,10 @@ Handles all text formatting, cleanup, and professional presentation tasks
 import re
 import json
 import asyncio
-from typing import List, Dict, Any, Optional
+import hashlib
+import time
+from typing import List, Dict, Any, Optional, Tuple
+from functools import lru_cache
 import structlog
 from llama_index.llms.openai import OpenAI
 from openai import AsyncOpenAI
@@ -40,19 +43,112 @@ class FormattingManager:
             max_tokens=4000
         )
 
+        # Initialize compiled regex patterns for performance
+        self._compiled_patterns = None
+        self._compile_formatting_patterns()
+
+        # Cache for formula extraction (TTL: 15 minutes)
+        self._formula_cache = {}
+        self._formula_cache_ttl = 900  # 15 minutes
+        self._formula_cache_timestamps = {}
+
+    def _compile_formatting_patterns(self):
+        """Pre-compile regex patterns for better performance"""
+        self._compiled_patterns = {
+            'orphaned_asterisks': re.compile(r'\*\*\s*\n\s*\*\*'),
+            'trailing_artifacts': re.compile(r',\*\*'),
+            'broken_headers': re.compile(r'\*\*([^*]+)\*\*\s*\*\*'),
+            'excessive_asterisks': re.compile(r'\*{3,}'),
+            'orphaned_dash': re.compile(r':\s*\n\s*-\s*\n'),
+            'broken_list_single': re.compile(r'-\s*\*\*(\w+)\*\*\s*='),
+            'broken_list_multiple': re.compile(r'-\*\*(\d+)\*\*=([^-]*)'),
+            'double_spaces': re.compile(r'\s{2,}'),
+            'excessive_newlines': re.compile(r'\n{4,}')
+        }
+
+    def _quick_regex_cleanup(self, content: str) -> str:
+        """Fast regex-based cleanup before LLM processing"""
+        if not self._compiled_patterns:
+            self._compile_formatting_patterns()
+
+        result = content
+        # Apply quick fixes with compiled patterns
+        result = self._compiled_patterns['orphaned_asterisks'].sub('', result)
+        result = self._compiled_patterns['trailing_artifacts'].sub(')', result)
+        result = self._compiled_patterns['excessive_asterisks'].sub('**', result)
+        result = self._compiled_patterns['orphaned_dash'].sub(':\n- ', result)
+        result = self._compiled_patterns['double_spaces'].sub(' ', result)
+        result = self._compiled_patterns['excessive_newlines'].sub('\n\n\n', result)
+
+        return result
+
+    def _has_formatting_issues(self, text: str) -> bool:
+        """Check if text still has formatting issues"""
+        issues = [
+            '**\n\n**' in text,
+            ',**' in text,
+            '-**' in text and '=' in text,
+            re.search(r'^\s*\*\*\s*$', text, re.MULTILINE),
+            text.count('**') % 2 != 0  # Unmatched bold markers
+        ]
+        return any(issues)
+
+    def _apply_deterministic_fixes(self, text: str) -> str:
+        """Apply deterministic fixes without LLM calls"""
+        # Use compiled patterns for final cleanup
+        result = self._quick_regex_cleanup(text)
+
+        # Additional deterministic fixes
+        lines = result.split('\n')
+        cleaned_lines = []
+        for line in lines:
+            # Skip lines that are just asterisks
+            if line.strip() == '**':
+                continue
+            # Fix broken list items
+            if line.startswith('-**') and '=' in line:
+                line = re.sub(r'-\*\*(\w+)\*\*=', r'• **\1** = ', line)
+            cleaned_lines.append(line)
+
+        return '\n'.join(cleaned_lines)
+
+    def _build_comprehensive_format_prompt(self, content: str) -> str:
+        """Build a comprehensive formatting prompt for single LLM call"""
+        return f"""You are an EXPERT document formatter. Fix ALL formatting issues in ONE pass.
+
+===== RAW TEXT =====
+{content}
+===== END TEXT =====
+
+APPLY THESE FIXES:
+1. Remove orphaned ** on their own lines
+2. Fix list formatting: "-text" → "• text"
+3. Fix code lists: "-**XXX**=text" → "• **XXX** = text"
+4. Remove trailing ",**" and ")**" artifacts
+5. Ensure proper spacing between sections
+6. Keep all formulas and content intact
+
+RETURN ONLY the fixed text:"""
+
     def format_response(self, raw_content: str) -> str:
-        """Pass 2: Clean formatting of the generated content with error handling"""
+        """Enhanced Pass 2 with optimized single-shot formatting"""
         try:
-            logger.info("🔧 Pass 2: Starting formatting cleanup")
+            logger.info("🔧 Pass 2: Starting optimized formatting cleanup")
             if raw_content is None:
                 logger.warning("🔍 Pass 2: Input content is None, returning empty string")
                 return ""
             logger.info(f"🔍 Pass 2: Input content length: {len(raw_content)} characters")
-            logger.info(f"🔍 Pass 2: Content preview: {raw_content[:200]}...")
 
-            logger.info("🔧 Pass 2: Using GPT-4o-mini for enhanced formatting capabilities")
+            # Pre-process with fast regex cleanup
+            pre_cleaned = self._quick_regex_cleanup(raw_content)
 
-            format_prompt = f"""You are an EXPERT document formatter. Your SOLE PURPOSE is to fix ALL formatting issues while preserving EVERY word, number, and formula exactly.
+            # Check if issues remain after regex cleanup
+            if not self._has_formatting_issues(pre_cleaned):
+                logger.info("✅ Pass 2: Content clean after regex pre-processing")
+                return pre_cleaned
+
+            # Single comprehensive LLM call only if needed
+            format_prompt = self._build_comprehensive_format_prompt(pre_cleaned)
 
 ===== RAW TEXT TO FORMAT =====
 {raw_content}
@@ -142,13 +238,8 @@ OUTPUT: "costs)"
 INPUT: "-**061**=Single premium-**062**=Universal life"
 OUTPUT: "• **061** = Single premium\n• **062** = Universal life"
 
-NOW FORMAT THE TEXT - Return ONLY the perfectly formatted version:"""
 
-            logger.info(f"🔍 Pass 2: Format prompt length: {len(format_prompt)} characters")
-            logger.info("🚀 Pass 2: About to call formatting_llm.complete() with GPT-4o-mini")
-
-            # Add timeout and more specific error handling
-            import time
+            logger.info("🚀 Pass 2: Calling LLM for formatting (issues detected after regex)")
             start_time = time.time()
 
             formatted_response = self.formatting_llm.complete(format_prompt)
@@ -164,29 +255,11 @@ NOW FORMAT THE TEXT - Return ONLY the perfectly formatted version:"""
 
                 cleaned_text = formatted_response.text.strip()
 
-                # Optional: Second pass for stubborn issues
-                if "**\n\n**" in cleaned_text or ",**" in cleaned_text or "-**" in cleaned_text:
-                    logger.info("🔄 Pass 2: Detected remaining issues, attempting focused cleanup")
-
-                    focused_prompt = f"""The formatting still has issues. Focus ONLY on these specific problems:
-
-TEXT WITH REMAINING ISSUES:
-{cleaned_text}
-
-FIND AND FIX ONLY THESE:
-1. Any "**\\n\\n**" → Delete the orphaned **
-2. Any ",**" → Remove ,**
-3. Any "-**XXX**=" → Change to "• **XXX** = "
-4. Any line with ONLY ** → Delete entire line
-
-CRITICAL: Keep ALL other content EXACTLY the same.
-
-Return the corrected text:"""
-
-                    second_response = self.formatting_llm.complete(focused_prompt)
-                    if hasattr(second_response, 'text'):
-                        cleaned_text = second_response.text.strip()
-                        logger.info("✅ Pass 2: Focused cleanup completed")
+                # Post-process with deterministic fixes instead of second LLM call
+                if self._has_formatting_issues(cleaned_text):
+                    logger.info("🔄 Pass 2: Applying deterministic post-processing")
+                    cleaned_text = self._apply_deterministic_fixes(cleaned_text)
+                    logger.info("✅ Pass 2: Deterministic fixes applied")
 
                 logger.info(f"🔍 Pass 2: Final cleaned text length: {len(cleaned_text)} characters")
                 logger.info("✅ Pass 2: Formatting cleanup completed successfully")
@@ -229,13 +302,67 @@ Return the corrected text:"""
             logger.warning(f"Failed to fix terminology: {str(e)}")
             return response
 
-    def preserve_formulas(self, response: str, documents: List[Dict]) -> str:
-        """Extract and preserve mathematical formulas from documents"""
-        try:
-            # Extract all mathematical content from documents
-            all_content = " ".join([doc['content'] for doc in documents])
+    def _generate_formula_cache_key(self, documents: List[Dict]) -> str:
+        """Generate cache key from document IDs or content hash"""
+        # Use document IDs if available, otherwise hash content
+        doc_identifiers = []
+        for doc in documents[:10]:  # Limit to first 10 docs for performance
+            if 'id' in doc:
+                doc_identifiers.append(str(doc['id']))
+            elif 'metadata' in doc and 'filename' in doc['metadata']:
+                doc_identifiers.append(doc['metadata']['filename'])
+            else:
+                # Hash first 500 chars of content as identifier
+                content_hash = hashlib.md5(doc['content'][:500].encode()).hexdigest()[:8]
+                doc_identifiers.append(content_hash)
 
-            formula_prompt = f"""Extract ALL mathematical formulas, equations, and calculations from this content.
+        cache_key = "_".join(doc_identifiers)
+        return cache_key
+
+    def _is_cache_valid(self, cache_key: str) -> bool:
+        """Check if cached entry is still valid based on TTL"""
+        if cache_key not in self._formula_cache_timestamps:
+            return False
+        age = time.time() - self._formula_cache_timestamps[cache_key]
+        return age < self._formula_cache_ttl
+
+    def preserve_formulas(self, response: str, documents: List[Dict]) -> str:
+        """Extract and preserve mathematical formulas from documents with caching"""
+        try:
+            # Generate cache key
+            cache_key = self._generate_formula_cache_key(documents)
+
+            # Check cache
+            if cache_key in self._formula_cache and self._is_cache_valid(cache_key):
+                logger.info("🧮 Using cached formula extraction")
+                extracted_formulas = self._formula_cache[cache_key]
+            else:
+                # Extract formulas (expensive operation)
+                logger.info("🧮 Extracting formulas from documents")
+                extracted_formulas = self._extract_formulas_from_documents(documents)
+                # Cache the result
+                self._formula_cache[cache_key] = extracted_formulas
+                self._formula_cache_timestamps[cache_key] = time.time()
+
+            if not extracted_formulas or "NO_FORMULAS" in extracted_formulas:
+                return response
+
+            # Check if formulas need to be added to response
+            if self._formulas_need_addition(response, extracted_formulas):
+                return self._add_formulas_to_response(response, extracted_formulas)
+
+            return response
+
+        except Exception as e:
+            logger.warning(f"Formula preservation failed: {str(e)}")
+            return response
+
+    def _extract_formulas_from_documents(self, documents: List[Dict]) -> str:
+        """Extract mathematical formulas from documents"""
+        # Extract all mathematical content from documents
+        all_content = " ".join([doc['content'] for doc in documents[:5]])  # Limit to first 5 docs
+
+        formula_prompt = f"""Extract ALL mathematical formulas, equations, and calculations from this content.
 
 Content:
 {all_content[:4000]}
@@ -254,11 +381,12 @@ Extracted formulas:"""
             formula_response = self.formatting_llm.complete(formula_prompt)
             extracted_formulas = formula_response.text.strip()
 
-            logger.info(f"🧮 FORMULA EXTRACTION RESULT: {extracted_formulas[:300]}...")
+            logger.info(f"🧮 Formula extraction completed")
+            return extracted_formulas
 
-            if extracted_formulas and "NO_FORMULAS" not in extracted_formulas:
-                # Check if formulas are already well-represented in response
-                formula_check_prompt = f"""Are these mathematical formulas adequately represented in the response?
+    def _formulas_need_addition(self, response: str, extracted_formulas: str) -> bool:
+        """Check if formulas need to be added to the response"""
+        formula_check_prompt = f"""Are these mathematical formulas adequately represented in the response?
 
 Response:
 {response[:1000]}...
@@ -271,30 +399,18 @@ If formulas are well-represented, respond with "FORMULAS_ADEQUATE".
 
 Assessment:"""
 
-                formula_check = self.formatting_llm.complete(formula_check_prompt)
+        formula_check = self.formatting_llm.complete(formula_check_prompt)
+        return "ADD_FORMULAS" in formula_check.text
 
-                logger.info(f"🧮 FORMULA CHECK RESULT: {formula_check.text.strip()}")
-
-                if "ADD_FORMULAS" in formula_check.text:
-                    # Add mathematical formulas section
-                    enhanced_response = f"""{response}
+    def _add_formulas_to_response(self, response: str, extracted_formulas: str) -> str:
+        """Add mathematical formulas section to response"""
+        enhanced_response = f"""{response}
 
 ## Mathematical Formulas and Calculations
 
 {extracted_formulas}"""
-
-                    logger.info("✅ Added mathematical formulas section")
-                    return enhanced_response
-                else:
-                    logger.info("❌ Formulas determined to be adequately represented")
-            else:
-                logger.info("❌ No formulas extracted or NO_FORMULAS returned")
-
-            return response
-
-        except Exception as e:
-            logger.warning(f"Formula preservation failed: {str(e)}")
-            return response
+        logger.info("✅ Added mathematical formulas section")
+        return enhanced_response
 
     def apply_llm_formatting_fix(self, response: str, detected_issues: list) -> str:
         """Apply LLM-based formatting correction for detected issues"""
@@ -438,6 +554,19 @@ Only return the JSON - no other text."""
                     output.append(f"• {value}\n")
 
         return ''.join(output)
+
+    def validate_structured_output(self, data: Dict) -> bool:
+        """Validate structured JSON output meets requirements"""
+        required_fields = ['summary', 'sections']
+        for field in required_fields:
+            if field not in data:
+                return False
+
+        for section in data.get('sections', []):
+            if 'title' not in section or 'content' not in section:
+                return False
+
+        return True
 
     def validate_formula_formatting(self, response: str) -> bool:
         """Check if formulas are properly formatted"""

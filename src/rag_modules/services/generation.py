@@ -509,7 +509,7 @@ Generate exactly 2-3 contextual follow-up questions that dig deeper into the spe
         try:
             for doc in retrieved_docs:
                 content = doc.get('content', '').lower()
-                filename = doc.get('metadata', {}).get('filename', 'Unknown')
+                filename = doc.get('metadata', {}).get('title', doc.get('metadata', {}).get('filename', 'Unknown'))
                 insights['source_docs'].append(filename)
 
                 # Extract accounting standards (ASC, IFRS, etc.)
@@ -564,7 +564,7 @@ Generate exactly 2-3 contextual follow-up questions that dig deeper into the spe
 
         except Exception as e:
             logger.error(f"Failed to analyze document content: {e}")
-            return {'source_docs': [doc.get('metadata', {}).get('filename', 'Unknown') for doc in retrieved_docs]}
+            return {'source_docs': [doc.get('metadata', {}).get('title', doc.get('metadata', {}).get('filename', 'Unknown')) for doc in retrieved_docs]}
 
     def extract_response_elements(self, response: str) -> str:
         """Extract specific elements mentioned in the response for targeted follow-ups"""
@@ -645,7 +645,7 @@ Generate exactly 2-3 contextual follow-up questions that dig deeper into the spe
 
         try:
             for i, doc in enumerate(retrieved_docs[:2], 1):
-                filename = doc.get('metadata', {}).get('filename', 'Unknown')
+                filename = doc.get('metadata', {}).get('title', doc.get('metadata', {}).get('filename', 'Unknown'))
                 content = doc.get('content', '')[:400]  # First 400 chars
 
                 specifics.append(f"Source ({filename}):")

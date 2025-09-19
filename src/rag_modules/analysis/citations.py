@@ -29,12 +29,34 @@ class CitationAnalyzer:
             logger.warning("❌ NO RESPONSE PROVIDED - falling back to top document citation")
             # Fallback: cite the most relevant document if no response analysis possible
             top_doc = retrieved_docs[0]
-            filename = top_doc['metadata'].get('filename', 'Unknown')
+            # Enhanced filename extraction with better fallback handling
+            metadata = top_doc.get('metadata', {})
+            filename = (metadata.get('title') or
+                       metadata.get('filename') or
+                       metadata.get('source_document') or
+                       metadata.get('file_name') or
+                       'Unknown')
+
+            # Clean up filename if it contains file extension or path
+            if filename != 'Unknown':
+                # Remove file extension if present
+                if '.' in filename:
+                    name_parts = filename.rsplit('.', 1)
+                    if len(name_parts[1]) <= 4:  # Likely a file extension
+                        filename = name_parts[0]
+                # Remove path if present
+                if '/' in filename:
+                    filename = filename.split('/')[-1]
+                if '\\' in filename:
+                    filename = filename.split('\\')[-1]
+
+            logger.info(f"📄 Fallback citation using document: {filename}")
+
             citations.append({
                 "id": 1,
                 "text": top_doc['content'][:200] + "..." if len(top_doc['content']) > 200 else top_doc['content'],
                 "source": filename,
-                "source_type": top_doc['source_type'],
+                "source_type": top_doc.get('source_type', 'unknown'),
                 "confidence": round(top_doc.get('relevance_score', top_doc.get('score', 0.0)), 3)
             })
             return citations
@@ -48,7 +70,27 @@ class CitationAnalyzer:
 
         for i, (doc, usage_score) in enumerate(used_docs):
             relevance_score = doc.get('relevance_score', doc.get('score', 0.0))
-            filename = doc['metadata'].get('filename', 'Unknown')
+
+            # Enhanced filename extraction with better fallback handling
+            metadata = doc.get('metadata', {})
+            filename = (metadata.get('title') or
+                       metadata.get('filename') or
+                       metadata.get('source_document') or
+                       metadata.get('file_name') or
+                       'Unknown')
+
+            # Clean up filename if it contains file extension or path
+            if filename != 'Unknown':
+                # Remove file extension if present
+                if '.' in filename:
+                    name_parts = filename.rsplit('.', 1)
+                    if len(name_parts[1]) <= 4:  # Likely a file extension
+                        filename = name_parts[0]
+                # Remove path if present
+                if '/' in filename:
+                    filename = filename.split('/')[-1]
+                if '\\' in filename:
+                    filename = filename.split('\\')[-1]
 
             logger.info(f"📄 Processing citation {i+1}: {filename}, relevance_score={relevance_score:.3f}")
 
@@ -66,9 +108,6 @@ class CitationAnalyzer:
             ]):
                 logger.info(f"❌ SKIPPING - Generic assistant response")
                 continue
-
-            # Get filename for source
-            filename = doc['metadata'].get('filename', 'Unknown')
 
             # Extract page information if available
             page_info = ""
@@ -136,7 +175,19 @@ class CitationAnalyzer:
         for i, doc in enumerate(retrieved_docs):
             content = doc.get('content', '')
             content_lower = content.lower()
-            filename = doc['metadata'].get('filename', 'Unknown')
+
+            # Enhanced filename extraction with logging
+            metadata = doc.get('metadata', {})
+            filename = (metadata.get('title') or
+                       metadata.get('filename') or
+                       metadata.get('source_document') or
+                       metadata.get('file_name') or
+                       'Unknown')
+
+            # Log metadata for first document to debug
+            if i == 0:
+                logger.debug(f"🔍 First document metadata keys: {list(metadata.keys())}")
+                logger.debug(f"🔍 Metadata values - title: '{metadata.get('title')}', filename: '{metadata.get('filename')}'")
 
             usage_score = 0.0
             evidence = []
@@ -211,8 +262,15 @@ class CitationAnalyzer:
         # Sort by usage score (highest first) and return top document(s)
         doc_usage_scores.sort(key=lambda x: x[1], reverse=True)
 
-        # Return only the top 1 document that was most likely used
-        return doc_usage_scores[:1] if doc_usage_scores else [(retrieved_docs[0], 0.5)]  # Fallback to top doc
+        # Return top documents that were likely used (more permissive)
+        # Include documents with usage score > 0.05 (very low threshold) up to max 5 documents
+        significant_docs = [doc for doc in doc_usage_scores if doc[1] > 0.05][:5]
+
+        # If no significant documents found, return at least the top document
+        if not significant_docs and retrieved_docs:
+            return [(retrieved_docs[0], 0.5)]  # Fallback to top doc with moderate confidence
+
+        return significant_docs
 
     def infer_document_domain(self, filename: str, content: str) -> str:
         """Dynamically infer document domain from filename and content"""
