@@ -45,7 +45,6 @@ class ServiceContainer:
             'semantic_alignment_validator': self._create_semantic_alignment_validator,
             'grounding_validator': self._create_grounding_validator,
             'openai_alignment_validator': self._create_openai_alignment_validator,
-            'unified_quality_system': self._create_unified_quality_system,
             'unified_validator': self._create_unified_validator,
 
             # Core services
@@ -195,28 +194,6 @@ class ServiceContainer:
         logger.info("OpenAI alignment validator created")
         return validator
 
-    def _create_unified_quality_system(self):
-        """Create unified quality system with all validators."""
-        from ..quality.unified_quality_system import UnifiedQualitySystem
-
-        validators = {
-            'semantic_alignment': self.get_singleton('semantic_alignment_validator'),
-            'grounding': self.get_singleton('grounding_validator')
-        }
-
-        # Add OpenAI validator if enabled
-        openai_validator = self.get('openai_alignment_validator')
-        if openai_validator:
-            validators['openai_alignment'] = openai_validator
-
-        system = UnifiedQualitySystem(
-            config=self.config,
-            validators=validators
-        )
-
-        logger.info("Unified quality system created",
-                   validators=list(validators.keys()))
-        return system
 
     def _create_unified_validator(self):
         """Create new unified quality validator (recommended approach)."""
