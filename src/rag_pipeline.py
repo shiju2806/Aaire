@@ -50,7 +50,7 @@ import redis
 import structlog
 from .relevance_engine import RelevanceEngine
 from .extraction.bridge_adapter import IntelligentDocumentExtractor
-from .enhanced_query_handler_simple import EnhancedQueryHandler
+from .enhanced_query_handler import EnhancedQueryHandler
 from .conversation_memory import ConversationMemoryManager
 from .extraction.document_processing_adapter import DocumentProcessingAdapter
 from .extraction.models import QueryIntent, LegacyDocumentMetadata as DocumentMetadata
@@ -1423,9 +1423,8 @@ Use professional, precise language with specific details. Include relevant accou
         """
         try:
             # Import the enhanced components
-            from .enhanced_query_handler import EnhancedQueryHandler
             from .extraction.bridge_adapter import IntelligentDocumentExtractor
-            
+
             # Initialize components
             query_handler = EnhancedQueryHandler(self.llm)
             intelligent_extractor = IntelligentDocumentExtractor(self.llm)
