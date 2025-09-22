@@ -78,6 +78,9 @@ class RAGPipeline:
         # Load configuration
         with open(config_path, 'r') as f:
             self.config = yaml.safe_load(f)
+
+        # Initialize collection_name early to prevent AttributeError
+        self.collection_name = "aaire-documents"
         
         # Initialize OpenAI components
         # Allow environment variable override for model
