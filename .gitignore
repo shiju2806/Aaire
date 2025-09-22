@@ -34,6 +34,10 @@ data/
 uploads/
 cache/
 logs/
+search_index/
+
+# Test files (temporary development files)
+test_*.py
 
 # IDE
 .vscode/
