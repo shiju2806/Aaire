@@ -1,0 +1,165 @@
+# Advanced Retrieval Strategies Configuration
+# Zero hardcoding - all behaviors configurable
+
+enabled: true
+
+# Query Decomposition Settings
+query_decomposition:
+  enabled: true
+  model: "gpt-4o-mini"
+  temperature: 0.1
+  max_tokens: 300
+  max_subqueries: 3
+
+  complexity_analysis_prompt: |
+    Analyze this query to determine if it should be broken down into simpler parts.
+
+    Query: "{query}"
+
+    Consider:
+    - Does it ask multiple distinct questions?
+    - Does it involve multiple concepts that need separate analysis?
+    - Would breaking it down improve answer quality?
+    - Are there dependencies between different parts?
+
+    Return JSON:
+    {{
+        "should_decompose": true/false,
+        "complexity_score": 0.0-1.0,
+        "reasoning": "explanation of decision",
+        "confidence": 0.0-1.0,
+        "detected_concepts": ["concept1", "concept2", ...],
+        "question_count": number,
+        "dependencies": ["list of dependencies if any"]
+    }}
+
+  decomposition_prompt: |
+    Break this complex query into simpler, independent sub-queries.
+
+    Original Query: "{query}"
+    Detected Concepts: {concepts}
+
+    Guidelines:
+    - Each sub-query should be answerable independently
+    - Maintain the intent of the original question
+    - Order by importance/dependency
+    - Maximum {max_subqueries} sub-queries
+    - Consider logical flow and dependencies
+
+    Return JSON array:
+    [
+        {{
+            "sub_query": "specific question",
+            "priority": 1-5,
+            "type": "factual|calculation|comparison|explanation|procedural",
+            "dependency": null or "depends on query N",
+            "rationale": "why this sub-query is needed",
+            "expected_answer_type": "text|formula|steps|comparison"
+        }}
+    ]
+
+# Parent-Child Chunking Settings
+parent_child:
+  enabled: true
+  expansion_size: 2  # Number of chunks to expand on each side
+  boundary_marker: "\n--- CHUNK BOUNDARY ---\n"
+  max_expanded_length: 4000  # Maximum length of expanded content
+  preserve_chunk_order: true
+
+# Adaptive Retrieval Settings
+adaptive_retrieval:
+  enabled: true
+  model: "gpt-4o-mini"
+  temperature: 0.1
+  max_tokens: 400
+
+  # Available retrieval strategies
+  strategies:
+    - name: "precise_factual"
+      description: "High precision for specific factual queries"
+      suitable_for: ["factual", "definition", "specific_data"]
+      parameters:
+        search_mode: "exact_match"
+        rerank_threshold: 0.8
+        max_results: 5
+
+    - name: "comprehensive_explanation"
+      description: "Broad context for explanatory queries"
+      suitable_for: ["explanation", "how_to", "process"]
+      parameters:
+        search_mode: "semantic_broad"
+        rerank_threshold: 0.6
+        max_results: 15
+        include_examples: true
+
+    - name: "calculation_focused"
+      description: "Formula and procedure focused retrieval"
+      suitable_for: ["calculation", "formula", "procedure"]
+      parameters:
+        search_mode: "formula_extraction"
+        rerank_threshold: 0.7
+        max_results: 10
+        prioritize_formulas: true
+
+    - name: "comparative_analysis"
+      description: "Multi-document comparison retrieval"
+      suitable_for: ["comparison", "analysis", "evaluation"]
+      parameters:
+        search_mode: "cross_document"
+        rerank_threshold: 0.6
+        max_results: 20
+        ensure_diversity: true
+
+    - name: "regulatory_compliance"
+      description: "Focused on regulatory and compliance content"
+      suitable_for: ["compliance", "regulation", "standard"]
+      parameters:
+        search_mode: "authority_weighted"
+        rerank_threshold: 0.75
+        max_results: 8
+        prioritize_official: true
+
+  analysis_prompt: |
+    Analyze this query to determine the optimal retrieval strategy.
+
+    Query: "{query}"
+    Context: {context}
+
+    Available Strategies:
+    {strategies}
+
+    Consider:
+    - Query complexity and type
+    - Information need (factual, procedural, comparative)
+    - Required precision vs. recall
+    - Domain specificity
+    - User intent (learn vs. apply vs. compare)
+
+    Return JSON:
+    {{
+        "query_type": "factual|calculation|comparison|explanation|complex|procedural",
+        "complexity": "simple|moderate|complex",
+        "precision_required": "high|medium|low",
+        "domain_specificity": "high|medium|low",
+        "information_need": "specific_fact|general_understanding|step_by_step|comparison",
+        "recommended_strategy": "strategy_name",
+        "reasoning": "explanation of choice",
+        "confidence": 0.0-1.0,
+        "fallback_strategies": ["alternative1", "alternative2"]
+    }}
+
+# General Settings
+max_results: 20
+enable_caching: true
+cache_ttl: 3600  # 1 hour
+
+# Performance Settings
+async_processing: true
+batch_size: 5
+timeout_seconds: 30
+
+# Logging
+log_level: "INFO"
+log_decomposition_results: true
+log_strategy_selection: true
+log_performance_metrics: true

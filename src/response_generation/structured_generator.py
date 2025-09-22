@@ -534,6 +534,39 @@ class StructuredResponseGenerator:
             ]
         )
 
+    def _extract_critical_phrases(self, query: str) -> List[str]:
+        """Dynamic extraction of critical phrases without hardcoding"""
+        import re
+
+        phrases = []
+
+        # Method 1: Quoted phrases (explicit user emphasis)
+        quoted = re.findall(r'"([^"]+)"', query)
+        phrases.extend([q.lower() for q in quoted if len(q.split()) > 1])
+
+        # Method 2: Capitalized multi-word terms (likely proper nouns/products)
+        proper_nouns = re.findall(r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+\b', query)
+        phrases.extend([p.lower() for p in proper_nouns])
+
+        # Method 3: Adjacent words that form meaningful units
+        # Look for patterns like "adjective + noun" or "noun + noun"
+        words = query.split()
+        for i in range(len(words) - 1):
+            # Two consecutive words that might form a concept
+            bigram = f"{words[i].lower()} {words[i+1].lower()}"
+            # Filter: must contain at least one meaningful word (3+ chars)
+            if any(len(word) >= 3 for word in [words[i], words[i+1]]):
+                phrases.append(bigram)
+
+        # Method 4: Trigrams for compound concepts
+        for i in range(len(words) - 2):
+            trigram = f"{words[i].lower()} {words[i+1].lower()} {words[i+2].lower()}"
+            # Only keep if it looks like a meaningful phrase
+            if len(trigram) > 10:  # Reasonable length filter
+                phrases.append(trigram)
+
+        return list(set(phrases))  # Remove duplicates
+
     async def _validate_semantic_alignment(
         self,
         query: str,
@@ -545,20 +578,43 @@ class StructuredResponseGenerator:
         Replaces word-based grounding with intent-aware validation
         """
         try:
+            # Extract critical phrases from query
+            critical_phrases = self._extract_critical_phrases(query)
+            self.logger.info(f"🔍 ENHANCED VALIDATION: Extracted critical phrases: {critical_phrases}")
+
             # Summarize available content for analysis
             content_summary = self._summarize_chunks(chunks)
 
-            # LLM-based semantic alignment validation
+            # Check which critical phrases appear in content
+            phrases_in_content = []
+            phrases_missing = []
+
+            for phrase in critical_phrases:
+                found_in_content = any(phrase in chunk.get('content', '').lower() for chunk in chunks)
+                if found_in_content:
+                    phrases_in_content.append(phrase)
+                else:
+                    phrases_missing.append(phrase)
+
+            self.logger.info(f"🔍 PHRASE ANALYSIS: Found={phrases_in_content}, Missing={phrases_missing}")
+
+            # Enhanced LLM-based semantic alignment validation
             alignment_prompt = f"""
 You are validating whether retrieved content can properly address a user query.
 
 USER QUERY: "{query}"
+
+CRITICAL PHRASES DETECTED: {critical_phrases}
+- Found in content: {phrases_in_content}
+- Missing from content: {phrases_missing}
 
 AVAILABLE CONTENT SUMMARY:
 {content_summary}
 
 PROPOSED RESPONSE (first 500 chars):
 {response[:500]}...
+
+🚨 CRITICAL VALIDATION: If the query contains specific phrases (like "whole life") but the content discusses different concepts (like "universal life"), this is a CONCEPT CONFUSION error.
 
 Analyze the semantic alignment between the query intent and available content. Return ONLY a JSON response:
 
@@ -577,9 +633,12 @@ SCORING GUIDE:
 - content_specificity: "specific" = detailed methodologies/procedures, "general" = principles only, "unrelated" = different topic
 - is_aligned: true if intent_match_score >= 0.4 OR (query asks for specific calculation/procedure AND content_specificity != "unrelated")
 
-SPECIAL CASES:
-- Calculation queries ("how to calculate", "reserve calculation", etc.) should be marked as "specific" if content contains relevant formulas or procedures
-- Policy-specific queries ("universal life", "whole life", etc.) should get higher alignment scores if content mentions those policy types
+ENHANCED VALIDATION:
+- Calculation queries should be marked as "specific" if content contains relevant formulas or procedures
+- If critical phrases are missing from content, reduce intent_match_score significantly
+- If query asks about one concept but content discusses a different (though related) concept, mark as "unrelated"
+- Example: Query about "whole life" but content only has "universal life" = CONCEPT CONFUSION = unrelated
+- Check if response generates information not present in the content summary
 """
 
             response_text = await self._call_llm(alignment_prompt, max_tokens=300)

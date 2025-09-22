@@ -39,7 +39,11 @@ class ConversationSummary:
 
 class ActuarialEntityExtractor:
     """Extracts important actuarial/insurance entities from text"""
-    
+
+    def __init__(self, config: Dict = None):
+        """Initialize entity extractor with configuration"""
+        self.config = config or {}
+
     # Key patterns for actuarial domain
     ACTUARIAL_PATTERNS = {
         'policy_types': r'\b(universal life|UL|term life|whole life|variable life|VL|ULSG)\b',
@@ -67,32 +71,43 @@ class ActuarialEntityExtractor:
         
         return list(set(entities))  # Remove duplicates
     
-    @classmethod
-    def calculate_importance(cls, text: str) -> float:
-        """Calculate importance score based on content"""
-        importance = 1.0
-        
+    def calculate_importance(self, text: str) -> float:
+        """Calculate importance score based on content using configurable weights"""
+        # Get importance scoring config with defaults
+        importance_config = self.config.get('importance_scoring', {})
+
+        base_importance = importance_config.get('base_importance', 1.0)
+        question_bonus = importance_config.get('question_bonus', 0.3)
+        calculation_bonus = importance_config.get('calculation_bonus', 0.4)
+        number_bonus = importance_config.get('number_bonus', 0.3)
+        regulatory_bonus = importance_config.get('regulatory_bonus', 0.2)
+        short_message_penalty = importance_config.get('short_message_penalty', 0.8)
+        short_message_threshold = importance_config.get('short_message_threshold', 50)
+        max_importance = importance_config.get('max_importance', 2.0)
+
+        importance = base_importance
+
         # Higher importance for questions
         if '?' in text:
-            importance += 0.3
-        
+            importance += question_bonus
+
         # Higher importance for calculations/formulas
         if any(word in text.lower() for word in ['calculate', 'formula', 'equation']):
-            importance += 0.4
-        
+            importance += calculation_bonus
+
         # Higher importance for specific numbers
         if re.search(r'\d+(?:\.\d+)?%', text):
-            importance += 0.3
-        
+            importance += number_bonus
+
         # Higher importance for regulatory references
         if re.search(r'\b(Section|VM-|LDTI|GAAP)\b', text, re.IGNORECASE):
-            importance += 0.2
-        
+            importance += regulatory_bonus
+
         # Lower importance for very short messages
-        if len(text) < 50:
-            importance *= 0.8
-        
-        return min(importance, 2.0)  # Cap at 2.0
+        if len(text) < short_message_threshold:
+            importance *= short_message_penalty
+
+        return min(importance, max_importance)
 
 class ConversationMemoryManager:
     """Manages intelligent conversation memory with compression and entity tracking"""
@@ -100,7 +115,7 @@ class ConversationMemoryManager:
     def __init__(self, redis_client: Optional[redis.Redis] = None, config: Dict = None):
         self.config = config or {}
         self.redis_client = redis_client
-        self.entity_extractor = ActuarialEntityExtractor()
+        self.entity_extractor = ActuarialEntityExtractor(self.config)
         
         # Configuration settings
         self.max_messages_before_compression = self.config.get('max_messages_before_compression', 15)

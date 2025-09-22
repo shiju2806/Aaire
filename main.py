@@ -151,7 +151,7 @@ logger.info("Starting component initialization...")
 try:
     if RAGPipeline:
         logger.info("Initializing RAG Pipeline...")
-        rag_pipeline = RAGPipeline()
+        rag_pipeline = RAGPipeline("config/mvp_config.yaml")
         logger.info("✅ RAG Pipeline initialized successfully")
     else:
         logger.warning("❌ RAGPipeline class not available")
@@ -455,10 +455,6 @@ async def health_check():
 async def chat(request: ChatRequest):
     return await chat_handler(request)
 
-@app.post("/api/v2/data/process", response_model=ChatResponse)
-async def chat_v2(request: ChatRequest):
-    """API v2 compatibility endpoint - routes to same chat handler"""
-    return await chat_handler(request)
 
 async def chat_handler(request: ChatRequest):
     """
@@ -786,7 +782,7 @@ Note: This is general accounting knowledge, not from your specific company docum
                         })
                         
                 except Exception as e:
-                    logger.error("Error processing WebSocket query", error=str(e))
+                    logger.error("Error processing WebSocket query", error=str(e), event="WebSocket error")
                     await websocket.send_json({
                         "type": "error",
                         "message": "I apologize, but I'm experiencing technical difficulties. Please try again later."

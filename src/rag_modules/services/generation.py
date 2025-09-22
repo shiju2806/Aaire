@@ -34,6 +34,81 @@ class ResponseGenerator:
         # Extract model name from config
         self.actual_model = self.config.get('llm_config', {}).get('model', 'gpt-4o-mini')
 
+        # Extract response configuration
+        response_config = self.config.get('response_config', {})
+        self.base_max_tokens = response_config.get('max_tokens', 4000)  # Keep as base for dynamic calculation
+        self.simple_response_threshold = response_config.get('simple_response_threshold', 8)
+        self.relevance_threshold = response_config.get('relevance_threshold', 0.15)
+        self.min_content_length = response_config.get('min_content_length', 100)
+        self.min_response_part_length = response_config.get('min_response_part_length', 50)
+
+    def calculate_dynamic_max_tokens(self, query: str, doc_count: int) -> int:
+        """Calculate dynamic max_tokens based on query complexity and document count"""
+
+        # Base calculation factors
+        query_length = len(query)
+        query_words = len(query.split())
+
+        # Query complexity scoring
+        complexity_score = 0
+
+        # Length factor (longer queries often need longer responses)
+        if query_length > 100:
+            complexity_score += 2
+        elif query_length > 50:
+            complexity_score += 1
+
+        # Word count factor
+        if query_words > 15:
+            complexity_score += 2
+        elif query_words > 8:
+            complexity_score += 1
+
+        # Question type analysis
+        complex_indicators = [
+            'how', 'what', 'why', 'explain', 'describe', 'analyze', 'compare',
+            'detail', 'breakdown', 'difference', 'relationship', 'process'
+        ]
+        simple_indicators = ['is', 'are', 'can', 'does', 'will', 'define']
+
+        query_lower = query.lower()
+        complex_matches = sum(1 for indicator in complex_indicators if indicator in query_lower)
+        simple_matches = sum(1 for indicator in simple_indicators if indicator in query_lower)
+
+        if complex_matches > simple_matches:
+            complexity_score += complex_matches
+        elif simple_matches > 0:
+            complexity_score -= 1
+
+        # Document count factor (more docs = potentially longer response)
+        doc_factor = min(doc_count // 3, 3)  # Cap at 3 additional points
+        complexity_score += doc_factor
+
+        # Calculate dynamic max_tokens - more generous for complete responses
+        if complexity_score <= 0:
+            # Very simple queries
+            dynamic_tokens = 2000
+        elif complexity_score <= 2:
+            # Simple queries
+            dynamic_tokens = 2500
+        elif complexity_score <= 4:
+            # Medium complexity
+            dynamic_tokens = 3000
+        elif complexity_score <= 6:
+            # High complexity
+            dynamic_tokens = 3500
+        else:
+            # Very complex queries
+            dynamic_tokens = 4000
+
+        # Ensure within reasonable bounds
+        dynamic_tokens = max(600, min(dynamic_tokens, self.base_max_tokens))
+
+        logger.info(f"🎯 Dynamic token calculation: query_len={query_length}, words={query_words}, "
+                   f"complexity_score={complexity_score}, docs={doc_count} → max_tokens={dynamic_tokens}")
+
+        return dynamic_tokens
+
     async def generate_response(
         self,
         query: str,
@@ -53,53 +128,20 @@ class ResponseGenerator:
 
         # Check if we have relevant documents
         if not retrieved_docs:
-            # No relevant documents found - check topic classification before general knowledge response
-            topic_check = await self.query_analyzer.classify_query_topic(query)
-            if not topic_check['is_relevant']:
-                logger.info(f"❌ General knowledge request rejected as off-topic: '{query[:50]}...'")
-                return topic_check['polite_response']
+            # No relevant documents found - return message indicating lack of information
+            logger.info(f"❌ No documents retrieved for query: '{query[:50]}...'")
+            return "I don't have any relevant information in the uploaded documents to answer this question. Please ensure you've uploaded the necessary documents or rephrase your query."
 
-            # Query is relevant, provide general knowledge response
-            # Check if this is a calculation request
-            calc_config = self.config.get('calculation_config', {})
-            calc_enhancement = ""
-            if calc_config.get('enable_structured_calculations') and any(kw in query.lower() for kw in ['calculate', 'amortization', 'schedule', 'table', 'payment', 'journal']):
-                calc_enhancement = f"\n\nCalculation Instructions:\n{calc_config.get('calculation_instructions', '')}"
-
-            prompt = f"""You are AAIRE, an expert in insurance accounting and actuarial matters.
-You provide accurate information based on US GAAP, IFRS, and general accounting principles.
-{conversation_context}
-Current User Question: {query}
-
-This appears to be a general accounting question. I will provide a standard accounting explanation.{calc_enhancement}
-
-Instructions:
-- Consider the conversation history to provide contextual answers
-- Provide a helpful general answer based on standard accounting and actuarial principles
-- This is general accounting knowledge, not from any specific company documents
-- Mention relevant accounting standards (US GAAP, IFRS) where applicable
-- Never provide tax or legal advice
-- CRITICAL: If performing ANY calculations, double-check ALL arithmetic (25×19,399×45=21,823,875 NOT 21,074,875)
-- Show step-by-step calculations with accurate intermediate results
-- Do NOT include any citation numbers like [1], [2], etc.
-- Do NOT reference any specific documents or sources
-- Make it clear this is general knowledge, not company-specific information
-
-Response:"""
-        else:
-            # Use dynamic chunked processing for all non-general queries
-            return await self.process_with_chunked_enhancement(query, retrieved_docs, conversation_context)
-
-        # General knowledge response
-        response = self.llm.complete(prompt)
-        return response.text.strip()
+        # Trust vector search results - if documents were retrieved with high similarity scores, use them
+        # Use dynamic chunked processing for all document-based queries
+        return await self.process_with_chunked_enhancement(query, retrieved_docs, conversation_context)
 
     async def process_with_chunked_enhancement(self, query: str, retrieved_docs: List[Dict], conversation_context: str) -> str:
         """Process documents with enhanced chunked approach"""
         logger.info(f"📄 Processing {len(retrieved_docs)} documents with enhanced chunked approach")
 
         # Determine processing approach based on document count
-        if len(retrieved_docs) <= 8:
+        if len(retrieved_docs) <= self.simple_response_threshold:
             # Enhanced single-pass for smaller document sets
             logger.info("📋 Using enhanced single-pass approach")
             return self.generate_enhanced_single_pass(query, retrieved_docs, conversation_context)
@@ -119,7 +161,13 @@ Question: {query}
 Organizational data:
 {context}
 
-Provide a clear organizational breakdown based on the spatial extraction data found in the documents.
+🚨 CRITICAL CONSTRAINT: ONLY use information explicitly stated in the provided documents above.
+If the documents do not contain sufficient information to answer the query, respond with:
+"I don't have sufficient information about [specific topic] in the uploaded documents to provide a complete answer."
+
+DO NOT use your general knowledge, training data, or external information beyond what is explicitly stated in the documents.
+
+Provide a clear organizational breakdown based ONLY on the spatial extraction data found in the documents.
 Use appropriate headings and structure the information clearly."""
 
         response = self.llm.complete(prompt)
@@ -136,7 +184,19 @@ Question: {query}
 Documents:
 {context}
 
-Create a comprehensive response that addresses ALL aspects covered in the retrieved documents.
+🚨 CRITICAL CONSTRAINT: ONLY use information explicitly stated in the provided documents above.
+If the documents do not contain sufficient information to answer the query, respond with:
+"I don't have sufficient information about [specific topic] in the uploaded documents to provide a complete answer."
+
+DO NOT use your general knowledge, training data, or external information beyond what is explicitly stated in the documents.
+
+CONTENT REQUIREMENTS:
+- ONLY include information directly found in the provided documents
+- Quote exact formulas, calculations, and technical details from the documents
+- Reference specific document sections when citing information
+- If documents contain partial information, clearly state what is missing
+- Preserve ALL technical details exactly as stated in documents
+- Convert complex mathematical notation to readable text format only when present in documents
 
 FORMATTING REQUIREMENTS:
 - Use proper markdown formatting with headers: # for main sections, ## for subsections
@@ -146,16 +206,7 @@ FORMATTING REQUIREMENTS:
 - Use **bold** only for emphasis within text, not for headers
 - Ensure proper spacing between sections and lists
 
-CONTENT REQUIREMENTS:
-- Include ALL relevant regulatory sections, formulas, and calculations
-- Address ALL distinct concepts and methodologies mentioned
-- Preserve ALL technical details and specific requirements
-- Convert complex mathematical notation to readable text format (e.g., 𝐸𝑥+𝑡 = 𝑉𝑁𝑃𝑅⦁𝑎̈𝑥+𝑡:𝑣−𝑡| becomes E(x+t) = VNPR × annuity(x+t):v-t)
-- Replace complex Unicode symbols with readable text
-- Convert actuarial notation to plain English equivalents
-- Maintain mathematical accuracy while ensuring accessibility
-
-Structure your response to systematically cover every major topic found in the source material using clear markdown formatting."""
+Structure your response to systematically cover only the topics found in the source material using clear markdown formatting."""
 
         response = self.llm.complete(prompt)
         return response.text.strip()
@@ -176,7 +227,20 @@ This is document group {group_index} of {len(document_groups)}. Focus on these d
 
 {group_context}
 
-FORMATTING REQUIREMENTS (write like ChatGPT):
+🚨 CRITICAL CONSTRAINT: ONLY use information explicitly stated in the provided documents above.
+
+IMPORTANT: If these documents do not contain ANY information relevant to the query, simply return "SKIP" - do not create empty sections or explanatory text.
+
+DO NOT use your general knowledge, training data, or external information beyond what is explicitly stated in these documents.
+
+CONTENT REQUIREMENTS:
+- ONLY include information directly found in the provided documents
+- Copy EXACT formulas, calculations, and mathematical expressions from documents
+- Preserve specific numerical values exactly as stated (90%, $2.50 per $1,000, etc.)
+- Include calculation methods and procedures ONLY if present in documents
+- If documents contain partial information, clearly state what is present vs. missing
+
+FORMATTING REQUIREMENTS:
 - Follow this EXACT structure pattern:
 
 **1. Main Section Title**
@@ -203,21 +267,17 @@ CRITICAL FORMATTING RULES:
 - Write formulas clearly: use simple notation like (A + B)/C
 - End every section with blank line for readability
 
-CONTENT REQUIREMENTS:
-- Include ALL relevant formulas, calculations, and mathematical expressions
-- Preserve specific numerical values like 90%, $2.50 per $1,000, etc.
-- Copy EXACT formulas from documents
-- Include ALL calculation methods and procedures
-- Maintain technical accuracy and detail
+Provide a detailed response covering ONLY information that relates to the question AND is present in these documents using proper markdown formatting."""
 
-Provide a detailed response covering all information that relates to the question using proper markdown formatting."""
+            # Calculate dynamic max_tokens for this specific group/query
+            dynamic_max_tokens = self.calculate_dynamic_max_tokens(query, len(doc_group))
 
             # Use AsyncOpenAI for true parallel processing
             response = await self.async_client.chat.completions.create(
                 model=self.actual_model,
                 messages=[{"role": "user", "content": group_prompt}],
                 temperature=0,
-                max_tokens=4000
+                max_tokens=dynamic_max_tokens
             )
 
             logger.info(f"⚡ Processed group {group_index}/{len(document_groups)} (async)")
@@ -241,27 +301,69 @@ Provide a detailed response covering all information that relates to the questio
         # Apply basic normalization only (no heavy post-processing since structured failed)
         return self.formatting_manager.normalize_spacing(merged_response)
 
+    def filter_relevant_documents(self, documents: List[Dict]) -> List[Dict]:
+        """Pre-filter documents to only include those with substantial relevant content"""
+        relevant_docs = []
+
+        for doc in documents:
+            content = doc.get('content', '')
+
+            # Skip obviously empty or generic content
+            if len(content.strip()) < self.min_content_length:
+                continue
+
+            # Skip generic assistant responses
+            content_lower = content.lower()
+            if any(phrase in content_lower for phrase in [
+                'how can i assist you',
+                'feel free to share',
+                'what can i help you with',
+                'i apologize but i don\'t have',
+                'i don\'t have sufficient information'
+            ]):
+                continue
+
+            # Include documents with good relevance scores
+            relevance_score = doc.get('relevance_score', doc.get('score', 0.0))
+            if relevance_score > self.relevance_threshold:
+                relevant_docs.append(doc)
+
+        logger.info(f"📋 Filtered to {len(relevant_docs)} relevant documents from {len(documents)} total")
+        return relevant_docs
+
     def create_semantic_document_groups(self, documents: List[Dict]) -> List[List[Dict]]:
-        """Group documents by semantic similarity without hard-coded topics"""
+        """Smart grouping that only creates multiple groups when necessary and filters for relevant content"""
         try:
-            # Use LLM to analyze document themes and create groups
+            # Pre-filter documents for relevance to avoid empty groups
+            relevant_docs = self.filter_relevant_documents(documents)
+
+            if len(relevant_docs) <= 3:
+                # If we have very few relevant documents, just use single group
+                logger.info(f"📚 Using single group for {len(relevant_docs)} relevant documents")
+                return [relevant_docs] if relevant_docs else [documents[:5]]  # Fallback to top 5 if no relevant found
+
+            # First check if documents are homogeneous
             doc_summaries = []
-            for i, doc in enumerate(documents[:15], 1):  # Limit for analysis efficiency
+            docs_to_analyze = relevant_docs[:15]  # Limit for analysis efficiency
+            for i, doc in enumerate(docs_to_analyze, 1):
                 content_sample = doc['content'][:300].replace('\n', ' ')
                 doc_summaries.append(f"Doc {i}: {content_sample}...")
 
-            grouping_prompt = f"""Analyze these document excerpts and identify natural groupings based on their content themes.
+            grouping_prompt = f"""Analyze these document excerpts and determine their diversity.
 
 Documents:
 {chr(10).join(doc_summaries)}
 
-Create 2-4 logical groups where documents with similar themes are together.
-Output format:
-Group 1: Doc 1, Doc 3, Doc 7 (theme: [describe])
-Group 2: Doc 2, Doc 5, Doc 9 (theme: [describe])
-etc.
+IMPORTANT: Only create multiple groups if documents have DISTINCTLY different themes.
+If all documents are about the same topic or from the same source, respond with:
+"Group 1: All documents (unified theme: [describe])"
 
-Group documents by content similarity:"""
+Otherwise, create 2-3 groups ONLY if truly needed:
+Group 1: Doc X, Doc Y (theme: [describe])
+Group 2: Doc Z, Doc W (theme: [describe])
+
+Be conservative - prefer fewer groups unless documents are clearly different.
+Group documents:"""
 
             response = self.llm.complete(grouping_prompt)
             grouping_result = response.text.strip()
@@ -269,11 +371,11 @@ Group documents by content similarity:"""
             logger.info(f"📊 SEMANTIC GROUPING RESULT:\n{grouping_result}")
 
             # Parse the grouping response to create actual groups
-            groups = self.parse_document_groupings(grouping_result, documents[:15])
+            groups = self.parse_document_groupings(grouping_result, docs_to_analyze)
 
-            # Add remaining documents to smallest groups
-            if len(documents) > 15:
-                remaining_docs = documents[15:]
+            # Add remaining relevant documents to smallest groups
+            if len(relevant_docs) > 15:
+                remaining_docs = relevant_docs[15:]
                 for doc in remaining_docs:
                     smallest_group = min(groups, key=len)
                     smallest_group.append(doc)
@@ -285,9 +387,9 @@ Group documents by content similarity:"""
 
         except Exception as e:
             logger.error(f"Failed to create semantic groups: {e}")
-            # Fallback to simple sequential grouping
-            chunk_size = max(3, len(documents) // 4)  # Aim for 4 groups
-            return [documents[i:i + chunk_size] for i in range(0, len(documents), chunk_size)]
+            # Safe fallback - single group (no hardcoded multiple groups)
+            logger.info(f"📚 Fallback: using single group for {len(documents)} documents")
+            return [documents]
 
     def parse_document_groupings(self, grouping_result: str, documents: List[Dict]) -> List[List[Dict]]:
         """Parse LLM grouping result and create actual document groups"""
@@ -308,32 +410,37 @@ Group documents by content similarity:"""
                         if group:
                             groups.append(group)
 
-            # If parsing failed, create fallback groups
+            # If parsing failed or we got too many small groups, just use one group
             if not groups or sum(len(g) for g in groups) < len(documents) * 0.7:
-                logger.warning("Grouping parsing failed, using fallback approach")
-                chunk_size = max(3, len(documents) // 3)
-                groups = [documents[i:i + chunk_size] for i in range(0, len(documents), chunk_size)]
+                logger.warning("Grouping parsing failed or insufficient coverage, using single group")
+                # Just return all documents as a single group
+                groups = [documents]
 
             return groups
 
         except Exception as e:
             logger.error(f"Failed to parse document groupings: {e}")
-            # Fallback to simple sequential grouping
-            chunk_size = max(3, len(documents) // 3)
-            return [documents[i:i + chunk_size] for i in range(0, len(documents), chunk_size)]
+            # Fallback to single group for simplicity
+            return [documents]
 
     def merge_response_parts(self, query: str, response_parts: List[str]) -> str:
         """Merge multiple response parts into a coherent final response"""
         try:
-            # Filter out empty or very short parts
-            valid_parts = [part for part in response_parts if part and len(part.strip()) > 50]
+            # Filter out empty, very short parts, and SKIP responses
+            valid_parts = []
+            for part in response_parts:
+                if part and len(part.strip()) > 10:
+                    part_content = part.strip()
+                    # Skip responses that are just "SKIP" or very short
+                    if part_content.upper() != "SKIP" and len(part_content) > self.min_response_part_length:
+                        valid_parts.append(part_content)
 
             if not valid_parts:
                 return "I apologize, but I couldn't generate a comprehensive response based on the available documents."
 
             # If only one valid part, return it directly
             if len(valid_parts) == 1:
-                return valid_parts[0]
+                return valid_parts[0].strip()
 
             # Combine multiple parts with proper sectioning
             merged_sections = []
@@ -440,11 +547,14 @@ Documents for reference:
 
 Provide an improved response that addresses the focus areas:"""
 
+        # Calculate dynamic max_tokens for regeneration
+        dynamic_max_tokens = self.calculate_dynamic_max_tokens(query, len(documents))
+
         improved = await self.async_client.chat.completions.create(
             model=self.actual_model,
             messages=[{"role": "user", "content": regeneration_prompt}],
             temperature=0.3,
-            max_tokens=4000
+            max_tokens=dynamic_max_tokens
         )
 
         logger.info(f"✨ Response regenerated with focus on: {', '.join(focus_areas)}")

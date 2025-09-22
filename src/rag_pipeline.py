@@ -61,10 +61,13 @@ from .rag_modules.analysis.citations import CitationAnalyzer
 from .rag_modules.cache.manager import CacheManager
 from .rag_modules.formatting import FormattingManager, create_formatting_manager
 from .rag_modules.query import QueryAnalyzer, create_query_analyzer
-from .rag_modules.quality import QualityMetricsManager, create_quality_metrics_manager
+from .rag_modules.quality import QualityMetricsManager, create_quality_metrics_manager, create_intelligent_validator
 from .rag_modules.services import DocumentRetriever, create_document_retriever
 from .rag_modules.services import ResponseGenerator, create_response_generator
 from .rag_modules.storage import DocumentManager, create_document_manager
+
+# Import enhanced modules
+from .rag_modules.enhanced_pipeline import EnhancedRAGPipeline
 
 logger = structlog.get_logger()
 
@@ -188,6 +191,9 @@ class RAGPipeline:
         self.query_analyzer = create_query_analyzer(llm=self.llm)
         self.quality_metrics_manager = create_quality_metrics_manager(self.config.get('retrieval_config', {}))
 
+        # Initialize intelligent validation system
+        self.intelligent_validator = create_intelligent_validator(self.config)
+
         # Initialize Phase 3 services modules (index will be set later)
         self.document_retriever = create_document_retriever(
             vector_index=None,  # Will be set after index creation
@@ -195,7 +201,8 @@ class RAGPipeline:
             relevance_engine=self.relevance_engine,
             metadata_analyzer=self.metadata_analyzer,
             quality_metrics_manager=self.quality_metrics_manager,
-            config=self.config
+            config=self.config,
+            llm_client=self.async_client  # Pass LLM client for framework detection
         )
 
         self.response_generator = create_response_generator(
@@ -225,15 +232,32 @@ class RAGPipeline:
         else:
             self.index = self.document_manager._init_local_index()
 
+        # Critical fix: Update document manager's index reference
+        self.document_manager.index = self.index
+
         # Update document retriever with the created index
-        self.document_retriever.vector_index = self.index
+        self.document_retriever.index = self.index
+
+        # Initialize Enhanced RAG Pipeline for advanced features
+        try:
+            self.enhanced_pipeline = EnhancedRAGPipeline(
+                llm_client=self.async_client,
+                config_dir="/Users/shijuprakash/AAIRE/config"
+            )
+            self.enhanced_features_enabled = True
+            logger.info("✅ Enhanced RAG Pipeline initialized with advanced features")
+        except Exception as e:
+            logger.warning(f"Enhanced RAG Pipeline initialization failed, using standard features: {e}")
+            self.enhanced_pipeline = None
+            self.enhanced_features_enabled = False
 
         logger.info("RAG Pipeline initialized",
                    model=self.config['llm_config']['model'],
                    embedding_model=self.config['embedding_config']['model'],
                    memory_enabled=self.cache is not None,
                    smart_filtering=self.metadata_analyzer.smart_filtering_enabled,
-                   structured_response_enabled=True)
+                   structured_response_enabled=True,
+                   enhanced_features_enabled=self.enhanced_features_enabled)
     
     def _try_qdrant(self) -> bool:
         """Try to initialize Qdrant vector store"""
@@ -500,10 +524,16 @@ class RAGPipeline:
                 response = await self.response_generator.generate_response(query, retrieved_docs, user_context, conversation_history, session_id)
 
 
-                # Pass 2: Format the response using LLM-based formatting
-                response = self.formatting_manager.format_response(response)
-                
-                citations = self.citation_analyzer.extract_citations(retrieved_docs, query, response)
+                # Pass 2: Apply unified intelligent formatting (single LLM call)
+                response = await self.formatting_manager.apply_unified_intelligent_formatting(response, query, retrieved_docs)
+
+                # Check if this is an "I don't know" response - if so, don't generate citations
+                if self.citation_analyzer.is_insufficient_information_response(response):
+                    logger.info("🚫 Skipping citation generation for insufficient information response")
+                    citations = []
+                else:
+                    citations = self.citation_analyzer.extract_citations(retrieved_docs, query, response)
+
                 confidence = self.quality_metrics_manager.calculate_confidence(retrieved_docs, response)
             else:
                 # No relevant documents found - check if this could be relevant general knowledge
@@ -528,7 +558,7 @@ class RAGPipeline:
                     response = await self.response_generator.generate_response(query, [], user_context, conversation_history, session_id)
 
 
-                    response = self.formatting_manager.format_response(response)
+                    response = await self.formatting_manager.apply_unified_intelligent_formatting(response, query, [])
                     response = self.citation_analyzer.remove_citations_from_response(response)
                     citations = []
                     confidence = 0.3  # Low confidence for general knowledge responses
@@ -561,7 +591,37 @@ class RAGPipeline:
             
             # Calculate quality metrics
             quality_metrics = self.quality_metrics_manager.calculate_quality_metrics(query, response, retrieved_docs, citations)
-            
+
+            # Apply intelligent validation to the response
+            try:
+                validation_result = await self.intelligent_validator.validate_response(
+                    query=query,
+                    response=response,
+                    retrieved_docs=retrieved_docs,
+                    confidence=confidence
+                )
+
+                # If validation fails, use rejection message instead
+                if not validation_result.passed:
+                    logger.warning(f"Response failed intelligent validation: {validation_result.rejection_reason}")
+                    response = f"I don't have sufficient information to provide a reliable answer to your question. {validation_result.rejection_reason}"
+                    citations = []
+                    confidence = 0.1
+                    # Update quality metrics for the rejection
+                    quality_metrics = self.quality_metrics_manager.calculate_quality_metrics(query, response, [], [])
+
+                # Add validation results to quality metrics
+                quality_metrics['intelligent_validation'] = {
+                    'passed': validation_result.passed,
+                    'overall_score': validation_result.overall_score,
+                    'processing_time_ms': validation_result.processing_time_ms,
+                    'components': validation_result.components
+                }
+
+            except Exception as e:
+                logger.error(f"Intelligent validation failed: {e}")
+                # Continue with original response if validation fails
+
             rag_response = RAGResponse(
                 answer=response,
                 citations=citations,
@@ -584,10 +644,158 @@ class RAGPipeline:
                 await self.memory_manager.add_message(session_id, 'assistant', response)
             
             return rag_response
-            
+
         except Exception as e:
             logger.error("Failed to process query", error=str(e), query=query[:100])
             raise
+
+    async def process_query_enhanced(
+        self,
+        query: str,
+        filters: Optional[Dict[str, Any]] = None,
+        user_context: Optional[Dict[str, Any]] = None,
+        session_id: Optional[str] = None,
+        conversation_history: Optional[List[Dict]] = None,
+        options: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Process a user query using Enhanced RAG Pipeline with advanced features
+
+        Args:
+            query: User query
+            filters: Optional document filters
+            user_context: Additional context for processing
+            session_id: Session identifier
+            conversation_history: Previous conversation context
+            options: Processing options like max_iterations, use_reasoning
+
+        Returns:
+            Enhanced response with advanced retrieval and self-correction
+        """
+        if not session_id:
+            session_id = str(uuid.uuid4())
+
+        if not self.enhanced_features_enabled or not self.enhanced_pipeline:
+            logger.warning("Enhanced features not available, falling back to standard processing")
+            standard_response = await self.process_query(query, filters, user_context, session_id, conversation_history)
+            return {
+                "response": standard_response.answer,
+                "documents": [{"content": c.content, "metadata": c.metadata} for c in standard_response.citations] if standard_response.citations else [],
+                "reasoning_chain": None,
+                "verification_result": None,
+                "metadata": {
+                    "processing_mode": "standard_fallback",
+                    "enhanced_features": {"advanced_retrieval": False, "self_correction": False}
+                }
+            }
+
+        try:
+            logger.info(f"🚀 Processing query with enhanced features: '{query[:50]}...'")
+
+            # Define base retrieval function that uses our existing system
+            async def base_retrieval_func(search_query: str) -> List[Dict]:
+                """Wrapper for existing retrieval system"""
+                # Get adaptive similarity threshold
+                similarity_threshold = self.quality_metrics_manager.get_similarity_threshold(search_query)
+
+                # Determine document type filter
+                doc_type_filter = self._get_doc_type_filter(filters)
+
+                # Expand query for better retrieval
+                expanded_query = self.query_analyzer.expand_query(search_query)
+
+                # Retrieve documents using existing system
+                retrieved_docs = await self.document_retriever.retrieve_documents(
+                    expanded_query, doc_type_filter, similarity_threshold, filters
+                )
+
+                # Convert to format expected by enhanced pipeline
+                formatted_docs = []
+                for doc in retrieved_docs:
+                    formatted_docs.append({
+                        'content': doc.get('content', ''),
+                        'metadata': doc.get('metadata', {}),
+                        'score': doc.get('relevance_score', doc.get('score', 0.0))
+                    })
+
+                return formatted_docs
+
+            # Define base generation function that uses our existing system
+            async def base_generation_func(gen_query: str, context: str) -> str:
+                """Wrapper for existing generation system"""
+                # Convert context back to document format for existing system
+                context_docs = [{'content': context, 'metadata': {'source': 'enhanced_context'}}]
+
+                # Use existing response generator
+                response = await self.response_generator.generate_response(
+                    gen_query, context_docs, user_context, conversation_history, session_id
+                )
+
+                return response
+
+            # Process with enhanced pipeline
+            enhanced_result = await self.enhanced_pipeline.enhanced_rag_query(
+                query=query,
+                base_retrieval_func=base_retrieval_func,
+                base_generation_func=base_generation_func,
+                document_store=None,  # Could integrate document store if needed
+                context=user_context,
+                options=options or {}
+            )
+
+            # Record conversation history if enabled
+            if self.memory_manager:
+                await self.memory_manager.add_message(session_id, 'user', query)
+                await self.memory_manager.add_message(session_id, 'assistant', enhanced_result['response'])
+
+            logger.info("✅ Enhanced query processing completed successfully",
+                       retrieval_strategy=enhanced_result['metadata'].get('retrieval_strategy'),
+                       correction_applied=enhanced_result['metadata'].get('correction_applied'),
+                       processing_time_ms=enhanced_result['metadata'].get('processing_time_ms'))
+
+            return enhanced_result
+
+        except Exception as e:
+            logger.error(f"Enhanced query processing failed: {e}")
+            logger.info("Falling back to standard processing")
+
+            # Fallback to standard processing
+            standard_response = await self.process_query(query, filters, user_context, session_id, conversation_history)
+            return {
+                "response": standard_response.answer,
+                "documents": [{"content": c.content, "metadata": c.metadata} for c in standard_response.citations] if standard_response.citations else [],
+                "reasoning_chain": None,
+                "verification_result": None,
+                "metadata": {
+                    "processing_mode": "standard_fallback",
+                    "error": str(e),
+                    "enhanced_features": {"advanced_retrieval": False, "self_correction": False}
+                }
+            }
+
+    def get_enhanced_status(self) -> Dict[str, Any]:
+        """Get status of enhanced features"""
+        if not self.enhanced_features_enabled or not self.enhanced_pipeline:
+            return {
+                "enabled": False,
+                "reason": "Enhanced pipeline not initialized",
+                "features": {"advanced_retrieval": False, "self_correction": False}
+            }
+
+        return {
+            "enabled": True,
+            "features": self.enhanced_pipeline.get_status(),
+            "configuration": self.enhanced_pipeline.get_configuration()
+        }
+
+    def configure_enhanced_features(self, module: str, config_updates: Dict[str, Any]) -> bool:
+        """Configure enhanced features dynamically"""
+        if not self.enhanced_features_enabled or not self.enhanced_pipeline:
+            logger.warning("Enhanced features not available for configuration")
+            return False
+
+        return self.enhanced_pipeline.update_configuration(module, config_updates)
+
     async def _generate_extraction_follow_ups(self, query: str, extraction_result) -> List[str]:
         """Generate relevant follow-up questions for extraction results"""
         try:
@@ -1237,9 +1445,56 @@ Use professional, precise language with specific details. Include relevant accou
             # Step 2: Route to appropriate processing method
             if routing_decision['method'] == 'intelligent_extraction':
                 return await self._process_with_intelligent_extraction(
-                    query, routing_decision, intelligent_extractor, 
+                    query, routing_decision, intelligent_extractor,
                     filters, user_context, session_id, conversation_history
                 )
+            elif routing_decision['method'] == 'enhanced_rag' or await self._should_use_enhanced_rag(query, routing_decision):
+                # Use Enhanced RAG Pipeline for complex actuarial queries
+                logger.info("Using Enhanced RAG processing",
+                           confidence=routing_decision.get('confidence', 0.0),
+                           enhanced_features_available=self.enhanced_features_enabled)
+
+                if self.enhanced_features_enabled:
+                    enhanced_response = await self.process_query_enhanced(
+                        query=query,
+                        filters=filters,
+                        user_context=user_context,
+                        session_id=session_id,
+                        conversation_history=conversation_history,
+                        options={}
+                    )
+
+                    # Convert enhanced response format to RAGResponse format
+                    citations = []
+                    if enhanced_response.get('documents'):
+                        from .models import Citation
+                        for doc in enhanced_response['documents']:
+                            citations.append(Citation(
+                                content=doc.get('content', ''),
+                                metadata=doc.get('metadata', {}),
+                                score=doc.get('metadata', {}).get('score', 0.0)
+                            ))
+
+                    # Create RAGResponse with enhanced metadata
+                    from .models import RAGResponse
+                    return RAGResponse(
+                        answer=enhanced_response.get('response', ''),
+                        citations=citations,
+                        session_id=session_id,
+                        confidence=enhanced_response.get('metadata', {}).get('confidence', routing_decision.get('confidence', 0.0)),
+                        metadata={
+                            'processing_mode': 'enhanced_rag',
+                            'routing_confidence': routing_decision.get('confidence', 0.0),
+                            'enhanced_features': enhanced_response.get('metadata', {}).get('enhanced_features', {}),
+                            'reasoning_chain': enhanced_response.get('reasoning_chain'),
+                            'verification_result': enhanced_response.get('verification_result')
+                        }
+                    )
+                else:
+                    logger.warning("Enhanced RAG requested but not available, falling back to standard")
+                    return await self.process_query(
+                        query, filters, user_context, session_id, conversation_history
+                    )
             else:
                 # Fall back to standard RAG processing
                 logger.info("Using standard RAG processing")
@@ -1472,7 +1727,81 @@ Do NOT add unnecessary information - only reformat what's provided."""
             logger.warning(f"Could not apply professional formatting: {e}")
             # Fall back to basic cleanup
             return self.formatting_manager.basic_professional_format(response)
-    
+
+    async def _should_use_enhanced_rag(self, query: str, routing_decision: Dict[str, Any]) -> bool:
+        """
+        Determine if Enhanced RAG Pipeline should be used based on LLM analysis
+        Uses AI to understand query complexity without hardcoded rules
+        """
+        # Check if enhanced features are available
+        if not self.enhanced_features_enabled:
+            return False
+
+        try:
+            # Use LLM to analyze if query needs enhanced features
+            prompt = """Analyze this query and determine if it requires enhanced RAG features.
+
+Enhanced RAG should be used for:
+1. Complex actuarial/accounting calculations requiring multi-step reasoning
+2. Queries about specific regulatory frameworks (US STAT, IFRS, GAAP)
+3. Technical questions requiring deep domain expertise
+4. Multi-part questions needing query decomposition
+5. Questions where standard retrieval might miss nuanced information
+
+Query: {query}
+
+Return JSON with:
+{{
+    "use_enhanced": true/false,
+    "confidence": 0.0-1.0,
+    "reasoning": "brief explanation",
+    "detected_complexity": ["list", "of", "complexity", "indicators"]
+}}""".format(query=query)
+
+            response = await self.async_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1,
+                response_format={"type": "json_object"}
+            )
+
+            import json
+            analysis = json.loads(response.choices[0].message.content)
+
+            # Also check for framework detection using LLM
+            framework_detected = False
+            try:
+                from .rag_modules.filtering import LLMFrameworkDetector
+                detector = LLMFrameworkDetector(self.async_client)
+                framework_detection = await detector.detect_framework(query)
+                framework_detected = framework_detection.primary_framework is not None
+            except:
+                pass
+
+            # Make final decision - be more selective about Enhanced RAG
+            should_use_enhanced = (
+                analysis.get('use_enhanced', False) and
+                analysis.get('confidence', 0.0) > 0.95 and  # Only for very high confidence LLM recommendations
+                framework_detected  # AND framework must be detected
+                # Removed low confidence fallback to Enhanced RAG (was causing expensive processing)
+            )
+
+            logger.info("LLM-based enhanced RAG routing",
+                       should_use_enhanced=should_use_enhanced,
+                       llm_recommendation=analysis.get('use_enhanced'),
+                       confidence=analysis.get('confidence', 0.0),
+                       reasoning=analysis.get('reasoning'),
+                       complexity_indicators=analysis.get('detected_complexity', []),
+                       framework_detected=framework_detected,
+                       standard_routing_confidence=routing_decision.get('confidence', 0.0))
+
+            return should_use_enhanced
+
+        except Exception as e:
+            logger.warning(f"LLM routing analysis failed: {e}, using fallback")
+            # Simple fallback - use enhanced for low confidence queries
+            return routing_decision.get('confidence', 0.0) < 0.3
+
     async def clear_all_documents(self) -> Dict[str, Any]:
         """Clear all documents from Qdrant database"""
         try:

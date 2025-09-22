@@ -1,0 +1,282 @@
+# Self-Correction & Reasoning Configuration
+# Zero hardcoding - all behaviors configurable
+
+enabled: true
+
+# Multi-Pass Generation Settings
+multi_pass:
+  enabled: true
+  max_iterations: 3
+  confidence_threshold: 0.8
+  use_reasoning: true
+  model: "gpt-4o-mini"
+  temperature: 0.1
+  max_tokens: 1200
+
+  initial_generation_prompt: |
+    Answer this query comprehensively based on the provided context.
+    Be accurate, complete, and well-structured.
+
+    QUERY: {query}
+    CONTEXT: {context}
+
+    Provide a complete, accurate response that:
+    1. Directly addresses the query
+    2. Uses only information from the context
+    3. Is well-organized and clear
+    4. Includes relevant details and examples
+
+    Response:
+
+  correction_prompt_template: |
+    Improve this response based on the identified issues.
+
+    QUERY: {query}
+    CONTEXT: {context}
+
+    PREVIOUS RESPONSE:
+    {previous_response}
+
+    IDENTIFIED ISSUES:
+    {issues}
+
+    SPECIFIC FEEDBACK:
+    {feedback}
+
+    REQUIREMENTS FOR IMPROVEMENT:
+    1. Address all identified issues
+    2. Maintain accuracy and factual correctness
+    3. Improve clarity and completeness
+    4. Ensure logical flow and structure
+    5. Stay grounded in the provided context
+
+    Generate an improved response:
+
+# Self-Verification Settings
+self_verification:
+  enabled: true
+  model: "gpt-4o-mini"
+  temperature: 0.1
+  max_tokens: 800
+
+  # Verification criteria (configurable)
+  verification_criteria:
+    - "factual_accuracy"
+    - "completeness"
+    - "logical_consistency"
+    - "hallucination_check"
+    - "context_grounding"
+    - "clarity"
+    - "relevance"
+
+  # Descriptions for each criterion
+  criteria_descriptions:
+    factual_accuracy: "Verify all facts against the provided context"
+    completeness: "Check if the response fully answers the query"
+    logical_consistency: "Ensure the response is internally consistent"
+    hallucination_check: "Identify any information not in the context"
+    context_grounding: "Verify response stays within provided context"
+    clarity: "Assess if the response is clear and well-structured"
+    relevance: "Check if the response directly addresses the query"
+
+  verification_prompt_template: |
+    You are a quality assurance expert. Thoroughly verify this response against the given criteria.
+
+    QUERY: "{query}"
+
+    CONTEXT: {context}
+
+    RESPONSE TO VERIFY: {response}
+
+    VERIFICATION CRITERIA: {criteria}
+
+    METADATA: {metadata}
+
+    For each criterion, provide detailed analysis. Pay special attention to:
+    - Factual accuracy against the context
+    - Completeness of the answer
+    - Any potential hallucinations or fabricated information
+    - Logical consistency and clarity
+    - Relevance to the original query
+
+    Return JSON:
+    {{
+        "criterion_results": {{
+            "{criterion}": {{
+                "score": 0.0-1.0,
+                "passed": true/false,
+                "issues": ["specific issue 1", "specific issue 2"],
+                "reasoning": "detailed explanation",
+                "suggestions": ["improvement suggestion 1", "suggestion 2"]
+            }}
+        }},
+        "overall_assessment": {{
+            "needs_correction": true/false,
+            "confidence": 0.0-1.0,
+            "reasoning": "overall assessment explanation",
+            "priority_issues": ["most critical issues to fix"],
+            "missing_information": ["what's missing if incomplete"],
+            "quality_scores": {{
+                "accuracy": 0.0-1.0,
+                "completeness": 0.0-1.0,
+                "clarity": 0.0-1.0,
+                "relevance": 0.0-1.0,
+                "grounding": 0.0-1.0
+            }},
+            "improvement_priority": "high|medium|low",
+            "estimated_effort": "minor|moderate|major"
+        }}
+    }}
+
+# Chain of Thought Settings
+chain_of_thought:
+  enabled: true
+  model: "gpt-4o-mini"
+  temperature: 0.2
+  max_tokens: 1200
+
+  # Available reasoning methodologies
+  methodologies:
+    general: "Step-by-step logical reasoning"
+    analytical: "Systematic analysis with evidence evaluation"
+    procedural: "Step-by-step procedure or calculation"
+    comparative: "Comparative analysis with pros/cons"
+    regulatory: "Compliance-focused reasoning with regulations"
+    quantitative: "Mathematical and numerical reasoning"
+
+  methodology_selection_prompt: |
+    Analyze this query to select the best reasoning methodology.
+
+    Query: "{query}"
+
+    Available Methodologies:
+    {methodologies}
+
+    Consider:
+    - Type of question (factual, analytical, procedural, etc.)
+    - Domain (regulatory, mathematical, general, etc.)
+    - Expected answer format
+    - Complexity level
+
+    Return JSON:
+    {{
+        "selected_methodology": "methodology_name",
+        "reasoning": "why this methodology is best",
+        "confidence": 0.0-1.0,
+        "alternative_methodologies": ["backup1", "backup2"]
+    }}
+
+  default_reasoning_prompt: |
+    Think step-by-step to answer this query. Show your complete reasoning process.
+
+    QUERY: {query}
+    CONTEXT: {context}
+
+    Methodology: {methodology}
+
+    Structure your reasoning systematically:
+    1. Understanding the question: [what exactly is being asked]
+    2. Relevant information: [key facts from context that apply]
+    3. Analysis: [how the facts relate to the question]
+    4. Reasoning: [logical steps to reach conclusion]
+    5. Validation: [check if the reasoning makes sense]
+    6. Conclusion: [direct answer with confidence level]
+
+    Be thorough but concise. Show your work clearly.
+
+    Return JSON:
+    {{
+        "reasoning_steps": [
+            {{
+                "step_number": 1,
+                "description": "Understanding the question",
+                "content": "detailed explanation of what's being asked",
+                "confidence": 0.0-1.0
+            }},
+            {{
+                "step_number": 2,
+                "description": "Relevant information",
+                "content": "key facts from context",
+                "confidence": 0.0-1.0
+            }},
+            {{
+                "step_number": 3,
+                "description": "Analysis",
+                "content": "how facts relate to question",
+                "confidence": 0.0-1.0
+            }},
+            {{
+                "step_number": 4,
+                "description": "Reasoning",
+                "content": "logical steps to conclusion",
+                "confidence": 0.0-1.0
+            }},
+            {{
+                "step_number": 5,
+                "description": "Validation",
+                "content": "check reasoning validity",
+                "confidence": 0.0-1.0
+            }}
+        ],
+        "conclusion": "final answer",
+        "overall_confidence": 0.0-1.0,
+        "methodology_used": "{methodology}",
+        "key_assumptions": ["assumption1", "assumption2"],
+        "limitations": ["limitation1", "limitation2"]
+    }}
+
+  response_from_reasoning_prompt: |
+    Based on this step-by-step reasoning, provide a clear, comprehensive answer.
+
+    ORIGINAL QUERY: {query}
+
+    REASONING PROCESS:
+    {reasoning_steps}
+
+    CONCLUSION: {conclusion}
+
+    Provide a well-structured response that:
+    1. Directly answers the query
+    2. Is clear and comprehensive
+    3. Maintains logical flow from the reasoning
+    4. Includes relevant details from the reasoning process
+    5. Is appropriately detailed for the complexity of the question
+
+    Format the response professionally and ensure it's self-contained.
+
+    Response:
+
+# Quality Thresholds
+quality_thresholds:
+  minimum_confidence: 0.6
+  minimum_accuracy: 0.7
+  minimum_completeness: 0.8
+  maximum_iterations: 3
+
+# Performance Settings
+performance:
+  enable_parallel_verification: true
+  cache_verification_results: true
+  cache_ttl: 1800  # 30 minutes
+  timeout_per_iteration: 45  # seconds
+
+# Advanced Features
+advanced_features:
+  uncertainty_quantification: true
+  alternative_answers: false  # Generate multiple answer options
+  explanation_generation: true
+  confidence_intervals: true
+
+# Logging and Monitoring
+logging:
+  log_reasoning_chains: true
+  log_verification_details: true
+  log_iteration_progress: true
+  log_performance_metrics: true
+  detailed_error_logging: true
+
+# Fallback Settings
+fallback:
+  enable_fallback_generation: true
+  fallback_on_verification_failure: true
+  max_fallback_attempts: 2

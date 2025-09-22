@@ -189,6 +189,7 @@ class WhooshSearchEngine:
 
     def _add_single_document(self, writer, doc: Dict[str, Any]):
         """Add a single document to the writer"""
+        import json  # Import json module
 
         # Extract required fields
         doc_id = doc.get('doc_id', doc.get('id', f"doc_{time.time()}"))
@@ -204,10 +205,10 @@ class WhooshSearchEngine:
         doc_fields = {
             'doc_id': doc_id,
             'content': content,
-            'title': doc.get('title', ''),
+            'title': metadata.get('title', doc.get('title', '')),  # Try metadata first, then doc
             'chunk_index': doc.get('chunk_index', 0),
             'timestamp': time.time(),
-            'metadata_json': str(metadata)  # Store full metadata as JSON
+            'metadata_json': json.dumps(metadata)  # Store full metadata as proper JSON
         }
 
         # Add metadata fields for filtering
@@ -308,25 +309,10 @@ class WhooshSearchEngine:
         parser = MultifieldParser(['content', 'title'], self.index.schema)
 
         try:
-            # For longer queries, use smarter term selection instead of requiring ALL terms
+            # For longer queries, use smarter phrase-aware search instead of broad OR
             if len(query_str.split()) > 6:
-                # Extract important content words (skip common words like "how", "do", "the", etc.)
-                import re
-                words = re.findall(r'\b\w{3,}\b', query_str.lower())  # Words 3+ chars
-                stop_words = {'how', 'the', 'and', 'for', 'are', 'can', 'what', 'when', 'where', 'why', 'will', 'would', 'should', 'could'}
-                content_words = [w for w in words if w not in stop_words][:5]  # Take first 5 content words
-
-                if content_words:
-                    # Use OR logic for content words - much more flexible
-                    from whoosh.query import Or, Term
-                    term_queries = []
-                    for word in content_words:
-                        term_queries.append(Term('content', word))
-                        term_queries.append(Term('title', word))
-                    content_query = Or(term_queries)
-                    logger.info(f"🔍 DEBUG: Using content-word OR query with terms: {content_words}")
-                else:
-                    content_query = parser.parse(query_str)
+                content_query = self._build_phrase_aware_query(query_str, parser)
+                logger.info(f"🔍 DEBUG: Using phrase-aware query for: '{query_str}'")
             else:
                 # For shorter queries, use original parsing
                 content_query = parser.parse(query_str)
@@ -400,8 +386,8 @@ class WhooshSearchEngine:
         """Parse metadata from search hit"""
         metadata = {}
 
-        # Add stored fields
-        for field in ['primary_framework', 'content_domains', 'document_type',
+        # Add stored fields (including title)
+        for field in ['title', 'primary_framework', 'content_domains', 'document_type',
                      'file_path', 'chunk_index', 'confidence_score', 'timestamp']:
             if field in hit:
                 metadata[field] = hit[field]
@@ -412,7 +398,11 @@ class WhooshSearchEngine:
                 import json
                 json_metadata = json.loads(hit['metadata_json'])
                 metadata.update(json_metadata)
-            except:
+                # Ensure title gets priority from JSON metadata
+                if 'title' in json_metadata:
+                    metadata['title'] = json_metadata['title']
+            except Exception as e:
+                logger.warning(f"Failed to parse JSON metadata: {e}")
                 pass  # Ignore JSON parsing errors
 
         return metadata
@@ -423,6 +413,69 @@ class WhooshSearchEngine:
             return hit.highlights('content', top=3)
         except:
             return None
+
+    def _build_phrase_aware_query(self, query_str: str, parser) -> Query:
+        """Build smart query that handles phrases like 'whole life' as units"""
+        import re
+        from whoosh.query import And, Or, Term, Phrase
+
+        # Define common insurance/actuarial phrases that should be kept together
+        key_phrases = [
+            'whole life', 'term life', 'universal life', 'variable life',
+            'cash value', 'death benefit', 'premium payment', 'policy loan',
+            'reserve calculation', 'statutory reserve', 'minimum reserve',
+            'discount rate', 'mortality table', 'interest rate'
+        ]
+
+        # Find phrases in the query
+        found_phrases = []
+        remaining_query = query_str.lower()
+
+        for phrase in key_phrases:
+            if phrase in remaining_query:
+                found_phrases.append(phrase)
+                # Remove phrase from remaining text to avoid double-counting words
+                remaining_query = remaining_query.replace(phrase, ' ')
+
+        # Extract important individual terms from remaining text
+        words = re.findall(r'\b\w{3,}\b', remaining_query)
+        stop_words = {'how', 'the', 'and', 'for', 'are', 'can', 'what', 'when', 'where', 'why', 'will', 'would', 'should', 'could', 'calculate', 'determine'}
+        important_words = [w for w in words if w not in stop_words][:3]  # Max 3 additional terms
+
+        # Build query components
+        query_parts = []
+
+        # Add phrase searches (high priority - use AND)
+        for phrase in found_phrases:
+            phrase_terms = phrase.split()
+            if len(phrase_terms) == 2:
+                # Create phrase query for both content and title
+                phrase_query = Or([
+                    Phrase('content', phrase_terms),
+                    Phrase('title', phrase_terms)
+                ])
+                query_parts.append(phrase_query)
+
+        # Add important individual terms (medium priority - use OR for flexibility)
+        if important_words:
+            term_queries = []
+            for word in important_words:
+                term_queries.extend([Term('content', word), Term('title', word)])
+            if term_queries:
+                query_parts.append(Or(term_queries))
+
+        # Combine all parts
+        if len(query_parts) > 1:
+            # If we have both phrases and terms, require at least the phrases
+            main_query = And(query_parts[:1] + [Or(query_parts[1:])] if len(query_parts) > 1 else query_parts)
+        elif query_parts:
+            main_query = query_parts[0]
+        else:
+            # Fallback to original parsing if no phrases/terms found
+            main_query = parser.parse(query_str)
+
+        logger.info(f"🔍 PHRASE-AWARE: phrases={found_phrases}, terms={important_words}")
+        return main_query
 
     def _update_search_stats(self, search_time_ms: float):
         """Update search performance statistics"""

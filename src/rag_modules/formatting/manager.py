@@ -63,7 +63,11 @@ class FormattingManager:
             'broken_list_single': re.compile(r'-\s*\*\*(\w+)\*\*\s*='),
             'broken_list_multiple': re.compile(r'-\*\*(\d+)\*\*=([^-]*)'),
             'double_spaces': re.compile(r'\s{2,}'),
-            'excessive_newlines': re.compile(r'\n{4,}')
+            'excessive_newlines': re.compile(r'\n{4,}'),
+            'fix_numbered_headers': re.compile(r'\*\*(\d+\.\d+)\s+([^*]+)\*\*'),
+            'fix_broken_bullets': re.compile(r'^-\s*\*\*([^*]+)\*\*\s*:', re.MULTILINE),
+            'clean_empty_bolds': re.compile(r'\*\*\s*\*\*'),
+            'fix_header_continuation': re.compile(r'\*\*([^*]+)\*\*\s*([A-Z][a-z])')
         }
 
     def _quick_regex_cleanup(self, content: str) -> str:
@@ -79,6 +83,11 @@ class FormattingManager:
         result = self._compiled_patterns['orphaned_dash'].sub(':\n- ', result)
         result = self._compiled_patterns['double_spaces'].sub(' ', result)
         result = self._compiled_patterns['excessive_newlines'].sub('\n\n\n', result)
+        # New improved patterns
+        result = self._compiled_patterns['fix_numbered_headers'].sub(r'**\1 \2**', result)
+        result = self._compiled_patterns['fix_broken_bullets'].sub(r'- **\1:**', result)
+        result = self._compiled_patterns['clean_empty_bolds'].sub('', result)
+        result = self._compiled_patterns['fix_header_continuation'].sub(r'**\1**\n\n\2', result)
 
         return result
 
@@ -122,8 +131,8 @@ class FormattingManager:
 
 APPLY THESE FIXES:
 1. Remove orphaned ** on their own lines
-2. Fix list formatting: "-text" → "• text"
-3. Fix code lists: "-**XXX**=text" → "• **XXX** = text"
+2. Fix list formatting: "-text" to "• text"
+3. Fix code lists: "-**XXX**=text" to "• **XXX** = text"
 4. Remove trailing ",**" and ")**" artifacts
 5. Ensure proper spacing between sections
 6. Keep all formulas and content intact
@@ -149,95 +158,6 @@ RETURN ONLY the fixed text:"""
 
             # Single comprehensive LLM call only if needed
             format_prompt = self._build_comprehensive_format_prompt(pre_cleaned)
-
-===== RAW TEXT TO FORMAT =====
-{raw_content}
-===== END RAW TEXT =====
-
-YOUR MISSION: Transform this into perfectly formatted text by fixing ALL these issues:
-
-🔴 CRITICAL ISSUE #1: ORPHANED ASTERISKS
-Search for these EXACT patterns and DELETE them:
-- Any line containing ONLY: **
-- Any line starting with: **<newline>
-- Any occurrence of: **<newline><newline>**
-- Standalone ** not part of bold text
-
-🔴 CRITICAL ISSUE #2: BROKEN LIST FORMATTING
-Transform EVERY instance of these patterns:
-
-PATTERN: "-<newline>The text"
-TRANSFORM TO: "• The text"
-
-PATTERN: "- **XXX**=Description" (all on one line)
-TRANSFORM TO: "• **XXX** = Description" (with spaces)
-
-PATTERN: Multiple codes on one line like "-**061**=text-**062**=text-**063**=text"
-TRANSFORM TO: Each on its own line:
-• **061** = text
-• **062** = text
-• **063** = text
-
-🔴 CRITICAL ISSUE #3: BROKEN HEADERS
-Find and fix:
-- Headers followed by orphaned ** symbols
-- Headers with trailing ** at the end
-- Double asterisks that aren't creating bold text
-
-🔴 CRITICAL ISSUE #4: TRAILING ARTIFACTS
-Remove ALL instances of:
-- ",**" at end of sentences → remove the ,**
-- ")**" at end of parentheses → keep just )
-- Random ** at line ends → delete them
-- Unnecessary commas before line breaks
-
-🔴 CRITICAL ISSUE #5: SPACING AND STRUCTURE
-Ensure:
-- Blank line before and after each header
-- Each list item on its own line
-- Consistent bullet symbol (•) throughout
-- Proper spacing around equals signs in formulas
-
-STEP-BY-STEP PROCESSING ORDER:
-1. Read through the ENTIRE text first
-2. Identify ALL instances of the patterns above
-3. Fix orphaned asterisks FIRST
-4. Fix list formatting SECOND
-5. Fix headers THIRD
-6. Remove trailing artifacts FOURTH
-7. Fix spacing LAST
-
-VALIDATION REQUIREMENTS:
-Before returning the text, verify:
-✓ Zero lines contain only **
-✓ Zero instances of ** at start of lines (unless bold text)
-✓ All bullets use • symbol
-✓ Every list item is on a separate line
-✓ No ",**" or ")**" patterns remain
-✓ Headers are clean without trailing symbols
-✓ Proper spacing between sections
-
-ABSOLUTE REQUIREMENTS:
-1. PRESERVE every word, number, formula, and technical term
-2. NEVER add or remove actual content
-3. ONLY fix formatting issues
-4. Use • for ALL bullet points (not -, *, or •)
-5. Ensure professional, clean output
-
-EXAMPLE TRANSFORMATIONS YOU MUST APPLY:
-
-INPUT: "**2. Additional Considerations**\n\n**\n\nSecondary Guarantees:"
-OUTPUT: "**2. Additional Considerations**\n\nSecondary Guarantees:"
-
-INPUT: "- \nThe adjusted gross premium"
-OUTPUT: "• The adjusted gross premium"
-
-INPUT: "costs),**"
-OUTPUT: "costs)"
-
-INPUT: "-**061**=Single premium-**062**=Universal life"
-OUTPUT: "• **061** = Single premium\n• **062** = Universal life"
-
 
             logger.info("🚀 Pass 2: Calling LLM for formatting (issues detected after regex)")
             start_time = time.time()
@@ -378,11 +298,11 @@ If no formulas found, respond with "NO_FORMULAS".
 
 Extracted formulas:"""
 
-            formula_response = self.formatting_llm.complete(formula_prompt)
-            extracted_formulas = formula_response.text.strip()
+        formula_response = self.formatting_llm.complete(formula_prompt)
+        extracted_formulas = formula_response.text.strip()
 
-            logger.info(f"🧮 Formula extraction completed")
-            return extracted_formulas
+        logger.info(f"🧮 Formula extraction completed")
+        return extracted_formulas
 
     def _formulas_need_addition(self, response: str, extracted_formulas: str) -> bool:
         """Check if formulas need to be added to the response"""
@@ -622,51 +542,6 @@ Reply with just: VALID or NEEDS_FIXING"""
         result = result.strip()
         return result
 
-    async def apply_professional_formatting(self, response: str, query: str) -> str:
-        """Apply ChatGPT-style professional formatting to responses"""
-        try:
-            logger.info("📝 Applying professional formatting to response")
-
-            # Use LLM to reformat the content professionally
-            system_prompt = """You are a formatting expert. Rewrite the provided technical content with:
-
-1. Clear visual hierarchy using emojis as section markers (🔹 for main points, ✅ for summary, 📌 for key points)
-2. Numbered sections with proper spacing
-3. Sub-points using (a), (b), (c) or bullet points
-4. Bold only for key terms and headers (use sparingly)
-5. Clean spacing between sections
-6. Professional, conversational tone
-7. Examples where helpful
-8. A clear summary at the end
-
-Format like high-quality ChatGPT responses - clean, organized, and easy to scan.
-Keep all technical accuracy but improve readability dramatically.
-Do NOT add unnecessary information - only reformat what's provided."""
-
-            messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Query: {query}\n\nContent to reformat:\n{response}"}
-            ]
-
-            formatted_response = await self.llm_client.achat.completions.create(
-                model=self.llm_model,
-                messages=messages,
-                temperature=0.3,
-                max_tokens=4000
-            )
-
-            result = formatted_response.choices[0].message.content
-
-            # Apply final clean-up
-            result = self.final_formatting_cleanup(result)
-
-            logger.info("✅ Professional formatting applied successfully")
-            return result
-
-        except Exception as e:
-            logger.warning(f"Could not apply professional formatting: {e}")
-            # Fall back to basic cleanup
-            return self.basic_professional_format(response)
 
     def final_formatting_cleanup(self, text: str) -> str:
         """Final cleanup for professional formatting"""
@@ -682,82 +557,144 @@ Do NOT add unnecessary information - only reformat what's provided."""
 
         return text.strip()
 
-    def apply_simple_professional_formatting(self, response: str) -> str:
-        """Simple, reliable professional formatting without API calls"""
 
-        # Split into paragraphs
-        paragraphs = response.split('\n\n')
-        formatted_paragraphs = []
 
-        for para in paragraphs:
-            para = para.strip()
-            if not para:
-                continue
 
-            # Detect and format different types of content
-            if re.match(r'^\d+\.', para):
-                # Main numbered section - add emoji marker
-                para = re.sub(r'^(\d+\.)', r'🔹 \1', para)
-                # Ensure space after the number
-                para = re.sub(r'^(🔹\s*\d+\.)([A-Z])', r'\1 \2', para)
-            elif re.match(r'^##?\s', para):
-                # Already a header, leave it
-                pass
-            elif 'summary' in para.lower() or 'conclusion' in para.lower():
-                # Summary sections
-                if not para.startswith('✅'):
-                    para = f"✅ {para}"
-            elif re.match(r'^-\s', para):
-                # Bullet point
-                para = re.sub(r'^-\s', '• ', para)
 
-            # Fix excessive bold - only keep for important terms
-            if para.count('**') > 6:
-                # Too much bold, reduce it
-                para = re.sub(r'\*\*([^*]{1,15})\*\*', r'\1', para)
 
-            formatted_paragraphs.append(para)
 
-        result = '\n\n'.join(formatted_paragraphs)
 
-        # Final cleanup
+
+
+
+
+
+
+    def _contains_regulatory_language(self, text: str) -> bool:
+        """Check if text contains regulatory language patterns"""
+        regulatory_indicators = [
+            'Section ', 'pursuant to', 'in accordance with', 'shall be',
+            'regulatory', 'compliance', 'supervisory', 'framework',
+            'above', 'herein', 'thereof', 'whereby', 'aforementioned'
+        ]
+        text_lower = text.lower()
+        return any(indicator in text_lower for indicator in regulatory_indicators)
+
+
+
+
+    async def apply_unified_intelligent_formatting(self, response: str, query: str, documents: List[Dict] = None) -> str:
+        """
+        Unified intelligent formatter that consolidates all formatting operations into a single LLM call.
+        This replaces the sequential chain of: apply_rag_optimized_formatting, fix_reserve_terminology,
+        preserve_formulas, apply_professional_formatting to achieve 75% reduction in LLM calls.
+        """
+        try:
+            logger.info("🧠 Starting unified intelligent formatting (single LLM call)")
+            start_time = time.time()
+
+            # Step 1: Fast regex pre-processing (deterministic, no LLM needed)
+            pre_cleaned = self._quick_regex_cleanup(response)
+            pre_cleaned = self._apply_deterministic_fixes(pre_cleaned)
+
+            # Step 2: Check if we need LLM processing at all
+            if not self._needs_llm_formatting(pre_cleaned):
+                logger.info("✅ Content clean after deterministic processing, skipping LLM")
+                return pre_cleaned
+
+            # Step 3: Extract formulas if documents provided (cached operation)
+            formula_context = ""
+            if documents:
+                cache_key = self._generate_formula_cache_key(documents)
+                if cache_key in self._formula_cache and self._is_cache_valid(cache_key):
+                    extracted_formulas = self._formula_cache[cache_key]
+                    if extracted_formulas and "NO_FORMULAS" not in extracted_formulas:
+                        formula_context = f"\n\nImportant formulas from source documents:\n{extracted_formulas}"
+
+            # Step 4: Single comprehensive LLM call for all formatting
+            unified_prompt = self._build_unified_formatting_prompt(pre_cleaned, query, formula_context)
+
+            logger.info("🤖 Making single LLM call for all formatting operations")
+            if hasattr(self, 'llm_client') and self.llm_client:
+                # Use async client if available
+                response_obj = await self.llm_client.chat.completions.create(
+                    model=self.llm_model,
+                    messages=[{"role": "user", "content": unified_prompt}],
+                    temperature=0.1,
+                    max_tokens=4000
+                )
+                formatted_text = response_obj.choices[0].message.content
+            else:
+                # Fallback to sync client
+                formatted_response = self.formatting_llm.complete(unified_prompt)
+                formatted_text = formatted_response.text
+
+            # Step 5: Final deterministic cleanup
+            final_result = self._apply_final_cleanup(formatted_text.strip())
+
+            processing_time = time.time() - start_time
+            logger.info(f"✅ Unified formatting completed in {processing_time:.2f}s (single LLM call)")
+
+            return final_result
+
+        except Exception as e:
+            logger.error(f"❌ Unified formatting failed: {str(e)}")
+            # Fallback to deterministic cleanup only
+            return self._apply_deterministic_fixes(response)
+
+    def _needs_llm_formatting(self, text: str) -> bool:
+        """Determine if text needs LLM processing or if deterministic cleanup is sufficient"""
+        issues = [
+            self._has_formatting_issues(text),
+            self._contains_regulatory_language(text),
+            'Deferred Reserve' in text,  # Terminology fix needed
+            len(text.split()) > 200 and ('**' in text or '#' in text),  # Complex formatting
+            'Section ' in text,  # Regulatory references to remove
+        ]
+        return any(issues)
+
+    def _build_unified_formatting_prompt(self, content: str, query: str, formula_context: str) -> str:
+        """Build comprehensive prompt for single LLM call that handles all formatting needs"""
+        return f"""You are an expert document formatter. Apply ALL these improvements in ONE pass:
+
+FORMATTING TASKS:
+1. CLEAN STRUCTURE: Remove markdown artifacts (**, ##, excessive bullets)
+2. TERMINOLOGY: Fix "Deferred Reserve" → "Deterministic Reserve", "DR = Deferred" → "DR = Deterministic"
+3. REGULATORY CLEANUP: Remove ALL section references like "Section 2.A", "Section 3.B.5.c", "pursuant to Section X"
+4. PROFESSIONAL LAYOUT: Use clean numbering (1., 2., 3.) and bullet points (•) with proper spacing
+5. READABILITY: Ensure clear paragraph breaks and logical flow
+6. PRESERVE MATH: Keep all formulas, calculations, and technical notation intact
+
+STYLE REQUIREMENTS:
+- Convert from regulatory jargon to clear business language
+- Use "is" instead of "shall be", "using" instead of "pursuant to"
+- Maintain technical accuracy while improving readability
+- Add proper spacing between sections
+- Remove ALL section number references completely
+
+ORIGINAL QUERY: {query}
+
+CONTENT TO FORMAT:
+{content}
+
+{formula_context}
+
+FORMATTED RESULT:"""
+
+    def _apply_final_cleanup(self, text: str) -> str:
+        """Apply final deterministic cleanup after LLM formatting"""
+        result = text
+
+        # Remove any remaining section references that LLM might have missed
+        result = re.sub(r'Section\s+\d+(?:\.\s*[A-Z])?(?:\.\s*\d+)?(?:\.\s*[a-z])?', '', result, flags=re.IGNORECASE)
+        result = re.sub(r'pursuant to\s+[^.]*', '', result, flags=re.IGNORECASE)
+
+        # Clean up whitespace
+        result = re.sub(r'\s{2,}', ' ', result)
         result = re.sub(r'\n{3,}', '\n\n', result)
-        result = re.sub(r'\*{3,}', '**', result)
 
-        return result.strip()
-
-    def basic_professional_format(self, response: str) -> str:
-        """Fallback basic professional formatting without LLM"""
-
-        lines = response.split('\n')
-        formatted_lines = []
-
-        for line in lines:
-            line = line.strip()
-            if not line:
-                formatted_lines.append('')
-                continue
-
-            # Add emoji markers for numbered items
-            if re.match(r'^\d+\.', line):
-                # Main numbered sections
-                line = f"🔹 {line}"
-            elif re.match(r'^[a-z]\)', line):
-                # Sub-points
-                line = f"  • {line[2:].strip()}"
-            elif line.startswith('-'):
-                # Bullet points
-                line = f"  • {line[1:].strip()}"
-
-            formatted_lines.append(line)
-
-        result = '\n'.join(formatted_lines)
-
-        # Add proper spacing
-        result = re.sub(r'(🔹[^\n]+)\n([^🔹\n])', r'\1\n\n\2', result)
-
-        # Add summary marker if there's a summary section
-        result = re.sub(r'(Summary|Conclusion|Final)', r'✅ \1', result, flags=re.IGNORECASE)
+        # Ensure proper sentence spacing
+        result = re.sub(r'([.!?])([A-Z])', r'\1 \2', result)
 
         return result.strip()
 

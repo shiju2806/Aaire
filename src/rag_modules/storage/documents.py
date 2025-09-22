@@ -267,7 +267,20 @@ class DocumentManager:
                         node.metadata['page'] = int(page_match.group(1))
 
             # Add to single index
-            self.index.insert_nodes(nodes)
+            if self.index is not None:
+                self.index.insert_nodes(nodes)
+            else:
+                # Initialize index if not present
+                logger.warning("Index not initialized, attempting to create index")
+                if self.vector_store_type == "qdrant":
+                    self.index = self._init_qdrant_indexes()
+                else:
+                    self.index = self._init_local_index()
+
+                if self.index is not None:
+                    self.index.insert_nodes(nodes)
+                else:
+                    raise ValueError("Failed to initialize index for document insertion")
 
             # Update BM25 index for hybrid search
             self._update_whoosh_index(nodes)
@@ -721,6 +734,29 @@ class DocumentManager:
                 logger.info(f"Created Qdrant collection: {self.collection_name}")
             else:
                 logger.info(f"Using existing Qdrant collection: {self.collection_name}")
+
+            # Create and return VectorStoreIndex with Qdrant
+            from llama_index.core import VectorStoreIndex, StorageContext
+            from llama_index.vector_stores.qdrant import QdrantVectorStore
+
+            vector_store = QdrantVectorStore(
+                client=self.qdrant_client,
+                collection_name=self.collection_name
+            )
+
+            storage_context = StorageContext.from_defaults(
+                vector_store=vector_store
+            )
+
+            # Create index with the storage context
+            self.index = VectorStoreIndex.from_documents(
+                documents=[],  # Start with empty documents
+                storage_context=storage_context
+            )
+
+            logger.info(f"Created VectorStoreIndex for Qdrant collection: {self.collection_name}")
+            return self.index
+
         except Exception as e:
             logger.error(f"Failed to initialize Qdrant indexes: {str(e)}")
             raise
@@ -728,10 +764,12 @@ class DocumentManager:
     def _init_local_index(self):
         """Initialize local vector store as fallback"""
         # Create a simple in-memory vector store
+        from llama_index.core import VectorStoreIndex
         self.index = VectorStoreIndex(
             nodes=[]
         )
         logger.info("Initialized local vector store")
+        return self.index
 
 
 def create_document_manager(
