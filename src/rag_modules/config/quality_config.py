@@ -122,20 +122,23 @@ class QualityConfig:
 
     def get_embedding_model(self) -> str:
         """Get primary embedding model name."""
-        return self.get_model_name("primary_embedding")
+        return self.config.get("models", {}).get("embedding", {}).get("name", "all-MiniLM-L6-v2")
 
     def get_llm_model(self) -> str:
         """Get primary LLM model name."""
-        return self.get_model_name("primary_llm")
+        return self.config.get("models", {}).get("llm", {}).get("name", "gpt-4o-mini")
 
     def get_advanced_llm_model(self) -> str:
         """Get advanced LLM model name for complex tasks."""
-        return self.get_model_name("advanced_llm")
+        return self.config.get("models", {}).get("advanced_llm", {}).get("name", "gpt-4o")
 
     def get_model_params(self, model_type: str) -> Dict[str, Any]:
         """Get parameters for specific model type."""
-        model_params = self.config.get("models", {}).get(f"{model_type}_params", {})
-        return model_params
+        model_config = self.config.get("models", {}).get(model_type, {})
+        if isinstance(model_config, dict):
+            # Return all params except 'name'
+            return {k: v for k, v in model_config.items() if k != 'name'}
+        return {}
 
     # Weight Configuration
     def get_validation_weights(self, component: str = "grounding_validation") -> Dict[str, float]:

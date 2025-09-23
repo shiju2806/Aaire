@@ -477,7 +477,7 @@ class DocumentManager:
                             "job_id": point.payload.get("job_id", "No job_id"),
                             "doc_type": point.payload.get("doc_type", "Unknown"),
                             "added_at": point.payload.get("added_at", "Unknown"),
-                            "text_preview": point.payload.get("text", "")[:100] + "..." if point.payload.get("text") else ""
+                            "text_preview": self._extract_text_content(point.payload)[:100] + "..." if self._extract_text_content(point.payload) else ""
                         })
 
             return {
@@ -493,6 +493,30 @@ class DocumentManager:
                 "status": "error",
                 "error": str(e)
             }
+
+    def _extract_text_content(self, payload):
+        """Extract text content from Qdrant payload, handling JSON structure properly."""
+        import json
+
+        # Try direct text field first
+        if payload.get('text'):
+            return payload.get('text')
+        if payload.get('content'):
+            return payload.get('content')
+
+        # Handle _node_content JSON structure
+        if payload.get('_node_content'):
+            try:
+                if isinstance(payload['_node_content'], str):
+                    node_data = json.loads(payload['_node_content'])
+                    return node_data.get('text', '')
+                elif isinstance(payload['_node_content'], dict):
+                    return payload['_node_content'].get('text', '')
+            except (json.JSONDecodeError, AttributeError):
+                pass
+
+        # Fallback to string representation
+        return str(payload)
 
     def _sample_document_for_metadata(self, doc_text: str, filename: str) -> str:
         """

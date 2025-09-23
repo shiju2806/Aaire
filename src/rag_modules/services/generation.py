@@ -22,7 +22,7 @@ class ResponseGenerator:
     """Handles response generation with various processing modes"""
 
     def __init__(self, llm_client=None, async_client=None, memory_manager=None,
-                 formatting_manager=None, query_analyzer=None, config=None):
+                 formatting_manager=None, query_analyzer=None, config=None, grounding_validator=None):
         """Initialize generator with required components"""
         self.llm = llm_client
         self.async_client = async_client
@@ -30,6 +30,7 @@ class ResponseGenerator:
         self.formatting_manager = formatting_manager
         self.query_analyzer = query_analyzer
         self.config = config or {}
+        self.grounding_validator = grounding_validator
 
         # Extract model name from config
         self.actual_model = self.config.get('llm_config', {}).get('model', 'gpt-4o-mini')
@@ -199,75 +200,74 @@ CONTENT REQUIREMENTS:
 - Convert complex mathematical notation to readable text format only when present in documents
 
 FORMATTING REQUIREMENTS:
-- Use proper markdown formatting with headers: # for main sections, ## for subsections
-- Use numbered lists (1., 2., 3.) with proper line breaks
-- Use bullet points (-) for sub-items
+- Use clean, professional formatting without markdown symbols
+- Use numbered sections: "1. Section Title" (no bold, no markdown)
+- Use numbered subsections: "1.1 Subsection Title"
+- Use bullet points (•) for lists
 - Keep mathematical formulas and expressions clear and readable
-- Use **bold** only for emphasis within text, not for headers
-- Ensure proper spacing between sections and lists
+- Use proper spacing between sections and lists
+- Avoid complex markdown - focus on clean, readable text
 
-Structure your response to systematically cover only the topics found in the source material using clear markdown formatting."""
+Structure your response to systematically cover only the topics found in the source material using clean, professional formatting."""
 
         response = self.llm.complete(prompt)
         return response.text.strip()
 
     async def generate_chunked_response(self, query: str, documents: List[Dict], conversation_context: str) -> str:
-        """Generate response using semantic chunking for large document sets"""
+        """Generate response using smart continuation for seamless formatting"""
         # Create semantic groups
         document_groups = self.create_semantic_document_groups(documents)
+
+        # Create smart section plan to avoid numbering conflicts
+        section_plan = self.create_section_plan(query, document_groups)
+
         response_parts = []
 
         # Process all groups in parallel using async for faster response
-        async def process_group_async(group_index: int, doc_group: List[Dict]) -> str:
+        async def process_group_async(group_index: int, doc_group: List[Dict], section_info: Dict) -> str:
             group_context = "\n\n".join([doc['content'] for doc in doc_group])
 
             group_prompt = f"""You are answering: {query}
 
-This is document group {group_index} of {len(document_groups)}. Focus on these documents:
+Focus area: {section_info['focus_area']}
+Your section in the overall response: {section_info['section_title']}
 
+Document content:
 {group_context}
 
 🚨 CRITICAL CONSTRAINT: ONLY use information explicitly stated in the provided documents above.
 
-IMPORTANT: If these documents do not contain ANY information relevant to the query, simply return "SKIP" - do not create empty sections or explanatory text.
+IMPORTANT: If these documents do not contain ANY information relevant to the query, simply return "SKIP" - do not create empty sections.
 
-DO NOT use your general knowledge, training data, or external information beyond what is explicitly stated in these documents.
+SMART CONTINUATION FORMATTING:
+- START your main section numbering at: {section_info['start_section']}
+- Your section title should be: "{section_info['section_title']}"
+- Continue subsection numbering from there ({section_info['start_section']}.1, {section_info['start_section']}.2, etc.)
 
-CONTENT REQUIREMENTS:
-- ONLY include information directly found in the provided documents
-- Copy EXACT formulas, calculations, and mathematical expressions from documents
-- Preserve specific numerical values exactly as stated (90%, $2.50 per $1,000, etc.)
-- Include calculation methods and procedures ONLY if present in documents
-- If documents contain partial information, clearly state what is present vs. missing
+EXACT FORMAT TO USE:
+{section_info['start_section']}. {section_info['section_title']}
 
-FORMATTING REQUIREMENTS:
-- Follow this EXACT structure pattern:
+Content paragraph with specific details from documents.
 
-**1. Main Section Title**
+{section_info['start_section']}.1 First Subsection
 
-Content paragraph with details.
+• Specific detail from documents
+• Another specific detail
+• Third specific detail
 
-**1.1 Subsection Title**
-
-- Bullet point item
-- Another bullet point
-- Third bullet point
-
-**2. Next Main Section**
+{section_info['start_section']}.2 Second Subsection (if needed)
 
 More content here.
 
-CRITICAL FORMATTING RULES:
-- Main headings: **1. Title**, **2. Title**, **3. Title** (consistent numbering)
-- Sub-headings: **1.1 Title**, **1.2 Title** (consistent sub-numbering)
-- NEVER use random ** mid-sentence or inconsistent bold patterns
-- NEVER create orphaned dashes like ":\n-\n" - always use complete bullet points
-- NEVER end with random asterisks or incomplete formatting
-- Always double line break between sections
-- Write formulas clearly: use simple notation like (A + B)/C
-- End every section with blank line for readability
+CRITICAL RULES:
+- START numbering at {section_info['start_section']} (not 1)
+- NO "## Section" headers or markdown symbols
+- Use bullet points (•) for lists
+- Write formulas clearly: use notation like (A + B)/C
+- Only include information directly found in documents
+- Double line break between sections
 
-Provide a detailed response covering ONLY information that relates to the question AND is present in these documents using proper markdown formatting."""
+Provide your part of the response using the exact numbering specified above."""
 
             # Calculate dynamic max_tokens for this specific group/query
             dynamic_max_tokens = self.calculate_dynamic_max_tokens(query, len(doc_group))
@@ -283,23 +283,79 @@ Provide a detailed response covering ONLY information that relates to the questi
             logger.info(f"⚡ Processed group {group_index}/{len(document_groups)} (async)")
             return response.choices[0].message.content.strip()
 
-        # Process all groups concurrently using asyncio.gather for true parallelism
-        logger.info(f"⚡ Starting parallel processing of {len(document_groups)} groups with AsyncOpenAI")
+        # Process all groups concurrently with smart continuation
+        logger.info(f"⚡ Starting parallel processing of {len(document_groups)} groups with smart continuation")
         response_parts = await asyncio.gather(*[
-            process_group_async(i+1, doc_group)
+            process_group_async(i, doc_group, section_plan[i])
             for i, doc_group in enumerate(document_groups)
         ])
 
-        # Temporarily disable structured JSON approach - has parsing issues
-        # TODO: Fix JSON parsing and markdown conversion in structured approach
-        logger.info("📋 Using enhanced chunked response approach")
+        # Smart joining - no ugly section headers needed!
+        logger.info("✨ Using smart continuation approach - seamless formatting")
+        cleaned_parts = []
+        for part in response_parts:
+            if part and part.strip().upper() != "SKIP" and len(part.strip()) > 50:
+                cleaned_parts.append(part.strip())
 
-        # Fallback to existing chunked approach
-        # Merge all parts
-        merged_response = self.merge_response_parts(query, response_parts)
+        if not cleaned_parts:
+            return "I don't have sufficient information in the uploaded documents to provide a comprehensive answer to this question."
 
-        # Apply basic normalization only (no heavy post-processing since structured failed)
-        return self.formatting_manager.normalize_spacing(merged_response)
+        # Simple clean joining - each part already has correct numbering
+        final_response = "\n\n".join(cleaned_parts)
+
+        # Apply grounding validation if available
+        if self.grounding_validator:
+            validated_response = self._validate_response_grounding(final_response, documents)
+            if validated_response != final_response:
+                final_response = validated_response
+
+        # Light formatting cleanup only
+        return self.formatting_manager.normalize_spacing(final_response)
+
+    def create_section_plan(self, query: str, document_groups: List[List[Dict]]) -> List[Dict]:
+        """Create smart section plan to avoid numbering conflicts"""
+
+        # Analyze query to determine logical section structure
+        query_lower = query.lower()
+
+        if "reserve" in query_lower and "liability" in query_lower:
+            # Reserve and liability query
+            base_sections = ["Reserve Calculation", "Liability Assessment", "Implementation Guidelines"]
+        elif "reserve" in query_lower:
+            # Reserve-focused query
+            base_sections = ["Reserve Methodology", "Calculation Approach", "Practical Application"]
+        elif "liability" in query_lower:
+            # Liability-focused query
+            base_sections = ["Liability Components", "Valuation Methods", "Documentation Requirements"]
+        elif "actuarial" in query_lower:
+            # Actuarial query
+            base_sections = ["Actuarial Principles", "Mathematical Models", "Implementation"]
+        elif "accounting" in query_lower:
+            # Accounting query
+            base_sections = ["Accounting Treatment", "Financial Reporting", "Compliance Requirements"]
+        else:
+            # Generic analysis
+            base_sections = ["Key Concepts", "Detailed Analysis", "Practical Considerations"]
+
+        # Create section plan matching actual document groups
+        section_plan = []
+        for i, group in enumerate(document_groups):
+            if i < len(base_sections):
+                section_title = base_sections[i]
+                focus_area = section_title.lower().replace(" ", " ")
+            else:
+                # Fallback for extra groups
+                section_title = f"Additional Analysis {i - len(base_sections) + 1}"
+                focus_area = "additional relevant information"
+
+            section_plan.append({
+                "start_section": i + 1,
+                "section_title": section_title,
+                "focus_area": focus_area
+            })
+
+        logger.info(f"📋 Created section plan: {[s['section_title'] for s in section_plan]}")
+        return section_plan
 
     def filter_relevant_documents(self, documents: List[Dict]) -> List[Dict]:
         """Pre-filter documents to only include those with substantial relevant content"""
@@ -423,44 +479,9 @@ Group documents:"""
             # Fallback to single group for simplicity
             return [documents]
 
-    def merge_response_parts(self, query: str, response_parts: List[str]) -> str:
-        """Merge multiple response parts into a coherent final response"""
-        try:
-            # Filter out empty, very short parts, and SKIP responses
-            valid_parts = []
-            for part in response_parts:
-                if part and len(part.strip()) > 10:
-                    part_content = part.strip()
-                    # Skip responses that are just "SKIP" or very short
-                    if part_content.upper() != "SKIP" and len(part_content) > self.min_response_part_length:
-                        valid_parts.append(part_content)
-
-            if not valid_parts:
-                return "I apologize, but I couldn't generate a comprehensive response based on the available documents."
-
-            # If only one valid part, return it directly
-            if len(valid_parts) == 1:
-                return valid_parts[0].strip()
-
-            # Combine multiple parts with proper sectioning
-            merged_sections = []
-            for i, part in enumerate(valid_parts, 1):
-                # Clean up the part
-                cleaned_part = part.strip()
-
-                # Add section header if multiple parts
-                if len(valid_parts) > 1:
-                    section_header = f"## Section {i}\n\n"
-                    merged_sections.append(section_header + cleaned_part)
-                else:
-                    merged_sections.append(cleaned_part)
-
-            return "\n\n".join(merged_sections)
-
-        except Exception as e:
-            logger.error(f"Failed to merge response parts: {e}")
-            # Fallback: just join the parts
-            return "\n\n".join(response_parts)
+    # REMOVED: merge_response_parts method - replaced with smart continuation approach
+    # The old method added ugly "## Section N" headers that destroyed formatting
+    # New approach uses pre-planned section numbering for seamless flow
 
     def assess_response_quality(self, response: str, query: str, documents: List[Dict]) -> Dict[str, float]:
         """Score response quality on multiple dimensions"""
@@ -967,9 +988,42 @@ Generate exactly 2-3 contextual follow-up questions that dig deeper into the spe
                 "How does this relate to our previous discussion?"
             ]
 
+    def _validate_response_grounding(self, response: str, documents: List[Dict]) -> str:
+        """
+        Validate response grounding using enhanced grounding validator.
+        Returns validated response or warning message if claims are ungrounded.
+        """
+        try:
+            validation_result = self.grounding_validator.validate_response_grounding(
+                response, documents
+            )
+
+            if not validation_result.is_grounded:
+                logger.warning("Response failed grounding validation",
+                             grounding_score=validation_result.grounding_score,
+                             ungrounded_claims=len(validation_result.ungrounded_claims))
+
+                # In strict mode, add warning about potentially ungrounded content
+                if validation_result.detailed_feedback and validation_result.ungrounded_claims:
+                    warning_msg = (
+                        "\n\n⚠️ **Validation Notice**: Some claims in this response may not be "
+                        "fully supported by the provided documents. Please verify the following "
+                        f"information: {', '.join(validation_result.ungrounded_claims[:3])}"
+                    )
+                    return response + warning_msg
+
+            logger.info("Response passed grounding validation",
+                       grounding_score=validation_result.grounding_score,
+                       confidence=validation_result.confidence)
+            return response
+
+        except Exception as e:
+            logger.error("Failed to validate response grounding", error=str(e))
+            return response
+
 
 def create_response_generator(llm_client=None, async_client=None, memory_manager=None,
-                            formatting_manager=None, query_analyzer=None, config=None):
+                            formatting_manager=None, query_analyzer=None, config=None, grounding_validator=None):
     """Factory function to create a ResponseGenerator instance"""
     return ResponseGenerator(
         llm_client=llm_client,
@@ -977,5 +1031,6 @@ def create_response_generator(llm_client=None, async_client=None, memory_manager
         memory_manager=memory_manager,
         formatting_manager=formatting_manager,
         query_analyzer=query_analyzer,
-        config=config
+        config=config,
+        grounding_validator=grounding_validator
     )

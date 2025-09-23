@@ -25,23 +25,28 @@ class FormattingManager:
     RAG pipeline to provide clean, professional text formatting and presentation.
     """
 
-    def __init__(self, llm_client: Optional[Any] = None, llm_model: str = "gpt-4o-mini"):
+    def __init__(self, llm_client: Optional[Any] = None, llm_model: str = "gpt-4o-mini", config: Optional[Dict] = None):
         """
         Initialize the FormattingManager.
 
         Args:
             llm_client: OpenAI client instance for LLM operations
             llm_model: Model name to use for LLM-based formatting operations
+            config: Configuration dictionary for formatting parameters
         """
+        from ..core.dependency_injection import get_container
+
+        # Use dependency injection if no client provided
+        if llm_client is None:
+            container = get_container()
+            llm_client = container.get('llm_client')
+
         self.llm_client = llm_client
         self.llm_model = llm_model
+        self.config = config or {}
 
-        # Create a dedicated formatting LLM instance
-        self.formatting_llm = OpenAI(
-            model="gpt-4o-mini",
-            temperature=0,
-            max_tokens=4000
-        )
+        # Use injected client instead of creating hardcoded one
+        self.formatting_llm = llm_client
 
         # Initialize compiled regex patterns for performance
         self._compiled_patterns = None
@@ -699,15 +704,16 @@ FORMATTED RESULT:"""
         return result.strip()
 
 
-def create_formatting_manager(llm_client: Optional[Any] = None, llm_model: str = "gpt-4o-mini") -> FormattingManager:
+def create_formatting_manager(llm_client: Optional[Any] = None, llm_model: str = "gpt-4o-mini", config: Optional[Dict] = None) -> FormattingManager:
     """
     Factory function to create a FormattingManager instance.
 
     Args:
         llm_client: OpenAI client instance for LLM operations
         llm_model: Model name to use for LLM-based formatting operations
+        config: Configuration dictionary for formatting parameters
 
     Returns:
         FormattingManager: Configured formatting manager instance
     """
-    return FormattingManager(llm_client=llm_client, llm_model=llm_model)
+    return FormattingManager(llm_client=llm_client, llm_model=llm_model, config=config)
