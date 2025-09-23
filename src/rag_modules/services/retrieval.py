@@ -54,7 +54,8 @@ class DocumentRetriever:
 
     async def retrieve_documents(self, query: str, doc_type_filter: Optional[List[str]],
                                similarity_threshold: Optional[float] = None,
-                               filters: Optional[Dict[str, Any]] = None) -> List[Dict]:
+                               filters: Optional[Dict[str, Any]] = None,
+                               query_intent: Optional[Any] = None) -> List[Dict]:
         """Hybrid retrieval: combines vector search with BM25 keyword search using buffer approach"""
 
         # Analyze query intent for smart filtering
@@ -105,7 +106,7 @@ class DocumentRetriever:
             self.vector_search(query, doc_type_filter, similarity_threshold, filters, buffer_limit=doc_limit)
         )
         keyword_task = asyncio.create_task(
-            self.keyword_search(query, doc_type_filter, filters, buffer_limit=doc_limit)
+            self.keyword_search(query, doc_type_filter, filters, buffer_limit=doc_limit, query_intent=query_intent)
         )
         vector_results, keyword_results = await asyncio.gather(vector_task, keyword_task)
 
@@ -261,7 +262,8 @@ class DocumentRetriever:
 
     async def keyword_search(self, query: str, doc_type_filter: Optional[List[str]],
                            filters: Optional[Dict[str, Any]] = None,
-                           buffer_limit: Optional[int] = None) -> List[Dict]:
+                           buffer_limit: Optional[int] = None,
+                           query_intent: Optional[Any] = None) -> List[Dict]:
         """Whoosh-based keyword search"""
         results = []
 
@@ -279,8 +281,8 @@ class DocumentRetriever:
                 # For standalone search, allocate 30% to keyword search
                 keyword_limit = int(doc_limit * 0.3)
 
-            # Convert filters to Whoosh format
-            whoosh_filters = self.convert_filters_for_whoosh(filters, doc_type_filter)
+            # Convert filters to Whoosh format, including query intent
+            whoosh_filters = self.convert_filters_for_whoosh(filters, doc_type_filter, query_intent)
 
             # Use original query - let Whoosh handle parsing intelligently
             search_query = query
@@ -317,12 +319,41 @@ class DocumentRetriever:
         return results
 
     def convert_filters_for_whoosh(self, filters: Optional[Dict[str, Any]],
-                                 doc_type_filter: Optional[List[str]]) -> Optional[Dict[str, Any]]:
-        """Convert RAG pipeline filters to Whoosh filter format"""
-        if not filters and not doc_type_filter:
+                                 doc_type_filter: Optional[List[str]],
+                                 query_intent: Optional[Any] = None) -> Optional[Dict[str, Any]]:
+        """Convert RAG pipeline filters to Whoosh filter format with query intent"""
+        if not filters and not doc_type_filter and not query_intent:
             return None
 
         whoosh_filters = {}
+
+        # Add query intent filters if available
+        if query_intent:
+            intent_filters = []
+
+            # Add jurisdiction filter
+            if hasattr(query_intent, 'jurisdiction_hint') and query_intent.jurisdiction_hint:
+                jurisdiction_value = query_intent.jurisdiction_hint.value if hasattr(query_intent.jurisdiction_hint, 'value') else str(query_intent.jurisdiction_hint)
+                if jurisdiction_value != 'unknown':
+                    intent_filters.append({
+                        'field': 'jurisdiction',
+                        'value': jurisdiction_value
+                    })
+                    logger.info(f"Adding jurisdiction filter: {jurisdiction_value}")
+
+            # Add product type filter
+            if hasattr(query_intent, 'product_hint') and query_intent.product_hint:
+                product_value = query_intent.product_hint.value if hasattr(query_intent.product_hint, 'value') else str(query_intent.product_hint)
+                if product_value != 'unknown':
+                    intent_filters.append({
+                        'field': 'product_type',
+                        'value': product_value
+                    })
+                    logger.info(f"Adding product type filter: {product_value}")
+
+            # Add intent filters to whoosh_filters in the expected format
+            if intent_filters:
+                whoosh_filters['filters'] = intent_filters
 
         if filters:
             # Handle primary_framework filter (most important for smart metadata)

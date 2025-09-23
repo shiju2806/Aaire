@@ -89,9 +89,13 @@ class QualityMetricsService(ServiceMixin):
         Returns:
             Integer document limit
         """
-        # Get base limits from configuration
-        base_limit = self._config.get_threshold('document_limit_base')
-        max_limit = self._config.get_threshold('document_limit_max')
+        # Get base limits from configuration with proper defaults for document limits
+        # These should be integers, not floats like similarity thresholds
+        # Handle nested config structure: quality_validation.thresholds.document_limit_base
+        quality_section = self._config.config.get("quality_validation", {})
+        thresholds = quality_section.get("thresholds", {})
+        base_limit = int(thresholds.get("document_limit_base", 10))
+        max_limit = int(thresholds.get("document_limit_max", 20))
 
         query_length = len(query.split())
 

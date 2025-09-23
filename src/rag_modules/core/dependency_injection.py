@@ -57,7 +57,13 @@ class ServiceContainer:
             'validation_service': self._create_validation_service,
 
             # Enhanced retrieval services
-            'reflective_retriever': self._create_reflective_retriever
+            'reflective_retriever': self._create_reflective_retriever,
+
+            # Formatting services
+            'formatting_manager': self._create_formatting_manager,
+
+            # Enhanced grounding validation
+            'enhanced_grounding_validator': self._create_enhanced_grounding_validator
         })
 
     def register_factory(self, service_name: str, factory: Callable[[], T]):
@@ -156,10 +162,11 @@ class ServiceContainer:
         """Create semantic alignment validator with configuration."""
         from ..quality.semantic_alignment_validator import SemanticAlignmentValidator
 
+        # Get embedding model name from configuration
+        embedding_model_name = self.config.get_model_params('embedding').get('name', 'all-MiniLM-L6-v2')
+
         validator = SemanticAlignmentValidator(
-            config=self.config,
-            embedding_model=self.get_singleton('embedding_model'),
-            llm_client=self.get_singleton('llm_client')
+            model_name=embedding_model_name
         )
 
         logger.info("Semantic alignment validator created")
@@ -230,10 +237,30 @@ class ServiceContainer:
         return None
 
     def _create_response_generator(self):
-        """Create response generator service."""
-        # Implementation would depend on your response generation system
-        logger.info("Response generator placeholder created")
-        return None
+        """Create response generator service with full dependency injection."""
+        try:
+            from ..services.generation import create_response_generator
+
+            # Get required dependencies
+            llm_client = self.get_singleton('llm_client')
+            async_client = self.get_singleton('async_llm_client')
+            formatting_manager = self.get_singleton('formatting_manager')
+            grounding_validator = self.get_singleton('enhanced_grounding_validator')
+
+            # Create response generator with all dependencies
+            generator = create_response_generator(
+                llm_client=llm_client,
+                async_client=async_client,
+                formatting_manager=formatting_manager,
+                grounding_validator=grounding_validator,
+                config=self.config.config
+            )
+
+            logger.info("Response generator created with grounding validation")
+            return generator
+        except Exception as e:
+            logger.error("Failed to create response generator", error=str(e))
+            return None
 
     def _create_response_formatter(self):
         """Create response formatter service."""
@@ -273,6 +300,42 @@ class ServiceContainer:
             return create_reflective_retriever(base_retriever, llm_client, self.config.config)
         except Exception as e:
             logger.error("Failed to create reflective retriever", error=str(e))
+            return None
+
+    def _create_formatting_manager(self):
+        """Create formatting manager with dependency injection."""
+        try:
+            from ..formatting.manager import FormattingManager
+
+            # Get LLM client from dependency injection
+            llm_client = self.get_singleton('llm_client')
+
+            # Use configuration from quality config
+            formatting_config = self.config.config.get('formatting', {})
+
+            formatter = FormattingManager(
+                llm_client=llm_client,
+                llm_model=self.config.get_llm_model(),
+                config=formatting_config
+            )
+
+            logger.info("Formatting manager created")
+            return formatter
+        except Exception as e:
+            logger.error("Failed to create formatting manager", error=str(e))
+            return None
+
+    def _create_enhanced_grounding_validator(self):
+        """Create enhanced grounding validator for hallucination detection."""
+        try:
+            from ..quality.enhanced_grounding_validator import EnhancedGroundingValidator
+
+            validator = EnhancedGroundingValidator(config=self.config)
+
+            logger.info("Enhanced grounding validator created")
+            return validator
+        except Exception as e:
+            logger.error("Failed to create enhanced grounding validator", error=str(e))
             return None
 
     # Utility methods

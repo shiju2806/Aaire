@@ -17,7 +17,8 @@ import re
 import json
 import numpy as np
 from collections import defaultdict
-from .whoosh_search_engine import WhooshSearchEngine, SearchResult
+from src.enhanced_whoosh_engine import EnhancedWhooshEngine, EnhancedSearchResult
+from src.intelligent_query_analyzer import IntelligentQueryAnalyzer, QueryIntent, JurisdictionHint, ProductHint
 
 # LlamaIndex imports - current version structure  
 from llama_index.core import (
@@ -48,26 +49,26 @@ except ImportError:
 
 import redis
 import structlog
-from .relevance_engine import RelevanceEngine
-from .extraction.bridge_adapter import IntelligentDocumentExtractor
-from .enhanced_query_handler import EnhancedQueryHandler
-from .conversation_memory import ConversationMemoryManager
-from .extraction.document_processing_adapter import DocumentProcessingAdapter
-from .extraction.models import QueryIntent, LegacyDocumentMetadata as DocumentMetadata
+from src.relevance_engine import RelevanceEngine
+from extraction.bridge_adapter import IntelligentDocumentExtractor
+from enhanced_query_handler import EnhancedQueryHandler
+from conversation_memory import ConversationMemoryManager
+from extraction.document_processing_adapter import DocumentProcessingAdapter
+from extraction.models import QueryIntent, LegacyDocumentMetadata as DocumentMetadata
 
 # Import modular components
-from .rag_modules.core.response import RAGResponse
-from .rag_modules.analysis.citations import CitationAnalyzer
-from .rag_modules.cache.manager import CacheManager
-from .rag_modules.formatting import FormattingManager, create_formatting_manager
-from .rag_modules.query import QueryAnalyzer, create_query_analyzer
-from .rag_modules.quality import QualityMetricsManager, create_quality_metrics_manager, create_intelligent_validator
-from .rag_modules.services import DocumentRetriever, create_document_retriever
-from .rag_modules.services import ResponseGenerator, create_response_generator
-from .rag_modules.storage import DocumentManager, create_document_manager
+from rag_modules.core.response import RAGResponse
+from rag_modules.analysis.citations import CitationAnalyzer
+from rag_modules.cache.manager import CacheManager
+from rag_modules.formatting import FormattingManager, create_formatting_manager
+from rag_modules.query import QueryAnalyzer, create_query_analyzer
+# Quality services now handled via dependency injection
+from rag_modules.services import DocumentRetriever, create_document_retriever
+from rag_modules.services import ResponseGenerator, create_response_generator
+from rag_modules.storage import DocumentManager, create_document_manager
 
 # Import enhanced modules
-from .rag_modules.enhanced_pipeline import EnhancedRAGPipeline
+from rag_modules.enhanced_pipeline import EnhancedRAGPipeline
 
 logger = structlog.get_logger()
 
@@ -189,13 +190,18 @@ class RAGPipeline:
         self.citation_analyzer = CitationAnalyzer()
         self.cache_manager = CacheManager(self.cache)
 
-        # Initialize new extracted modules
-        self.formatting_manager = create_formatting_manager(llm_client=self.llm)
+        # Initialize new extracted modules using dependency injection
+        from rag_modules.core.dependency_injection import get_container
+        container = get_container()
+        self.formatting_manager = container.get_singleton('formatting_manager')
         self.query_analyzer = create_query_analyzer(llm=self.llm)
-        self.quality_metrics_manager = create_quality_metrics_manager(self.config.get('retrieval_config', {}))
 
-        # Initialize intelligent validation system
-        self.intelligent_validator = create_intelligent_validator(self.config)
+        # Initialize intelligent query analyzer for jurisdiction/product awareness
+        self.intelligent_query_analyzer = IntelligentQueryAnalyzer()
+
+        # Initialize quality services via dependency injection
+        self.quality_metrics_service = container.get_singleton('quality_metrics_service')
+        self.validation_service = container.get_singleton('validation_service')
 
         # Initialize Phase 3 services modules (index will be set later)
         self.document_retriever = create_document_retriever(
@@ -203,7 +209,7 @@ class RAGPipeline:
             whoosh_engine=self.whoosh_engine,
             relevance_engine=self.relevance_engine,
             metadata_analyzer=self.metadata_analyzer,
-            quality_metrics_manager=self.quality_metrics_manager,
+            quality_metrics_manager=self.quality_metrics_service,
             config=self.config,
             llm_client=self.async_client  # Pass LLM client for framework detection
         )
@@ -324,11 +330,10 @@ class RAGPipeline:
     def _init_hybrid_search(self):
         """Initialize Whoosh keyword search for hybrid retrieval"""
         try:
-            # Initialize Whoosh search engine
-            self.whoosh_engine = WhooshSearchEngine(
-                index_dir="search_index",
-                analyzer_type="stemming",
-                max_memory_mb=256
+            # Initialize Enhanced Whoosh search engine with jurisdiction/product awareness
+            from pathlib import Path
+            self.whoosh_engine = EnhancedWhooshEngine(
+                index_dir=Path("enhanced_search_index")
             )
             self.keyword_search_ready = False
             logger.info("✅ Whoosh search engine initialized")
@@ -337,7 +342,7 @@ class RAGPipeline:
             import threading
             self.backfill_thread = threading.Thread(
                 target=self._populate_whoosh_from_existing_documents,
-                daemon=True
+                daemon=False  # Changed from True to ensure proper completion
             )
             self.backfill_thread.start()
             logger.info("🚀 Whoosh backfill started in background")
@@ -385,15 +390,32 @@ class RAGPipeline:
                     for point in points:
                         payload = point.payload
 
-                        # Extract text content (try different field names)
-                        text_content = (
-                            payload.get('text') or
-                            payload.get('content') or
-                            payload.get('_node_content') or
-                            str(payload)
-                        )
+                        # Extract text content with proper JSON parsing for _node_content
+                        def extract_text_content(payload):
+                            import json
+                            # Try direct text fields first
+                            if payload.get('text'):
+                                return payload.get('text')
+                            if payload.get('content'):
+                                return payload.get('content')
+
+                            # Handle _node_content JSON field
+                            if payload.get('_node_content'):
+                                try:
+                                    if isinstance(payload['_node_content'], str):
+                                        node_data = json.loads(payload['_node_content'])
+                                        return node_data.get('text', '')
+                                    elif isinstance(payload['_node_content'], dict):
+                                        return payload['_node_content'].get('text', '')
+                                except (json.JSONDecodeError, AttributeError):
+                                    pass
+
+                            return str(payload)
+
+                        text_content = extract_text_content(payload)
 
                         if text_content and len(text_content.strip()) > 10:  # Only meaningful content
+                            logger.debug(f"🔍 WHOOSH DEBUG: Adding document {str(point.id)[:8]}... with {len(text_content)} chars")
                             # Convert to Whoosh document format
                             whoosh_doc = {
                                 'doc_id': str(point.id),
@@ -418,9 +440,11 @@ class RAGPipeline:
 
                     # Index batch in Whoosh
                     if batch_docs:
+                        logger.debug(f"🔍 WHOOSH DEBUG: Attempting to index {len(batch_docs)} documents")
                         indexed_count = self.whoosh_engine.add_documents(batch_docs, batch_processing=True)
                         documents_processed += indexed_count
                         logger.info(f"📄 Indexed {documents_processed} documents in Whoosh...")
+                        logger.debug(f"🔍 WHOOSH DEBUG: Total docs in index now: {self.whoosh_engine.get_document_count()}")
 
                     # Update offset for next batch
                     offset = response[1]
@@ -431,6 +455,15 @@ class RAGPipeline:
                 except Exception as batch_error:
                     logger.error(f"Error processing Whoosh batch: {str(batch_error)}")
                     break
+
+            # Force final commit to ensure all documents are written to disk
+            if hasattr(self.whoosh_engine, 'index') and self.whoosh_engine.index:
+                try:
+                    with self.whoosh_engine.index.writer() as writer:
+                        writer.commit()
+                    logger.info("✅ Final Whoosh index commit successful")
+                except Exception as commit_error:
+                    logger.error(f"❌ Final commit failed: {commit_error}")
 
             logger.info(f"📚 Whoosh backfill completed: {documents_processed} documents indexed")
             logger.info("🎯 Hybrid search (vector + keyword) now available for ALL documents")
@@ -500,7 +533,7 @@ class RAGPipeline:
             expanded_query = self.query_analyzer.expand_query(query)
             
             # Get adaptive similarity threshold
-            similarity_threshold = self.quality_metrics_manager.get_similarity_threshold(query)
+            similarity_threshold = self.quality_metrics_service.get_similarity_threshold(query)
             
             # Store current query for citation filtering
             self._current_query = query
@@ -537,7 +570,7 @@ class RAGPipeline:
                 else:
                     citations = self.citation_analyzer.extract_citations(retrieved_docs, query, response)
 
-                confidence = self.quality_metrics_manager.calculate_confidence(retrieved_docs, response)
+                confidence = self.quality_metrics_service.calculate_confidence(retrieved_docs, response)
             else:
                 # No relevant documents found - check if this could be relevant general knowledge
                 is_general_query = self.query_analyzer.is_general_knowledge_query(query)
@@ -593,11 +626,11 @@ class RAGPipeline:
             follow_up_questions = await self.response_generator.generate_follow_up_questions(query, response, retrieved_docs)
             
             # Calculate quality metrics
-            quality_metrics = self.quality_metrics_manager.calculate_quality_metrics(query, response, retrieved_docs, citations)
+            quality_metrics = self.quality_metrics_service.calculate_quality_metrics(query, response, retrieved_docs, citations)
 
             # Apply intelligent validation to the response
             try:
-                validation_result = await self.intelligent_validator.validate_response(
+                validation_result = await self.validation_service.validate_response(
                     query=query,
                     response=response,
                     retrieved_docs=retrieved_docs,
@@ -611,7 +644,7 @@ class RAGPipeline:
                     citations = []
                     confidence = 0.1
                     # Update quality metrics for the rejection
-                    quality_metrics = self.quality_metrics_manager.calculate_quality_metrics(query, response, [], [])
+                    quality_metrics = self.quality_metrics_service.calculate_quality_metrics(query, response, [], [])
 
                 # Add validation results to quality metrics
                 quality_metrics['intelligent_validation'] = {
@@ -659,6 +692,7 @@ class RAGPipeline:
         user_context: Optional[Dict[str, Any]] = None,
         session_id: Optional[str] = None,
         conversation_history: Optional[List[Dict]] = None,
+        query_intent: Optional[Any] = None,
         options: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
@@ -699,7 +733,7 @@ class RAGPipeline:
             async def base_retrieval_func(search_query: str) -> List[Dict]:
                 """Wrapper for existing retrieval system"""
                 # Get adaptive similarity threshold
-                similarity_threshold = self.quality_metrics_manager.get_similarity_threshold(search_query)
+                similarity_threshold = self.quality_metrics_service.get_similarity_threshold(search_query)
 
                 # Determine document type filter
                 doc_type_filter = self._get_doc_type_filter(filters)
@@ -707,9 +741,9 @@ class RAGPipeline:
                 # Expand query for better retrieval
                 expanded_query = self.query_analyzer.expand_query(search_query)
 
-                # Retrieve documents using existing system
+                # Retrieve documents using existing system with query intent
                 retrieved_docs = await self.document_retriever.retrieve_documents(
-                    expanded_query, doc_type_filter, similarity_threshold, filters
+                    expanded_query, doc_type_filter, similarity_threshold, filters, query_intent
                 )
 
                 # Convert to format expected by enhanced pipeline
@@ -995,10 +1029,15 @@ Group documents by content similarity:"""
     
     async def _generate_chunked_response(self, query: str, documents: List[Dict], conversation_context: str) -> str:
         """Generate response using semantic chunking for large document sets"""
+        # Delegate to ResponseGenerator for consistent formatting
+        if hasattr(self, 'response_generator') and self.response_generator:
+            return await self.response_generator.generate_chunked_response(query, documents, conversation_context)
+
+        # Fallback to local implementation if ResponseGenerator not available
         # Create semantic groups
         document_groups = self._create_semantic_document_groups(documents)
         response_parts = []
-        
+
         # Process all groups in parallel using async for faster response
         async def process_group_async(group_index: int, doc_group: List[Dict]) -> str:
             group_context = "\n\n".join([doc['content'] for doc in doc_group])
@@ -1009,32 +1048,35 @@ This is document group {group_index} of {len(document_groups)}. Focus on these d
 
 {group_context}
 
-FORMATTING REQUIREMENTS (write like ChatGPT):
-- Follow this EXACT structure pattern:
+FORMATTING REQUIREMENTS (write clean, professional responses):
+- Use numbered sections: 1. Section Title (no bold, no markdown)
+- Use numbered subsections: 1.1 Subsection Title
+- Use bullet points (•) for lists
+- Keep formatting clean and readable without markdown symbols
 
-**1. Main Section Title**
+EXAMPLE FORMAT:
+1. Main Section Title
 
-Content paragraph with details.
+Content paragraph with details from documents.
 
-**1.1 Subsection Title**
+1.1 Subsection Title
 
-- Bullet point item
-- Another bullet point
-- Third bullet point
+• First bullet point
+• Second bullet point
+• Third bullet point
 
-**2. Next Main Section**
+2. Next Main Section
 
 More content here.
 
 CRITICAL FORMATTING RULES:
-- Main headings: **1. Title**, **2. Title**, **3. Title** (consistent numbering)
-- Sub-headings: **1.1 Title**, **1.2 Title** (consistent sub-numbering)
-- NEVER use random ** mid-sentence or inconsistent bold patterns
-- NEVER create orphaned dashes like ":\n-\n" - always use complete bullet points
-- NEVER end with random asterisks or incomplete formatting
+- Main headings: 1. Title, 2. Title, 3. Title (clean numbering)
+- Sub-headings: 1.1 Title, 1.2 Title (clean sub-numbering)
+- Use bullet points (•) not dashes for lists
+- NO markdown symbols like ** or ###
 - Always double line break between sections
 - Write formulas clearly: use simple notation like (A + B)/C
-- End every section with blank line for readability
+- Keep everything clean and professional
 
 CONTENT REQUIREMENTS:
 - Include ALL relevant formulas, calculations, and mathematical expressions
@@ -1063,16 +1105,17 @@ Provide a detailed response covering all information that relates to the questio
             for i, doc_group in enumerate(document_groups)
         ])
         
-        # Temporarily disable structured JSON approach - has parsing issues
-        # TODO: Fix JSON parsing and markdown conversion in structured approach
-        logger.info("📋 Using enhanced chunked response approach")
-        
-        # Fallback to existing chunked approach
-        # Merge all parts
-        merged_response = self._merge_response_parts(query, response_parts)
-        
-        # Apply basic normalization only (no heavy post-processing since structured failed)
-        return self.formatting_manager.normalize_spacing(merged_response)
+        # Use smart continuation approach (clean joining - each part has proper formatting)
+        logger.info("📋 Using smart continuation approach for seamless formatting")
+
+        # Filter out empty parts and clean whitespace
+        cleaned_parts = [part.strip() for part in response_parts if part and part.strip()]
+
+        # Simple clean joining - each part already has correct numbering from ChatGPT-style prompts
+        final_response = "\n\n".join(cleaned_parts)
+
+        # Apply normalization for consistent spacing
+        return self.formatting_manager.normalize_spacing(final_response)
     
     
     async def clear_all_documents(self) -> Dict[str, Any]:
@@ -1426,7 +1469,7 @@ Use professional, precise language with specific details. Include relevant accou
         """
         try:
             # Import the enhanced components
-            from .extraction.bridge_adapter import IntelligentDocumentExtractor
+            from extraction.bridge_adapter import IntelligentDocumentExtractor
 
             # Initialize components
             query_handler = EnhancedQueryHandler(self.llm)
@@ -1436,7 +1479,17 @@ Use professional, precise language with specific details. Include relevant accou
                        query=query[:100], 
                        session_id=session_id)
             
-            # Step 1: Analyze query to determine processing strategy
+            # Step 1: Intelligent query analysis for jurisdiction/product awareness
+            query_intent = self.intelligent_query_analyzer.analyze_query(query)
+
+            logger.info("Query intent analysis completed",
+                       jurisdiction=query_intent.jurisdiction_hint.value,
+                       product=query_intent.product_hint.value,
+                       jurisdiction_confidence=query_intent.jurisdiction_confidence,
+                       product_confidence=query_intent.product_confidence,
+                       disambiguation_needed=query_intent.disambiguation_needed)
+
+            # Step 2: Analyze query to determine processing strategy
             routing_decision = await query_handler.route_query(query, user_context)
             
             logger.info("Query routing decision made",
@@ -1463,13 +1516,14 @@ Use professional, precise language with specific details. Include relevant accou
                         user_context=user_context,
                         session_id=session_id,
                         conversation_history=conversation_history,
+                        query_intent=query_intent,
                         options={}
                     )
 
                     # Convert enhanced response format to RAGResponse format
                     citations = []
                     if enhanced_response.get('documents'):
-                        from .models import Citation
+                        from models import Citation
                         for doc in enhanced_response['documents']:
                             citations.append(Citation(
                                 content=doc.get('content', ''),
@@ -1478,7 +1532,7 @@ Use professional, precise language with specific details. Include relevant accou
                             ))
 
                     # Create RAGResponse with enhanced metadata
-                    from .models import RAGResponse
+                    from models import RAGResponse
                     return RAGResponse(
                         answer=enhanced_response.get('response', ''),
                         citations=citations,
@@ -1773,7 +1827,7 @@ Return JSON with:
             # Also check for framework detection using LLM
             framework_detected = False
             try:
-                from .rag_modules.filtering import LLMFrameworkDetector
+                from rag_modules.filtering import LLMFrameworkDetector
                 detector = LLMFrameworkDetector(self.async_client)
                 framework_detection = await detector.detect_framework(query)
                 framework_detected = framework_detection.primary_framework is not None

@@ -1,0 +1,89 @@
+quality_validation:
+  environment: production
+
+  # Feature flags - configuration-driven, no hardcoding
+  features:
+    openai_alignment: true
+    semantic_validation: true
+    grounding_validation: true
+    adaptive_learning: true
+
+  # Thresholds - all configurable
+  thresholds:
+    # Similarity thresholds (floats)
+    semantic_alignment_minimum: 0.75
+    grounding_score_minimum: 0.70
+    semantic_confidence_minimum: 0.65
+    similarity_threshold_base: 0.70
+    similarity_threshold_min: 0.50
+    similarity_threshold_max: 0.90
+
+    # Document limits (integers) - restored for Universal Life coverage
+    document_limit_base: 20
+    document_limit_max: 30
+
+    # Adjustments
+    long_query_adjustment: -0.05
+    complex_query_adjustment: 0.05
+
+  # Grounding validation settings
+  grounding:
+    enabled: true
+    strict_mode: true
+    check_formulas: true
+    check_numbers: true
+    check_specific_claims: true
+    min_evidence_threshold: 0.70
+
+  # Response validation
+  response_validation:
+    enabled: true
+    check_citations: true
+    verify_facts: true
+    detect_hallucinations: true
+
+  # Formatting configuration
+  formatting:
+    style: "clean_professional"
+    use_markdown: false
+    numbering_style: "hierarchical"
+    bullet_style: "bullet_point"
+
+  # Dynamic phrase detection configuration
+  phrase_detection:
+    min_phrase_frequency: 3
+    min_confidence: 0.6
+    enable_corpus_learning: true
+    enable_query_learning: true
+
+  # Model configurations
+  models:
+    embedding:
+      name: "all-MiniLM-L6-v2"
+      device: "cpu"
+
+    llm:
+      name: "gpt-4o-mini"
+      temperature: 0
+      max_tokens: 4000
+
+    advanced_llm:
+      name: "gpt-4o"
+      temperature: 0
+      max_tokens: 8000
+
+  # Adaptive learning
+  adaptive_learning:
+    enabled: true
+    threshold_bounds:
+      minimum: 0.3
+      maximum: 0.9
+    learning_rate: 0.05
+    history_size: 1000
+
+  # Performance settings
+  performance:
+    parallel_processing: true
+    cache_enabled: true
+    cache_ttl_seconds: 3600
+    max_concurrent_requests: 10
