@@ -86,7 +86,7 @@ class NLPQueryProcessor:
 
             # Extract noun chunks (natural phrases)
             for chunk in doc.noun_chunks:
-                if len(chunk.text.split()) >= 2:  # Removed restrictive length requirement
+                if len(chunk.text.split()) >= 2:
                     phrases.append(chunk.text.lower())
 
             # Extract compound nouns and technical terms
@@ -96,13 +96,40 @@ class NLPQueryProcessor:
                     compound_phrase = f"{token.text} {token.head.text}".lower()
                     phrases.append(compound_phrase)
 
+            # Extract multi-word technical terms using dependency patterns
+            # Look for ADJ + compound NOUN + NOUN patterns (e.g., "whole life policy", "universal life policy")
+            for token in doc:
+                if token.pos_ == 'ADJ' and token.head.pos_ == 'NOUN':
+                    head = token.head  # This is the final noun (e.g., "policy")
+
+                    # Look for compound noun modifying this head noun
+                    compounds = [child for child in head.children if child.dep_ == 'compound' and child.pos_ == 'NOUN']
+
+                    if compounds:
+                        # Build ADJ + compound + NOUN phrase (e.g., "whole life policy")
+                        for compound in compounds:
+                            three_word_phrase = f"{token.text} {compound.text} {head.text}".lower()
+                            phrases.append(three_word_phrase)
+
+                    # Also capture ADJ + NOUN pattern (fallback)
+                    two_word_phrase = f"{token.text} {head.text}".lower()
+                    phrases.append(two_word_phrase)
+
         else:
             # Fallback to pattern-based extraction
             words = re.findall(r'\b\w+\b', text.lower())
+            # Extract 2-word phrases
             for i in range(len(words) - 1):
                 if (not self._is_stop_word(words[i]) and not self._is_stop_word(words[i+1])
                     and len(words[i]) > 2 and len(words[i+1]) > 2):
                     phrase = f"{words[i]} {words[i+1]}"
+                    phrases.append(phrase)
+
+            # Extract 3-word phrases for technical terms
+            for i in range(len(words) - 2):
+                if (not self._is_stop_word(words[i]) and not self._is_stop_word(words[i+2])
+                    and len(words[i]) > 2 and len(words[i+2]) > 2):
+                    phrase = f"{words[i]} {words[i+1]} {words[i+2]}"
                     phrases.append(phrase)
 
         return list(set(phrases))
@@ -257,51 +284,41 @@ class NLPQueryProcessor:
             return " ".join(unique_terms[:10])  # Limit to 10 terms
 
         elif mode == "focused":
-            # Use smart phrase and keyword extraction for precise Whoosh search
+            # Simplified approach: use main phrases only, avoid overly restrictive AND logic
             terms = []
-            seen_terms = set()  # Track unique terms to avoid duplicates
 
-            # Add key phrases as quoted strings for exact phrase matching in Whoosh
+            # Use the most important phrase only for initial retrieval
             if processed_query.key_phrases:
-                for phrase in processed_query.key_phrases[:3]:  # Top 3 phrases
-                    # Clean phrase: remove articles and extra spaces
-                    cleaned_phrase = self._clean_phrase_for_search(phrase)
-                    if cleaned_phrase and len(cleaned_phrase.split()) >= 2:
-                        # Avoid duplicates
-                        if cleaned_phrase not in seen_terms:
-                            # Quote multi-word phrases for exact matching
-                            terms.append(f'"{cleaned_phrase}"')
-                            seen_terms.add(cleaned_phrase)
+                # Find the best technical term phrase (prefer core terms without articles)
+                best_phrase = None
+                best_score = 0
 
-            # Add individual semantic keywords (not quoted) - avoid overlap
-            if processed_query.semantic_keywords:
-                for keyword in processed_query.semantic_keywords[:4]:  # Top 4 keywords
-                    if keyword not in seen_terms and len(keyword) > 2:
-                        terms.append(keyword)
-                        seen_terms.add(keyword)
+                for phrase in processed_query.key_phrases:
+                    words = phrase.split()
+                    if len(words) >= 2:
+                        # Score based on relevance: prefer phrases without articles
+                        score = len(words)
+                        if not phrase.startswith(('a ', 'an ', 'the ')):
+                            score += 2  # Boost phrases without articles
+                        if score > best_score:
+                            best_score = score
+                            best_phrase = phrase
 
-            # Add entities as quoted phrases if they contain spaces
-            if processed_query.key_entities:
-                for entity in processed_query.key_entities[:2]:
-                    cleaned_entity = entity.strip()
-                    if cleaned_entity and cleaned_entity not in seen_terms:
-                        if len(cleaned_entity.split()) >= 2:
-                            terms.append(f'"{cleaned_entity}"')
-                        else:
-                            terms.append(cleaned_entity)
-                        seen_terms.add(cleaned_entity)
+                if best_phrase and len(best_phrase.split()) >= 2:
+                    terms.append(f'"{best_phrase}"')
+                elif best_phrase:
+                    terms.append(best_phrase)
 
-            # Fallback to key semantic terms if no good phrases found
-            if not terms and processed_query.semantic_keywords:
-                for keyword in processed_query.semantic_keywords[:5]:
+            # If no good phrases, use semantic keywords
+            elif processed_query.semantic_keywords:
+                # Use top 2-3 keywords only
+                for keyword in processed_query.semantic_keywords[:3]:
                     if len(keyword) > 2:
                         terms.append(keyword)
 
-            # Final fallback to cleaned original query
+            # Final fallback
             if not terms:
-                # Use individual important words from original query
-                important_words = [word for word in processed_query.processed_tokens[:5] if len(word) > 3]
-                terms = important_words if important_words else [processed_query.original_query]
+                terms = [processed_query.original_query]
 
             return " ".join(terms)
 
@@ -312,6 +329,42 @@ class NLPQueryProcessor:
             terms.extend(processed_query.key_entities[:2])
             terms.extend(processed_query.key_phrases[:2])
             return " ".join(terms)
+
+    def validate_content_match(self, processed_query: ProcessedQuery, content: str) -> Dict[str, float]:
+        """Post-retrieval validation: check if content actually contains requested phrases"""
+
+        content_lower = content.lower()
+        validation_score = 0.0
+        phrase_matches = {}
+
+        # Check for exact phrase matches (highest priority)
+        for phrase in processed_query.key_phrases:
+            if phrase.lower() in content_lower:
+                phrase_matches[phrase] = 1.0
+                validation_score += 3.0  # High weight for exact phrase match
+
+        # Check for entity matches
+        for entity in processed_query.key_entities:
+            if entity.lower() in content_lower:
+                phrase_matches[entity] = 1.0
+                validation_score += 2.0  # Medium weight for entity match
+
+        # Check for semantic keyword matches
+        keyword_matches = 0
+        for keyword in processed_query.semantic_keywords:
+            if keyword.lower() in content_lower:
+                keyword_matches += 1
+                validation_score += 1.0  # Lower weight for individual keywords
+
+        # Normalize score by content length to avoid bias towards longer documents
+        normalized_score = validation_score / max(1.0, len(content) / 1000)
+
+        return {
+            "validation_score": normalized_score,
+            "phrase_matches": phrase_matches,
+            "keyword_match_count": keyword_matches,
+            "total_matches": len(phrase_matches) + keyword_matches
+        }
 
     def get_query_variants(self, query: str) -> Dict[str, str]:
         """Get different query variants for testing multiple search strategies"""
