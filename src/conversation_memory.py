@@ -166,8 +166,8 @@ class ConversationMemoryManager:
                         importance=importance)
                         
         except Exception as e:
-            logger.error("Failed to add message to conversation memory", 
-                        error=str(e), session_id=session_id[:8])
+            logger.error("Failed to add message to conversation memory",
+                        exception_details=str(e), session_id=session_id[:8])
     
     async def _store_message_redis(self, session_id: str, message: ConversationMessage) -> None:
         """Store message in Redis"""
@@ -196,8 +196,8 @@ class ConversationMemoryManager:
                 return []  # Fallback to empty if no storage
                 
         except Exception as e:
-            logger.error("Failed to retrieve conversation messages", 
-                        error=str(e), session_id=session_id[:8])
+            logger.error("Failed to retrieve conversation messages",
+                        exception_details=str(e), session_id=session_id[:8])
             return []
     
     async def _get_messages_redis(self, session_id: str, limit: int = None) -> List[ConversationMessage]:
@@ -223,7 +223,7 @@ class ConversationMemoryManager:
                 )
                 messages.append(message)
             except Exception as e:
-                logger.warning("Failed to parse message", error=str(e))
+                logger.warning("Failed to parse message", exception_details=str(e))
         
         # Reverse to get chronological order (oldest first)
         return list(reversed(messages))
@@ -260,8 +260,8 @@ class ConversationMemoryManager:
                        kept=len(messages_to_keep))
                        
         except Exception as e:
-            logger.error("Failed to compress conversation messages", 
-                        error=str(e), session_id=session_id[:8])
+            logger.error("Failed to compress conversation messages",
+                        exception_details=str(e), session_id=session_id[:8])
     
     async def _create_summary(self, messages: List[ConversationMessage]) -> ConversationSummary:
         """Create a compressed summary of messages"""
@@ -375,8 +375,8 @@ class ConversationMemoryManager:
             return full_context
             
         except Exception as e:
-            logger.error("Failed to get conversation context", 
-                        error=str(e), session_id=session_id[:8])
+            logger.error("Failed to get conversation context",
+                        exception_details=str(e), session_id=session_id[:8])
             return ""
     
     def _format_summary(self, summary_data: Dict, summary_num: int) -> str:
@@ -410,12 +410,12 @@ class ConversationMemoryManager:
                     summary_data = json.loads(raw_summary)
                     summaries.append(summary_data)
                 except Exception as e:
-                    logger.warning("Failed to parse summary", error=str(e))
+                    logger.warning("Failed to parse summary", exception_details=str(e))
             
             return summaries
             
         except Exception as e:
-            logger.error("Failed to get summaries", error=str(e), session_id=session_id[:8])
+            logger.error("Failed to get summaries", exception_details=str(e), session_id=session_id[:8])
             return []
     
     async def clear_session(self, session_id: str) -> None:
@@ -455,5 +455,5 @@ class ConversationMemoryManager:
             }
             
         except Exception as e:
-            logger.error("Failed to get session stats", error=str(e), session_id=session_id[:8])
+            logger.error("Failed to get session stats", exception_details=str(e), session_id=session_id[:8])
             return {'session_id': session_id, 'error': str(e)}

@@ -71,7 +71,7 @@ class AnalyticsEngine:
                        confidence=confidence)
             
         except Exception as e:
-            logger.error("Failed to track query", error=str(e))
+            logger.error("Failed to track query", exception_details=str(e))
     
     async def track_document_upload(
         self,
@@ -99,7 +99,7 @@ class AnalyticsEngine:
             await self._update_session(session_id, user_id, "upload")
             
         except Exception as e:
-            logger.error("Failed to track document upload", error=str(e))
+            logger.error("Failed to track document upload", exception_details=str(e))
     
     async def track_workflow_step(
         self,
@@ -127,7 +127,7 @@ class AnalyticsEngine:
             await self._append_to_file(self.workflows_file, workflow_data)
             
         except Exception as e:
-            logger.error("Failed to track workflow step", error=str(e))
+            logger.error("Failed to track workflow step", exception_details=str(e))
     
     async def get_analytics_summary(self, days: int = 30) -> Dict[str, Any]:
         """Get comprehensive analytics summary"""
@@ -195,7 +195,7 @@ class AnalyticsEngine:
             }
             
         except Exception as e:
-            logger.error("Failed to generate analytics summary", error=str(e))
+            logger.error("Failed to generate analytics summary", exception_details=str(e))
             return {"error": str(e)}
     
     def _classify_query(self, query: str) -> str:
@@ -263,7 +263,7 @@ class AnalyticsEngine:
             with open(file_path, 'a', encoding='utf-8') as f:
                 f.write(json.dumps(data) + '\n')
         except Exception as e:
-            logger.error("Failed to append to file", file=str(file_path), error=str(e))
+            logger.error("Failed to append to file", file=str(file_path), exception_details=str(e))
     
     async def _update_session(self, session_id: str, user_id: str, event_type: str):
         """Update session information"""
@@ -279,7 +279,7 @@ class AnalyticsEngine:
             await self._append_to_file(self.sessions_file, session_data)
             
         except Exception as e:
-            logger.error("Failed to update session", error=str(e))
+            logger.error("Failed to update session", exception_details=str(e))
     
     async def _load_recent_data(self, file_path: Path, cutoff_date: datetime) -> List[Dict[str, Any]]:
         """Load data from JSONL file after cutoff date"""
@@ -300,7 +300,7 @@ class AnalyticsEngine:
                         except (json.JSONDecodeError, ValueError):
                             continue
         except Exception as e:
-            logger.error("Failed to load data", file=str(file_path), error=str(e))
+            logger.error("Failed to load data", file=str(file_path), exception_details=str(e))
         
         return data
     
@@ -324,5 +324,5 @@ class AnalyticsEngine:
             }
             
         except Exception as e:
-            logger.error("Failed to calculate trends", error=str(e))
+            logger.error("Failed to calculate trends", exception_details=str(e))
             return {}

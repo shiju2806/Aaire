@@ -156,7 +156,7 @@ try:
     else:
         logger.warning("❌ RAGPipeline class not available")
 except Exception as e:
-    logger.error("❌ RAG Pipeline initialization failed", error=str(e), exc_info=True)
+    logger.error("❌ RAG Pipeline initialization failed", exception_details=str(e), exc_info=True)
 
 # Initialize other components
 try:
@@ -166,7 +166,7 @@ try:
     else:
         logger.warning("❌ ComplianceEngine class not available")
 except Exception as e:
-    logger.error("❌ Compliance Engine initialization failed", error=str(e))
+    logger.error("❌ Compliance Engine initialization failed", exception_details=str(e))
 
 try:
     if DocumentProcessor:
@@ -175,7 +175,7 @@ try:
     else:
         logger.warning("❌ DocumentProcessor class not available")
 except Exception as e:
-    logger.error("❌ Document Processor initialization failed", error=str(e))
+    logger.error("❌ Document Processor initialization failed", exception_details=str(e))
 
 try:
     if ExternalAPIManager:
@@ -184,7 +184,7 @@ try:
     else:
         logger.warning("❌ ExternalAPIManager class not available")
 except Exception as e:
-    logger.error("❌ External API Manager initialization failed", error=str(e))
+    logger.error("❌ External API Manager initialization failed", exception_details=str(e))
 
 try:
     if AuthManager:
@@ -193,7 +193,7 @@ try:
     else:
         logger.warning("❌ AuthManager class not available")
 except Exception as e:
-    logger.error("❌ Auth Manager initialization failed", error=str(e))
+    logger.error("❌ Auth Manager initialization failed", exception_details=str(e))
 
 try:
     if AuditLogger:
@@ -202,7 +202,7 @@ try:
     else:
         logger.warning("❌ AuditLogger class not available")
 except Exception as e:
-    logger.error("❌ Audit Logger initialization failed", error=str(e))
+    logger.error("❌ Audit Logger initialization failed", exception_details=str(e))
 
 try:
     if AnalyticsEngine:
@@ -211,7 +211,7 @@ try:
     else:
         logger.warning("❌ AnalyticsEngine class not available")
 except Exception as e:
-    logger.error("❌ Analytics Engine initialization failed", error=str(e))
+    logger.error("❌ Analytics Engine initialization failed", exception_details=str(e))
 
 try:
     if WorkflowEngine:
@@ -220,7 +220,7 @@ try:
     else:
         logger.warning("❌ WorkflowEngine class not available")
 except Exception as e:
-    logger.warning("❌ Workflow Engine initialization failed", error=str(e)[:100])
+    logger.warning("❌ Workflow Engine initialization failed", exception_details=str(e)[:100])
     workflow_engine = None
 
 logger.info("Component initialization complete", 
@@ -233,7 +233,7 @@ try:
     app.include_router(extension_router)
     logger.info("✅ Browser Extension API routes added")
 except ImportError as e:
-    logger.warning("❌ Browser Extension API not available", error=str(e))
+    logger.warning("❌ Browser Extension API not available", exception_details=str(e))
 
 # Request/Response Models per MVP API spec
 class ChatRequest(BaseModel):
@@ -510,11 +510,21 @@ async def chat_handler(request: ChatRequest):
         if rag_pipeline:
             logger.info(f"Using RAG pipeline for query: {request.query}")
             
-            # Add job_id to filters if provided
+            # Add job_id to filters if provided, handling deduplication
             query_filters = request.filters or {}
             if request.job_id:
-                query_filters["job_id"] = request.job_id
-                logger.info(f"Filtering query to job_id: {request.job_id}")
+                # Check if this job_id is a duplicate and resolve to original if needed
+                effective_job_id = request.job_id
+                if document_processor and hasattr(document_processor, 'processing_jobs'):
+                    job_info = document_processor.processing_jobs.get(request.job_id)
+                    if job_info and job_info.get('duplicate_of'):
+                        effective_job_id = job_info['duplicate_of']
+                        logger.info(f"Duplicate job_id detected - resolving to original",
+                                   requested_job_id=request.job_id,
+                                   effective_job_id=effective_job_id)
+
+                query_filters["job_id"] = effective_job_id
+                logger.info(f"Filtering query to job_id: {effective_job_id}")
             
             rag_response = await rag_pipeline.process_query_with_intelligence(
                 query=request.query,
@@ -580,7 +590,7 @@ Note: This is general accounting knowledge, not from your specific company docum
             )
         
     except Exception as e:
-        logger.error("Error processing chat request", error=str(e))
+        logger.error("Error processing chat request", exception_details=str(e))
         processing_time = int((datetime.utcnow() - start_time).total_seconds() * 1000)
         
         return ChatResponse(
@@ -706,7 +716,7 @@ async def upload_document(
         )
         
     except Exception as e:
-        logger.error("Error uploading document", error=str(e), filename=file.filename, metadata=metadata)
+        logger.error("Error uploading document", exception_details=str(e), filename=file.filename, metadata=metadata)
         raise HTTPException(status_code=422, detail=f"Upload failed: {str(e)}")
 
 @app.websocket("/api/v1/chat/ws")
@@ -782,7 +792,7 @@ Note: This is general accounting knowledge, not from your specific company docum
                         })
                         
                 except Exception as e:
-                    logger.error("Error processing WebSocket query", error=str(e), event="WebSocket error")
+                    logger.error("Error processing WebSocket query", exception_details=str(e))
                     await websocket.send_json({
                         "type": "error",
                         "message": "I apologize, but I'm experiencing technical difficulties. Please try again later."
@@ -791,7 +801,7 @@ Note: This is general accounting knowledge, not from your specific company docum
     except WebSocketDisconnect:
         logger.info("WebSocket client disconnected")
     except Exception as e:
-        logger.error("WebSocket error", error=str(e))
+        logger.error("WebSocket error", exception_details=str(e))
         try:
             await websocket.close()
         except:
@@ -944,7 +954,7 @@ async def submit_feedback(feedback: FeedbackRequest):
         )
         
     except Exception as e:
-        logger.error("Failed to record feedback", error=str(e))
+        logger.error("Failed to record feedback", exception_details=str(e))
         raise HTTPException(status_code=500, detail="Failed to record feedback")
 
 @app.get("/api/v1/feedback/analytics")
@@ -1008,7 +1018,7 @@ async def get_feedback_analytics():
         }
         
     except Exception as e:
-        logger.error("Failed to generate feedback analytics", error=str(e))
+        logger.error("Failed to generate feedback analytics", exception_details=str(e))
         raise HTTPException(status_code=500, detail="Failed to generate analytics")
 
 @app.get("/api/v1/debug/documents")
@@ -1028,13 +1038,13 @@ async def debug_cleanup_orphaned():
     try:
         return await rag_pipeline.cleanup_orphaned_chunks()
     except Exception as e:
-        logger.error("Cleanup failed with original method", error=str(e))
+        logger.error("Cleanup failed with original method", exception_details=str(e))
         # Fallback: Try to clear entire collection and recreate
         try:
             await rag_pipeline.clear_all_documents()
             return {"status": "success", "message": "Cleared all documents as fallback"}
         except Exception as e2:
-            logger.error("Fallback cleanup also failed", error=str(e2))
+            logger.error("Fallback cleanup also failed", exception_details=str(e2))
             return {"status": "error", "error": str(e2)}
 
 @app.post("/api/v1/debug/clear-all-documents")
@@ -1077,6 +1087,39 @@ async def debug_clear_cache():
         raise HTTPException(status_code=503, detail="RAG pipeline not available")
     
     return await rag_pipeline.clear_all_cache()
+
+@app.get("/api/v1/debug/deduplication-stats")
+async def get_deduplication_stats():
+    """Get document deduplication statistics"""
+    if not document_processor:
+        raise HTTPException(status_code=503, detail="Document processor not available")
+
+    try:
+        stats = document_processor.deduplicator.get_duplicate_stats()
+        return {
+            "status": "success",
+            "deduplication_stats": stats
+        }
+    except Exception as e:
+        logger.error("Failed to get deduplication stats", exception_details=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to get stats: {str(e)}")
+
+@app.post("/api/v1/debug/rebuild-hash-database")
+async def rebuild_hash_database():
+    """Rebuild hash database by scanning existing uploaded files"""
+    if not document_processor:
+        raise HTTPException(status_code=503, detail="Document processor not available")
+
+    try:
+        uploads_dir = Path("data/uploads")
+        result = document_processor.deduplicator.rebuild_from_existing_files(uploads_dir)
+        return {
+            "status": "success",
+            "rebuild_result": result
+        }
+    except Exception as e:
+        logger.error("Failed to rebuild hash database", exception_details=str(e))
+        raise HTTPException(status_code=500, detail=f"Rebuild failed: {str(e)}")
 
 @app.post("/api/v1/debug/reset-vector-db")
 async def debug_reset_vector_db():
@@ -1122,7 +1165,7 @@ async def debug_reset_vector_db():
         }
         
     except Exception as e:
-        logger.error("Failed to reset vector database", error=str(e))
+        logger.error("Failed to reset vector database", exception_details=str(e))
         raise HTTPException(status_code=500, detail=f"Reset failed: {str(e)}")
 
 @app.get("/api/v1/external/refresh")

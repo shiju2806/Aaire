@@ -103,7 +103,7 @@ class AuditLogger:
         # Structure log data
         log_data = {
             "audit_event_id": event_id,
-            "event_type": event,
+            "audit_event_type": event,
             "user_id": user_id,
             "data": data,
             "ip_address": ip_address,

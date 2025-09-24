@@ -712,7 +712,7 @@ Generate exactly 2-3 contextual follow-up questions that dig deeper into the spe
                 return self.generate_response_based_fallback(query, response, retrieved_docs)
 
         except Exception as e:
-            logger.error("Failed to generate follow-up questions", error=str(e))
+            logger.error("Failed to generate follow-up questions", exception_details=str(e))
             # Return fallback questions if generation fails
             return [
                 "Can you explain this in more detail?",
@@ -1018,7 +1018,7 @@ Generate exactly 2-3 contextual follow-up questions that dig deeper into the spe
             return response
 
         except Exception as e:
-            logger.error("Failed to validate response grounding", error=str(e))
+            logger.error("Failed to validate response grounding", exception_details=str(e))
             return response
 
 

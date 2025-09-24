@@ -105,7 +105,7 @@ class SemanticAlignmentValidator:
             return result
 
         except Exception as e:
-            logger.error("Semantic alignment validation failed", error=str(e))
+            logger.error("Semantic alignment validation failed", exception_details=str(e))
             # Fail open - allow response generation if validation fails
             return SemanticAlignmentResult(
                 is_aligned=True,

@@ -182,6 +182,23 @@ class NLPQueryProcessor:
             processed_tokens=meaningful_tokens
         )
 
+    def _clean_phrase_for_search(self, phrase: str) -> str:
+        """Clean extracted phrases for better search matching - no hardcoded logic"""
+        if not phrase:
+            return ""
+
+        # Remove common articles and determiners that don't add search value
+        # These are identified dynamically by spaCy or through basic linguistic patterns
+        words = phrase.lower().strip().split()
+
+        # Filter out single-character words and common stop words using our existing logic
+        cleaned_words = []
+        for word in words:
+            if len(word) > 1 and not self._is_stop_word(word):
+                cleaned_words.append(word)
+
+        return " ".join(cleaned_words)
+
     def _detect_intent(self, text: str) -> str:
         """Detect query intent using semantic analysis"""
         if self.nlp:
@@ -240,20 +257,51 @@ class NLPQueryProcessor:
             return " ".join(unique_terms[:10])  # Limit to 10 terms
 
         elif mode == "focused":
-            # Use only the most important key phrases and keywords for precision
+            # Use smart phrase and keyword extraction for precise Whoosh search
             terms = []
+            seen_terms = set()  # Track unique terms to avoid duplicates
 
-            # CRITICAL: Always preserve the original query to ensure we don't lose key differentiating terms
-            terms.append(processed_query.original_query)
-
-            # Add additional key phrases that might provide more specificity
+            # Add key phrases as quoted strings for exact phrase matching in Whoosh
             if processed_query.key_phrases:
-                # Add up to 2 key phrases for additional context
-                terms.extend(processed_query.key_phrases[:2])
+                for phrase in processed_query.key_phrases[:3]:  # Top 3 phrases
+                    # Clean phrase: remove articles and extra spaces
+                    cleaned_phrase = self._clean_phrase_for_search(phrase)
+                    if cleaned_phrase and len(cleaned_phrase.split()) >= 2:
+                        # Avoid duplicates
+                        if cleaned_phrase not in seen_terms:
+                            # Quote multi-word phrases for exact matching
+                            terms.append(f'"{cleaned_phrase}"')
+                            seen_terms.add(cleaned_phrase)
 
-            # Add entities which often contain important differentiating terms
+            # Add individual semantic keywords (not quoted) - avoid overlap
+            if processed_query.semantic_keywords:
+                for keyword in processed_query.semantic_keywords[:4]:  # Top 4 keywords
+                    if keyword not in seen_terms and len(keyword) > 2:
+                        terms.append(keyword)
+                        seen_terms.add(keyword)
+
+            # Add entities as quoted phrases if they contain spaces
             if processed_query.key_entities:
-                terms.extend(processed_query.key_entities[:2])
+                for entity in processed_query.key_entities[:2]:
+                    cleaned_entity = entity.strip()
+                    if cleaned_entity and cleaned_entity not in seen_terms:
+                        if len(cleaned_entity.split()) >= 2:
+                            terms.append(f'"{cleaned_entity}"')
+                        else:
+                            terms.append(cleaned_entity)
+                        seen_terms.add(cleaned_entity)
+
+            # Fallback to key semantic terms if no good phrases found
+            if not terms and processed_query.semantic_keywords:
+                for keyword in processed_query.semantic_keywords[:5]:
+                    if len(keyword) > 2:
+                        terms.append(keyword)
+
+            # Final fallback to cleaned original query
+            if not terms:
+                # Use individual important words from original query
+                important_words = [word for word in processed_query.processed_tokens[:5] if len(word) > 3]
+                terms = important_words if important_words else [processed_query.original_query]
 
             return " ".join(terms)
 

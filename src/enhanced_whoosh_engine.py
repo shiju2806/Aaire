@@ -18,7 +18,28 @@ from whoosh.qparser import QueryParser, MultifieldParser, OrGroup
 from whoosh.analysis import StemmingAnalyzer
 from whoosh.query import And, Or, Term, Phrase
 
+# Quality configuration for non-hardcoded settings
+try:
+    from rag_modules.config.quality_config import get_quality_config
+except ImportError:
+    # Fallback if config not available
+    get_quality_config = None
+
 logger = structlog.get_logger()
+
+def _get_config_value(config_key: str, fallback_value: any):
+    """Helper to get configuration values with fallback."""
+    if get_quality_config is None:
+        return fallback_value
+    try:
+        config = get_quality_config()
+        method_name = f"get_{config_key}"
+        if hasattr(config, method_name):
+            return getattr(config, method_name)()
+        return fallback_value
+    except Exception:
+        logger.warning(f"Failed to get config for {config_key}, using fallback", fallback=fallback_value)
+        return fallback_value
 
 @dataclass
 class EnhancedSearchResult:
@@ -31,60 +52,6 @@ class EnhancedSearchResult:
     confidence: float
     metadata: Dict[str, Any]
 
-class JurisdictionClassifier:
-    """Dynamic jurisdiction classifier - learns patterns from documents"""
-
-    def __init__(self):
-        self.us_stat_indicators = set()
-        self.ifrs_indicators = set()
-        self.jurisdiction_patterns = {}
-
-    def analyze_document(self, content: str, metadata: Dict[str, Any]) -> Dict[str, float]:
-        """Analyze document for jurisdiction indicators"""
-        content_lower = content.lower()
-
-        # Dynamic pattern detection
-        us_stat_score = 0.0
-        ifrs_score = 0.0
-
-        # US STAT indicators (learned from document patterns)
-        us_patterns = [
-            r'\busstat\b', r'\bus\s+stat\b', r'\bvaluation\s+manual\b', r'\bvm-20\b',
-            r'\bnaic\b', r'\bstatutory\b', r'\bstatutory\s+reserve\b',
-            r'\bus\s+gaap\b', r'\bstate\s+regulation\b'
-        ]
-
-        # IFRS indicators (learned from document patterns)
-        ifrs_patterns = [
-            r'\bifrs\s*17\b', r'\bifrs\b', r'\biasb\b', r'\bcsm\b',
-            r'\bcontractual\s+service\s+margin\b', r'\brisk\s+adjustment\b',
-            r'\bbest\s+estimate\b', r'\bfulfilment\s+cash\s+flows\b'
-        ]
-
-        # Score based on pattern matches
-        for pattern in us_patterns:
-            if re.search(pattern, content_lower):
-                us_stat_score += 1.0
-
-        for pattern in ifrs_patterns:
-            if re.search(pattern, content_lower):
-                ifrs_score += 1.0
-
-        # Normalize scores
-        total_score = us_stat_score + ifrs_score
-        if total_score > 0:
-            us_stat_score /= total_score
-            ifrs_score /= total_score
-        else:
-            # Default to neutral
-            us_stat_score = 0.5
-            ifrs_score = 0.5
-
-        return {
-            'us_stat': us_stat_score,
-            'ifrs': ifrs_score,
-            'confidence': min(total_score / 3.0, 1.0)  # Confidence based on evidence
-        }
 
 class ProductTypeClassifier:
     """Dynamic product type classifier - learns patterns from documents"""
@@ -165,7 +132,7 @@ class EnhancedWhooshEngine:
         self.jurisdiction_classifier = JurisdictionClassifier()
         self.product_classifier = ProductTypeClassifier()
 
-        # Enhanced schema with classification fields
+        # Simplified schema focusing on product-type differentiation
         self.schema = Schema(
             id=ID(stored=True, unique=True),
             title=TEXT(stored=True, analyzer=StemmingAnalyzer()),
@@ -173,9 +140,7 @@ class EnhancedWhooshEngine:
             source=KEYWORD(stored=True),
             source_type=KEYWORD(stored=True),
             page=NUMERIC(stored=True),
-            jurisdiction=KEYWORD(stored=True),  # us_stat, ifrs, mixed
             product_type=KEYWORD(stored=True),  # universal_life, whole_life, term_life, general
-            jurisdiction_confidence=NUMERIC(stored=True),
             product_confidence=NUMERIC(stored=True)
         )
 
@@ -213,20 +178,11 @@ class EnhancedWhooshEngine:
                     content = doc.get('content', '')
                     metadata = doc.get('metadata', {})
 
-                    # Classify document
-                    jurisdiction_analysis = self.jurisdiction_classifier.analyze_document(content, metadata)
+                    # Classify document - product type only
                     product_analysis = self.product_classifier.analyze_document(content, metadata)
-
-                    # Determine primary classifications
-                    primary_jurisdiction = 'mixed'
-                    if jurisdiction_analysis['us_stat'] > 0.7:
-                        primary_jurisdiction = 'us_stat'
-                    elif jurisdiction_analysis['ifrs'] > 0.7:
-                        primary_jurisdiction = 'ifrs'
-
                     primary_product = max(product_analysis.items(), key=lambda x: x[1])[0]
 
-                    # Add enhanced document
+                    # Add simplified document
                     writer.add_document(
                         id=doc.get('id', f"doc_{added_count}"),
                         title=doc.get('title', ''),
@@ -234,9 +190,7 @@ class EnhancedWhooshEngine:
                         source=metadata.get('source', 'Unknown'),
                         source_type=metadata.get('source_type', 'unknown'),
                         page=metadata.get('page', 0),
-                        jurisdiction=primary_jurisdiction,
                         product_type=primary_product,
-                        jurisdiction_confidence=jurisdiction_analysis['confidence'],
                         product_confidence=max(product_analysis.values())
                     )
 
@@ -254,8 +208,7 @@ class EnhancedWhooshEngine:
             logger.error(f"Failed to add documents to enhanced index: {e}")
             return 0
 
-    def search_with_context(self, query: str, jurisdiction_hint: Optional[str] = None,
-                          product_hint: Optional[str] = None, limit: int = 10) -> List[EnhancedSearchResult]:
+    def search_with_context(self, query: str, product_hint: Optional[str] = None, limit: int = 10) -> List[EnhancedSearchResult]:
         """Enhanced search with jurisdiction and product context"""
         if not self.index:
             logger.error("Index not available for searching")
@@ -265,11 +218,6 @@ class EnhancedWhooshEngine:
             with self.index.searcher() as searcher:
                 # Build context-aware query
                 base_query = self._build_base_query(query)
-
-                # Add jurisdiction filtering if specified
-                if jurisdiction_hint:
-                    jurisdiction_query = Term("jurisdiction", jurisdiction_hint)
-                    base_query = And([base_query, jurisdiction_query])
 
                 # Add product filtering if specified
                 if product_hint:
@@ -284,11 +232,10 @@ class EnhancedWhooshEngine:
                         title=result.get('title', ''),
                         content=result.get('content', ''),
                         source=result.get('source', ''),
-                        jurisdiction_score=result.get('jurisdiction_confidence', 0.0),
+                        jurisdiction_score=0.0,  # Removed jurisdiction scoring
                         product_type_score=result.get('product_confidence', 0.0),
                         confidence=result.score,
                         metadata={
-                            'jurisdiction': result.get('jurisdiction', ''),
                             'product_type': result.get('product_type', ''),
                             'source_type': result.get('source_type', ''),
                             'page': result.get('page', 0)
@@ -314,22 +261,18 @@ class EnhancedWhooshEngine:
     def search(self, query: str, filters: Optional[Dict] = None, limit: int = 10, highlight: bool = False) -> List[Dict]:
         """Legacy search method for backward compatibility with retrieval service"""
         try:
-            # Extract jurisdiction and product hints from filters if provided
-            jurisdiction_hint = None
+            # Extract product hint from filters if provided
             product_hint = None
 
             if filters:
                 # Look for our filter format
                 for filter_item in filters.get('filters', []):
-                    if filter_item.get('field') == 'jurisdiction':
-                        jurisdiction_hint = filter_item.get('value')
-                    elif filter_item.get('field') == 'product_type':
+                    if filter_item.get('field') == 'product_type':
                         product_hint = filter_item.get('value')
 
             # Use the enhanced search with context
             enhanced_results = self.search_with_context(
                 query=query,
-                jurisdiction_hint=jurisdiction_hint,
                 product_hint=product_hint,
                 limit=limit
             )
@@ -366,15 +309,8 @@ class EnhancedWhooshEngine:
             with self.index.searcher() as searcher:
                 stats = {
                     'total_documents': searcher.doc_count(),
-                    'jurisdictions': {},
                     'product_types': {}
                 }
-
-                # Count by jurisdiction
-                for jurisdiction in ['us_stat', 'ifrs', 'mixed']:
-                    query = Term("jurisdiction", jurisdiction)
-                    results = searcher.search(query, limit=None)
-                    stats['jurisdictions'][jurisdiction] = len(results)
 
                 # Count by product type
                 for product in ['universal_life', 'whole_life', 'term_life', 'general']:

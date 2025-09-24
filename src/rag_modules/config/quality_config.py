@@ -51,7 +51,7 @@ class QualityConfig:
                           path=str(self.config_path))
             return self._get_default_config()
         except yaml.YAMLError as e:
-            logger.error("Failed to parse quality config file", error=str(e))
+            logger.error("Failed to parse quality config file", exception_details=str(e))
             return self._get_default_config()
 
     def _apply_environment_overrides(self):
@@ -169,6 +169,35 @@ class QualityConfig:
     def is_openai_alignment_enabled(self) -> bool:
         """Check if OpenAI alignment validator is enabled."""
         return self.is_feature_enabled("openai_alignment_validator")
+
+    # Enhanced Whoosh Configuration
+    def get_enhanced_whoosh_config(self) -> Dict[str, Any]:
+        """Get Enhanced Whoosh configuration."""
+        return self.config.get("enhanced_whoosh", {})
+
+    def is_enhanced_whoosh_enabled(self) -> bool:
+        """Check if Enhanced Whoosh is enabled."""
+        return self.get_enhanced_whoosh_config().get("enabled", True)
+
+    def get_jurisdiction_threshold(self) -> float:
+        """Get jurisdiction classification threshold."""
+        return self.get_enhanced_whoosh_config().get("jurisdiction_threshold", 0.4)
+
+    def get_product_confidence_minimum(self) -> float:
+        """Get minimum product confidence threshold."""
+        return self.get_enhanced_whoosh_config().get("product_confidence_minimum", 0.3)
+
+    def should_include_mixed_jurisdictions(self) -> bool:
+        """Check if mixed jurisdictions should be included in searches."""
+        return self.get_enhanced_whoosh_config().get("include_mixed_jurisdictions", True)
+
+    def get_classification_mode(self) -> str:
+        """Get classification mode: flexible, strict, or off."""
+        return self.get_enhanced_whoosh_config().get("classification_mode", "flexible")
+
+    def should_fallback_to_vector(self) -> bool:
+        """Check if system should fallback to vector search when keyword returns 0 results."""
+        return self.get_enhanced_whoosh_config().get("fallback_to_vector", True)
 
     # Adaptive Learning Configuration
     def get_adaptive_learning_config(self) -> Dict[str, Any]:

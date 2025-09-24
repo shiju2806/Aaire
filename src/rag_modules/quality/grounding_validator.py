@@ -198,7 +198,7 @@ class ContentGroundingValidator:
             return result
 
         except Exception as e:
-            logger.error("Content grounding validation failed", error=str(e))
+            logger.error("Content grounding validation failed", exception_details=str(e))
             return GroundingResult(
                 is_grounded=False,
                 grounding_score=0.0,
@@ -240,7 +240,7 @@ class ContentGroundingValidator:
             return coverage_ratio
 
         except Exception as e:
-            logger.error("Evidence coverage analysis failed", error=str(e))
+            logger.error("Evidence coverage analysis failed", exception_details=str(e))
             return 0.0
 
     def _extract_response_claims(self, response: str) -> List[str]:
@@ -327,7 +327,7 @@ class ContentGroundingValidator:
             return alignment_score
 
         except Exception as e:
-            logger.error("Concept alignment analysis failed", error=str(e))
+            logger.error("Concept alignment analysis failed", exception_details=str(e))
             return 0.5
 
     def _check_basic_alignment(self, query: str, retrieved_docs: List[Dict]) -> Dict[str, float]:
@@ -501,7 +501,7 @@ class ContentGroundingValidator:
             return risk_ratio
 
         except Exception as e:
-            logger.error("Hallucination pattern detection failed", error=str(e))
+            logger.error("Hallucination pattern detection failed", exception_details=str(e))
             return 0.5
 
     def _validate_source_attribution(self, response: str, retrieved_docs: List[Dict]) -> float:
@@ -548,7 +548,7 @@ class ContentGroundingValidator:
             return attribution_ratio
 
         except Exception as e:
-            logger.error("Source attribution validation failed", error=str(e))
+            logger.error("Source attribution validation failed", exception_details=str(e))
             return 0.5
 
     def _calculate_grounding_score(self, grounding_details: Dict[str, Any]) -> float:
@@ -683,7 +683,7 @@ class ContentGroundingValidator:
                            fail_samples=len(failed_validations))
 
         except Exception as e:
-            logger.error("Learning threshold update failed", error=str(e))
+            logger.error("Learning threshold update failed", exception_details=str(e))
 
     def _save_learning_data(self):
         """Save grounding learning data"""
@@ -700,7 +700,7 @@ class ContentGroundingValidator:
                 json.dump(data, f, indent=2)
 
         except Exception as e:
-            logger.error("Failed to save grounding learning data", error=str(e))
+            logger.error("Failed to save grounding learning data", exception_details=str(e))
 
     def _load_learning_data(self):
         """Load previously learned grounding data"""
@@ -720,7 +720,7 @@ class ContentGroundingValidator:
         except FileNotFoundError:
             logger.info("No previous grounding learning data found")
         except Exception as e:
-            logger.error("Failed to load grounding learning data", error=str(e))
+            logger.error("Failed to load grounding learning data", exception_details=str(e))
 
 
 def create_grounding_validator(learning_data_path: str = "/tmp/rag_grounding_data.json") -> ContentGroundingValidator:

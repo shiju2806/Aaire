@@ -156,7 +156,7 @@ class DocumentProcessingAdapter:
                     # For now, we'll skip embedding storage and just log
                     logger.info("Extraction result ready for storage in repository")
                 except Exception as e:
-                    logger.warning("Failed to store in repository", error=str(e))
+                    logger.warning("Failed to store in repository", exception_details=str(e))
 
             logger.info(
                 "Document-level metadata extracted with new system",
@@ -171,7 +171,7 @@ class DocumentProcessingAdapter:
             return result
 
         except Exception as e:
-            logger.error("New extraction system failed, using fallback", error=str(e))
+            logger.error("New extraction system failed, using fallback", exception_details=str(e))
             return self._create_fallback_metadata(filename, doc_type)
 
     async def extract_chunk_metadata(self, chunk_content: str, document_metadata: Dict[str, Any], chunk_index: int) -> Dict[str, Any]:
@@ -199,7 +199,7 @@ class DocumentProcessingAdapter:
             return result
 
         except Exception as e:
-            logger.warning("Chunk metadata extraction failed", error=str(e), chunk_index=chunk_index)
+            logger.warning("Chunk metadata extraction failed", exception_details=str(e), chunk_index=chunk_index)
             return document_metadata.copy()
 
     async def analyze_query_intent(self, query: str) -> 'QueryIntent':

@@ -109,7 +109,7 @@ class ExtractionBridgeAdapter:
             return self._convert_to_legacy_format(extraction_result, text)
 
         except Exception as e:
-            logger.error("Bridge adapter extraction failed", error=str(e))
+            logger.error("Bridge adapter extraction failed", exception_details=str(e))
             return self._create_fallback_result(text, str(e))
 
     def _convert_to_legacy_format(self, result: ExtractionResult, text: str) -> LegacyExtractionResult:

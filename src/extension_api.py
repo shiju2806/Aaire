@@ -155,7 +155,7 @@ async def extension_upload(
     except HTTPException:
         raise  # Re-raise HTTP exceptions as-is
     except Exception as e:
-        logger.error("Extension upload failed", error=str(e), exc_info=True)
+        logger.error("Extension upload failed", exception_details=str(e), exc_info=True)
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
 
@@ -245,7 +245,7 @@ async def extension_query(
         })
         
     except Exception as e:
-        logger.error("Extension query failed", job_id=job_id, error=str(e))
+        logger.error("Extension query failed", job_id=job_id, exception_details=str(e))
         raise HTTPException(status_code=500, detail=f"Query failed: {str(e)}")
 
 

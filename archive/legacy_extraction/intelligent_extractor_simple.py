@@ -139,7 +139,7 @@ Provide results in JSON format:
             )
             
         except Exception as e:
-            logger.error("Document processing failed", error=str(e))
+            logger.error("Document processing failed", exception_details=str(e))
             return ExtractionResult(
                 entities=[],
                 structure_type="error",

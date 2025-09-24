@@ -177,9 +177,7 @@ class ServiceContainer:
         from ..quality.grounding_validator import ContentGroundingValidator
 
         validator = ContentGroundingValidator(
-            config=self.config,
-            embedding_model=self.get_singleton('embedding_model'),
-            llm_client=self.get_singleton('llm_client')
+            learning_data_path="/tmp/rag_grounding_data.json"
         )
 
         logger.info("Grounding validator created")
@@ -259,7 +257,7 @@ class ServiceContainer:
             logger.info("Response generator created with grounding validation")
             return generator
         except Exception as e:
-            logger.error("Failed to create response generator", error=str(e))
+            logger.error("Failed to create response generator", exception_details=str(e))
             return None
 
     def _create_response_formatter(self):
@@ -299,7 +297,7 @@ class ServiceContainer:
 
             return create_reflective_retriever(base_retriever, llm_client, self.config.config)
         except Exception as e:
-            logger.error("Failed to create reflective retriever", error=str(e))
+            logger.error("Failed to create reflective retriever", exception_details=str(e))
             return None
 
     def _create_formatting_manager(self):
@@ -307,8 +305,8 @@ class ServiceContainer:
         try:
             from ..formatting.manager import FormattingManager
 
-            # Get LLM client from dependency injection
-            llm_client = self.get_singleton('llm_client')
+            # Get async LLM client for better performance with formatting operations
+            llm_client = self.get_singleton('async_llm_client')
 
             # Use configuration from quality config
             formatting_config = self.config.config.get('formatting', {})
@@ -322,7 +320,7 @@ class ServiceContainer:
             logger.info("Formatting manager created")
             return formatter
         except Exception as e:
-            logger.error("Failed to create formatting manager", error=str(e))
+            logger.error("Failed to create formatting manager", exception_details=str(e))
             return None
 
     def _create_enhanced_grounding_validator(self):
@@ -335,7 +333,7 @@ class ServiceContainer:
             logger.info("Enhanced grounding validator created")
             return validator
         except Exception as e:
-            logger.error("Failed to create enhanced grounding validator", error=str(e))
+            logger.error("Failed to create enhanced grounding validator", exception_details=str(e))
             return None
 
     # Utility methods

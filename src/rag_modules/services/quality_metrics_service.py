@@ -128,7 +128,7 @@ class QualityMetricsService(ServiceMixin):
             validation_result = semantic_validator.validate_alignment(mock_query, retrieved_docs)
             base_confidence = validation_result.confidence
         except Exception as e:
-            logger.debug("Semantic validator not available, using fallback confidence", error=str(e))
+            logger.debug("Semantic validator not available, using fallback confidence", exception_details=str(e))
             # Fallback confidence calculation
             base_confidence = min(0.8, len(retrieved_docs) / 5.0)  # More docs = higher confidence
 
@@ -201,7 +201,7 @@ class QualityMetricsService(ServiceMixin):
             return metrics
 
         except Exception as e:
-            logger.error("Failed to calculate quality metrics", error=str(e))
+            logger.error("Failed to calculate quality metrics", exception_details=str(e))
             # Return basic fallback metrics
             return {
                 'overall_score': 0.5,

@@ -22,6 +22,7 @@ import pandas as pd
 
 from llama_index.core import Document
 from .rag_pipeline import RAGPipeline
+from .document_deduplicator import DocumentDeduplicator
 
 # Import shape-aware processor for better PDF extraction
 try:
@@ -94,6 +95,9 @@ class DocumentProcessor:
         
         # Document processing status tracking
         self.processing_jobs = {}
+
+        # Initialize document deduplicator
+        self.deduplicator = DocumentDeduplicator()
         
         # Supported file types and size limits (Enhanced for multi-modal analysis)
         self.supported_formats = {
@@ -124,29 +128,136 @@ class DocumentProcessor:
                    supported_formats=list(self.supported_formats.keys()))
     
     async def upload_document(
-        self, 
-        file: UploadFile, 
-        metadata: str, 
+        self,
+        file: UploadFile,
+        metadata: str,
         user_id: str
     ) -> str:
         """
-        Upload and queue document for processing - MVP-FR-009
+        Upload and queue document for processing with deduplication - MVP-FR-009
         Returns job_id for tracking
         """
-        
+
         # Generate unique job ID
         job_id = str(uuid.uuid4())
-        
+
         try:
             # Parse metadata
             metadata_dict = json.loads(metadata) if metadata else {}
-            
+
             # Validate file
             await self._validate_file(file, metadata_dict)
-            
+
+            # Read file content for deduplication check
+            file.file.seek(0)
+            file_content = await file.read()
+            content_hash = self.deduplicator.calculate_content_hash(file_content)
+
+            logger.info("Document upload initiated",
+                       job_id=job_id,
+                       filename=file.filename,
+                       content_hash=content_hash[:8] + "...",
+                       file_size=len(file_content))
+
+            # Check for duplicate
+            if self.deduplicator.is_duplicate(content_hash):
+                existing_doc = self.deduplicator.get_existing_document(content_hash)
+                existing_job_id = existing_doc["job_id"]
+
+                logger.info("Duplicate document detected - reusing existing processing",
+                           new_job_id=job_id,
+                           existing_job_id=existing_job_id,
+                           filename=file.filename,
+                           upload_count=existing_doc["upload_count"] + 1)
+
+                # Update duplicate tracking
+                self.deduplicator.update_duplicate_upload(content_hash, job_id, file.filename)
+
+                # Create a job entry that points to existing processed data
+                self.processing_jobs[job_id] = {
+                    'status': 'completed',
+                    'user_id': user_id,
+                    'filename': file.filename,
+                    'metadata': metadata_dict,
+                    'created_at': datetime.utcnow().isoformat(),
+                    'completed_at': datetime.utcnow().isoformat(),
+                    'progress': 100,
+                    'duplicate_of': existing_job_id,
+                    'content_hash': content_hash,
+                    'deduplication_info': {
+                        'is_duplicate': True,
+                        'original_job_id': existing_job_id,
+                        'original_filename': existing_doc["filename"],
+                        'original_upload_date': existing_doc["first_uploaded"],
+                        'total_uploads': existing_doc["upload_count"] + 1
+                    },
+                    'summary': {
+                        'summary': f"""**Duplicate Document Detected**
+
+This document is identical to a previously uploaded file and has been automatically linked to existing processed data.
+
+**Original Document:**
+- **Filename**: {existing_doc["filename"]}
+- **Job ID**: {existing_job_id}
+- **First Uploaded**: {existing_doc["first_uploaded"]}
+- **Upload Count**: {existing_doc["upload_count"] + 1}
+
+**Deduplication Benefits:**
+✅ No duplicate processing required
+✅ Instant availability for queries
+✅ Reduced storage and processing overhead
+✅ Consistent results across uploads
+
+**Current Upload:**
+- **New Job ID**: {job_id}
+- **Filename**: {file.filename}
+- **Content Hash**: {content_hash[:16]}...
+- **Status**: Linked to existing processed data
+
+All queries using either job ID will return the same results from the shared processed document.""",
+                        'key_insights': [
+                            'Document is identical to previously uploaded file',
+                            f'Linked to original job ID: {existing_job_id}',
+                            f'Total uploads of this content: {existing_doc["upload_count"] + 1}',
+                            'No additional processing required',
+                            'Instantly available for queries'
+                        ],
+                        'document_metadata': metadata_dict,
+                        'deduplication_metadata': {
+                            'content_hash': content_hash,
+                            'is_duplicate': True,
+                            'original_job_id': existing_job_id,
+                            'saves_processing_time': True
+                        },
+                        'generated_at': datetime.utcnow().isoformat(),
+                        'confidence': 1.0,
+                        'analysis_type': 'deduplication_link'
+                    }
+                }
+
+                return job_id
+
+            # New document - proceed with normal upload and processing
+            logger.info("New document detected - proceeding with full processing",
+                       job_id=job_id,
+                       filename=file.filename,
+                       content_hash=content_hash[:8] + "...")
+
+            # Reset file pointer for saving
+            file.file.seek(0)
+
             # Save file temporarily
             file_path = await self._save_uploaded_file(file, job_id)
-            
+
+            # Register document in deduplication database
+            self.deduplicator.register_document(
+                content_hash,
+                job_id,
+                file.filename,
+                len(file_content),
+                metadata_dict
+            )
+
             # Create processing job
             self.processing_jobs[job_id] = {
                 'status': 'queued',
@@ -155,22 +266,28 @@ class DocumentProcessor:
                 'file_path': str(file_path),
                 'metadata': metadata_dict,
                 'created_at': datetime.utcnow().isoformat(),
-                'progress': 0
+                'progress': 0,
+                'content_hash': content_hash,
+                'deduplication_info': {
+                    'is_duplicate': False,
+                    'is_original': True
+                }
             }
-            
+
             # Queue processing (in production, this would use Celery)
             asyncio.create_task(self._process_document_async(job_id))
-            
-            logger.info("Document upload queued", 
-                       job_id=job_id, 
+
+            logger.info("New document upload queued for processing",
+                       job_id=job_id,
                        filename=file.filename,
-                       user_id=user_id)
-            
+                       user_id=user_id,
+                       content_hash=content_hash[:8] + "...")
+
             return job_id
-            
+
         except Exception as e:
-            logger.error("Document upload failed", 
-                        error=str(e), 
+            logger.error("Document upload failed",
+                        error=str(e),
                         filename=getattr(file, 'filename', 'unknown'))
             raise HTTPException(status_code=400, detail=f"Upload failed: {str(e)}")
     
@@ -462,7 +579,7 @@ class DocumentProcessor:
             return "\n".join(text_parts)
             
         except Exception as e:
-            logger.error("CSV extraction failed", error=str(e))
+            logger.error("CSV extraction failed", exception_details=str(e))
             raise
     
     async def _extract_from_xlsx(self, file_path: Path) -> str:
@@ -486,7 +603,7 @@ class DocumentProcessor:
             return "\n".join(text_parts)
             
         except Exception as e:
-            logger.error("Excel extraction failed", error=str(e))
+            logger.error("Excel extraction failed", exception_details=str(e))
             raise
     
     async def _extract_from_powerpoint(self, file_path: Path) -> str:
@@ -615,7 +732,7 @@ class DocumentProcessor:
             return "\n".join(content_parts)
             
         except Exception as e:
-            logger.error("Image extraction failed", error=str(e))
+            logger.error("Image extraction failed", exception_details=str(e))
             raise
     
     def _generate_basic_summary(self, text_content: str, metadata: Dict[str, Any]) -> Dict[str, Any]:
@@ -789,7 +906,7 @@ class DocumentProcessor:
             }
             
         except Exception as e:
-            logger.error("Failed to generate basic summary", error=str(e))
+            logger.error("Failed to generate basic summary", exception_details=str(e))
             return {
                 "summary": f"Document '{metadata.get('title', 'Unknown')}' was processed successfully. Basic analysis not available.",
                 "key_insights": [],

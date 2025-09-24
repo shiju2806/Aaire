@@ -123,7 +123,7 @@ Be precise about what information is missing and suggest specific queries to fin
             return reflection
 
         except Exception as e:
-            self.logger.error("Retrieval evaluation failed", error=str(e))
+            self.logger.error("Retrieval evaluation failed", exception_details=str(e))
             return self._create_fallback_reflection(query, documents)
 
     def _prepare_document_summaries(self, documents: List[Dict[str, Any]]) -> str:
@@ -264,7 +264,7 @@ class ReflectiveRetriever:
                 self.logger.warning("No compatible retrieval method found")
                 return []
         except Exception as e:
-            self.logger.error("Base retrieval failed", error=str(e))
+            self.logger.error("Base retrieval failed", exception_details=str(e))
             return []
 
     async def _perform_targeted_retrieval(self, queries: List[str], **kwargs) -> List[Dict[str, Any]]:
@@ -276,7 +276,7 @@ class ReflectiveRetriever:
                 docs = await self._perform_base_retrieval(query, **kwargs)
                 all_docs.extend(docs)
             except Exception as e:
-                self.logger.error("Targeted retrieval failed", query=query, error=str(e))
+                self.logger.error("Targeted retrieval failed", query=query, exception_details=str(e))
 
         return all_docs
 

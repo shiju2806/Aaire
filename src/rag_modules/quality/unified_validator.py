@@ -116,7 +116,7 @@ class UnifiedQualityValidator(ServiceMixin):
             return result
 
         except Exception as e:
-            logger.error("Unified quality validation failed", error=str(e))
+            logger.error("Unified quality validation failed", exception_details=str(e))
             # Fail open - allow response generation if validation fails
             return ValidationResult(
                 is_valid=True,
@@ -157,7 +157,7 @@ class UnifiedQualityValidator(ServiceMixin):
             if openai_validator:
                 return openai_validator.validate_alignment(query, response, retrieved_docs)
         except Exception as e:
-            logger.warning("OpenAI alignment validation failed", error=str(e))
+            logger.warning("OpenAI alignment validation failed", exception_details=str(e))
 
         return None
 

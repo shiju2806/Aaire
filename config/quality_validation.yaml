@@ -10,10 +10,10 @@ quality_validation:
 
   # Thresholds - all configurable
   thresholds:
-    # Similarity thresholds (floats)
-    semantic_alignment_minimum: 0.75
-    grounding_score_minimum: 0.70
-    semantic_confidence_minimum: 0.65
+    # Similarity thresholds (floats) - adjusted for better keyword search results
+    semantic_alignment_minimum: 0.60
+    grounding_score_minimum: 0.55
+    semantic_confidence_minimum: 0.50
     similarity_threshold_base: 0.70
     similarity_threshold_min: 0.50
     similarity_threshold_max: 0.90
@@ -80,6 +80,15 @@ quality_validation:
       maximum: 0.9
     learning_rate: 0.05
     history_size: 1000
+
+  # Enhanced Whoosh classification settings
+  enhanced_whoosh:
+    enabled: true
+    classification_mode: "flexible"  # flexible | strict | off
+    jurisdiction_threshold: 0.4  # Lower from 0.7 for better recall
+    product_confidence_minimum: 0.3  # Minimum confidence for product classification
+    include_mixed_jurisdictions: true  # Include 'mixed' when searching for specific jurisdiction
+    fallback_to_vector: true  # Fall back to vector search when keyword returns 0 results
 
   # Performance settings
   performance:

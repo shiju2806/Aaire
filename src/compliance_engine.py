@@ -158,7 +158,7 @@ class ComplianceEngine:
         """Log compliance rule triggers for audit purposes - MVP-FR-019"""
         
         event_data = {
-            "event_type": "compliance_triggered",
+            "compliance_event_type": "compliance_triggered",
             "rule_name": rule_name,
             "query": query[:200],  # Truncate for logs
             "triggered_patterns": triggered_patterns,

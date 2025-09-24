@@ -620,17 +620,29 @@ Reply with just: VALID or NEEDS_FIXING"""
             unified_prompt = self._build_unified_formatting_prompt(pre_cleaned, query, formula_context)
 
             logger.info("🤖 Making single LLM call for all formatting operations")
-            if hasattr(self, 'llm_client') and self.llm_client:
-                # Use async client if available
-                response_obj = await self.llm_client.chat.completions.create(
-                    model=self.llm_model,
-                    messages=[{"role": "user", "content": unified_prompt}],
-                    temperature=0.1,
-                    max_tokens=4000
-                )
-                formatted_text = response_obj.choices[0].message.content
+
+            # Check if we have an async client by checking if it has async methods
+            has_async_client = (hasattr(self, 'llm_client') and self.llm_client and
+                              hasattr(self.llm_client, 'chat') and
+                              hasattr(self.llm_client.chat, 'completions'))
+
+            if has_async_client:
+                try:
+                    # Use async client
+                    response_obj = await self.llm_client.chat.completions.create(
+                        model=self.llm_model,
+                        messages=[{"role": "user", "content": unified_prompt}],
+                        temperature=0.1,
+                        max_tokens=4000
+                    )
+                    formatted_text = response_obj.choices[0].message.content
+                except Exception as e:
+                    logger.warning(f"Async client call failed: {e}, falling back to sync")
+                    # Fallback to sync client
+                    formatted_response = self.formatting_llm.complete(unified_prompt)
+                    formatted_text = formatted_response.text
             else:
-                # Fallback to sync client
+                # Use sync client (LlamaIndex wrapper)
                 formatted_response = self.formatting_llm.complete(unified_prompt)
                 formatted_text = formatted_response.text
 

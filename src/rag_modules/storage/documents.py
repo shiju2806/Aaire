@@ -135,7 +135,7 @@ class DocumentManager:
 
                 except Exception as e:
                     logger.warning(f"Document-level metadata extraction failed for document",
-                                 filename=filename, error=str(e))
+                                 filename=filename, exception_details=str(e))
                     # Create fallback document metadata
                     document_metadata_cache[filename] = {
                         'source_document': filename,
@@ -215,7 +215,7 @@ class DocumentManager:
 
                     except Exception as e:
                         logger.warning(f"Chunk metadata processing failed for chunk {chunk_index}",
-                                     filename=filename, error=str(e))
+                                     filename=filename, exception_details=str(e))
                         return 0  # Failure count
 
             # Process all chunks in parallel
@@ -305,7 +305,7 @@ class DocumentManager:
             return len(nodes)
 
         except Exception as e:
-            logger.error("Failed to add documents", error=str(e), doc_type=doc_type)
+            logger.error("Failed to add documents", exception_details=str(e), doc_type=doc_type)
             raise
 
     async def clear_all_documents(self) -> Dict[str, Any]:
@@ -341,7 +341,7 @@ class DocumentManager:
                 return {"status": "success", "message": "All documents cleared", "method": "local_recreate"}
 
         except Exception as e:
-            logger.error("Failed to clear all documents", error=str(e))
+            logger.error("Failed to clear all documents", exception_details=str(e))
             return {"status": "error", "error": str(e)}
 
     async def delete_document(self, job_id: str) -> Dict[str, Any]:
@@ -402,7 +402,7 @@ class DocumentManager:
             }
 
         except Exception as e:
-            logger.error(f"Failed to delete document from vector store", error=str(e), job_id=job_id)
+            logger.error(f"Failed to delete document from vector store", exception_details=str(e), job_id=job_id)
             return {
                 "status": "error",
                 "error": str(e),
@@ -451,7 +451,7 @@ class DocumentManager:
             }
 
         except Exception as e:
-            logger.error(f"Failed to cleanup orphaned chunks", error=str(e))
+            logger.error(f"Failed to cleanup orphaned chunks", exception_details=str(e))
             return {
                 "status": "error",
                 "error": str(e)
@@ -488,7 +488,7 @@ class DocumentManager:
             }
 
         except Exception as e:
-            logger.error(f"Failed to get all documents", error=str(e))
+            logger.error(f"Failed to get all documents", exception_details=str(e))
             return {
                 "status": "error",
                 "error": str(e)

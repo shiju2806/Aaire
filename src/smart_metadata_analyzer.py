@@ -166,7 +166,7 @@ class SmartMetadataAnalyzer:
             return metadata
 
         except Exception as e:
-            logger.error("Error in basic metadata extraction", error=str(e))
+            logger.error("Error in basic metadata extraction", exception_details=str(e))
             # Return minimal metadata as fallback
             return DocumentMetadata(
                 source_document=filename,
@@ -245,7 +245,7 @@ Examples:
             return doc_metadata
 
         except Exception as e:
-            logger.warning("Document-level metadata extraction failed, using basic", error=str(e))
+            logger.warning("Document-level metadata extraction failed, using basic", exception_details=str(e))
             return self._extract_document_metadata_basic(content, filename)
 
     async def extract_chunk_metadata(self, chunk_content: str, document_metadata: Dict[str, Any],
@@ -432,7 +432,7 @@ Enhanced Examples:
             return intent
 
         except Exception as e:
-            logger.warning("Smart intent analysis failed, using basic analysis", error=str(e))
+            logger.warning("Smart intent analysis failed, using basic analysis", exception_details=str(e))
             return self._analyze_intent_basic(query)
 
     def _detect_domain_basic(self, content: str, filename: str) -> str:

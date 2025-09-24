@@ -89,7 +89,7 @@ class ValidationService(ServiceMixin):
             return result
 
         except Exception as e:
-            logger.error("Validation failed", error=str(e))
+            logger.error("Validation failed", exception_details=str(e))
             processing_time = (time.time() - start_time) * 1000
 
             # Return permissive result on validation failure
@@ -135,7 +135,7 @@ class ValidationService(ServiceMixin):
                     self.validate_response(query, response, retrieved_docs, citations)
                 )
         except Exception as e:
-            logger.error("Sync validation failed", error=str(e))
+            logger.error("Sync validation failed", exception_details=str(e))
             # Return permissive result
             return ValidationResult(
                 passed=True,

@@ -111,7 +111,7 @@ class OpenAIAlignmentValidator:
             )
 
         except Exception as e:
-            logger.error("OpenAI alignment validation failed", error=str(e))
+            logger.error("OpenAI alignment validation failed", exception_details=str(e))
             # Fail open - allow response generation if validation fails
             return AlignmentResult(
                 is_aligned=True,
@@ -130,7 +130,7 @@ class OpenAIAlignmentValidator:
             )
             return response['data'][0]['embedding']
         except Exception as e:
-            logger.error("Failed to get OpenAI embedding", error=str(e))
+            logger.error("Failed to get OpenAI embedding", exception_details=str(e))
             # Return random embedding on error
             return np.random.rand(1536).tolist()
 

@@ -102,7 +102,7 @@ class SECEdgarConnector:
                     )
                     
         except Exception as e:
-            logger.error("SEC EDGAR search failed", error=str(e))
+            logger.error("SEC EDGAR search failed", exception_details=str(e))
             return APIResponse(
                 success=False,
                 error=str(e),
@@ -151,7 +151,7 @@ class SECEdgarConnector:
                     )
                     
         except Exception as e:
-            logger.error("SEC EDGAR filings request failed", error=str(e))
+            logger.error("SEC EDGAR filings request failed", exception_details=str(e))
             return APIResponse(
                 success=False,
                 error=str(e),
@@ -184,7 +184,7 @@ class SECEdgarConnector:
                     )
                     
         except Exception as e:
-            logger.error("SEC EDGAR content request failed", error=str(e))
+            logger.error("SEC EDGAR content request failed", exception_details=str(e))
             return APIResponse(
                 success=False,
                 error=str(e),
@@ -262,7 +262,7 @@ class FREDAPIConnector:
                     )
                     
         except Exception as e:
-            logger.error("FRED API request failed", error=str(e))
+            logger.error("FRED API request failed", exception_details=str(e))
             return APIResponse(
                 success=False,
                 error=str(e),
@@ -306,7 +306,7 @@ class FREDAPIConnector:
                     )
                     
         except Exception as e:
-            logger.error("FRED search failed", error=str(e))
+            logger.error("FRED search failed", exception_details=str(e))
             return APIResponse(
                 success=False,
                 error=str(e),
@@ -393,7 +393,7 @@ class ExternalAPIManager:
         except Exception as e:
             self.refresh_jobs[job_id]['status'] = 'failed'
             self.refresh_jobs[job_id]['error'] = str(e)
-            logger.error("External data refresh failed", job_id=job_id, error=str(e))
+            logger.error("External data refresh failed", job_id=job_id, exception_details=str(e))
     
     async def _refresh_sec_data(self, job_id: str):
         """Refresh SEC EDGAR data"""
@@ -446,7 +446,7 @@ class ExternalAPIManager:
             logger.info("SEC EDGAR data refreshed", document_count=len(documents))
             
         except Exception as e:
-            logger.error("SEC data refresh failed", error=str(e))
+            logger.error("SEC data refresh failed", exception_details=str(e))
             raise
     
     async def _refresh_fred_data(self, job_id: str):
@@ -490,7 +490,7 @@ class ExternalAPIManager:
             logger.info("FRED data refreshed", document_count=len(documents))
             
         except Exception as e:
-            logger.error("FRED data refresh failed", error=str(e))
+            logger.error("FRED data refresh failed", exception_details=str(e))
             raise
     
     async def get_refresh_status(self, job_id: str) -> Dict[str, Any]:

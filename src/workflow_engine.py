@@ -79,10 +79,10 @@ class WorkflowEngine:
                         self.templates[template.id] = template
                         logger.info("Loaded workflow template", template_id=template.id, name=template.name)
                 except Exception as e:
-                    logger.error("Failed to load template", file=str(template_file), error=str(e))
+                    logger.error("Failed to load template", file=str(template_file), exception_details=str(e))
         
         except Exception as e:
-            logger.error("Failed to load workflow templates", error=str(e))
+            logger.error("Failed to load workflow templates", exception_details=str(e))
     
     async def _create_default_templates(self):
         """Create default accounting workflow templates"""
@@ -324,7 +324,7 @@ class WorkflowEngine:
             }
             
         except Exception as e:
-            logger.error("Failed to start workflow", template_id=template_id, error=str(e))
+            logger.error("Failed to start workflow", template_id=template_id, exception_details=str(e))
             return {"error": str(e)}
     
     async def process_step_response(
@@ -385,7 +385,7 @@ class WorkflowEngine:
                 }
                 
         except Exception as e:
-            logger.error("Failed to process step response", session_id=session_id, error=str(e))
+            logger.error("Failed to process step response", session_id=session_id, exception_details=str(e))
             return {"error": str(e)}
     
     async def get_workflow_status(self, session_id: str) -> Dict[str, Any]:
@@ -478,5 +478,5 @@ class WorkflowEngine:
             return summary
             
         except Exception as e:
-            logger.error("Failed to generate workflow summary", error=str(e))
+            logger.error("Failed to generate workflow summary", exception_details=str(e))
             return {"error": "Could not generate summary"}
