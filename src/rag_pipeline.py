@@ -17,8 +17,8 @@ import re
 import json
 import numpy as np
 from collections import defaultdict
-from src.enhanced_whoosh_engine import EnhancedWhooshEngine, EnhancedSearchResult
-from src.intelligent_query_analyzer import IntelligentQueryAnalyzer, QueryIntent, JurisdictionHint, ProductHint
+from src.simple_whoosh_engine import SimpleWhooshEngine, SearchResult
+from src.nlp_query_processor import NLPQueryProcessor, ProcessedQuery
 
 # LlamaIndex imports - current version structure  
 from llama_index.core import (
@@ -50,25 +50,25 @@ except ImportError:
 import redis
 import structlog
 from src.relevance_engine import RelevanceEngine
-from extraction.bridge_adapter import IntelligentDocumentExtractor
-from enhanced_query_handler import EnhancedQueryHandler
-from conversation_memory import ConversationMemoryManager
-from extraction.document_processing_adapter import DocumentProcessingAdapter
-from extraction.models import QueryIntent, LegacyDocumentMetadata as DocumentMetadata
+from src.extraction.bridge_adapter import IntelligentDocumentExtractor
+from src.enhanced_query_handler import EnhancedQueryHandler
+from src.conversation_memory import ConversationMemoryManager
+from src.extraction.document_processing_adapter import DocumentProcessingAdapter
+from src.extraction.models import QueryIntent, LegacyDocumentMetadata as DocumentMetadata
 
 # Import modular components
-from rag_modules.core.response import RAGResponse
-from rag_modules.analysis.citations import CitationAnalyzer
-from rag_modules.cache.manager import CacheManager
-from rag_modules.formatting import FormattingManager, create_formatting_manager
-from rag_modules.query import QueryAnalyzer, create_query_analyzer
+from src.rag_modules.core.response import RAGResponse
+from src.rag_modules.analysis.citations import CitationAnalyzer
+from src.rag_modules.cache.manager import CacheManager
+from src.rag_modules.formatting import FormattingManager, create_formatting_manager
+from src.rag_modules.query import QueryAnalyzer, create_query_analyzer
 # Quality services now handled via dependency injection
-from rag_modules.services import DocumentRetriever, create_document_retriever
-from rag_modules.services import ResponseGenerator, create_response_generator
-from rag_modules.storage import DocumentManager, create_document_manager
+from src.rag_modules.services import DocumentRetriever, create_document_retriever
+from src.rag_modules.services import ResponseGenerator, create_response_generator
+from src.rag_modules.storage import DocumentManager, create_document_manager
 
 # Import enhanced modules
-from rag_modules.enhanced_pipeline import EnhancedRAGPipeline
+from src.rag_modules.enhanced_pipeline import EnhancedRAGPipeline
 
 logger = structlog.get_logger()
 
@@ -191,13 +191,13 @@ class RAGPipeline:
         self.cache_manager = CacheManager(self.cache)
 
         # Initialize new extracted modules using dependency injection
-        from rag_modules.core.dependency_injection import get_container
+        from src.rag_modules.core.dependency_injection import get_container
         container = get_container()
         self.formatting_manager = container.get_singleton('formatting_manager')
         self.query_analyzer = create_query_analyzer(llm=self.llm)
 
-        # Initialize intelligent query analyzer for jurisdiction/product awareness
-        self.intelligent_query_analyzer = IntelligentQueryAnalyzer()
+        # Initialize query expansion analyzer for term expansion
+        self.nlp_query_processor = NLPQueryProcessor()
 
         # Initialize quality services via dependency injection
         self.quality_metrics_service = container.get_singleton('quality_metrics_service')
@@ -208,10 +208,10 @@ class RAGPipeline:
             vector_index=None,  # Will be set after index creation
             whoosh_engine=self.whoosh_engine,
             relevance_engine=self.relevance_engine,
-            metadata_analyzer=self.metadata_analyzer,
             quality_metrics_manager=self.quality_metrics_service,
             config=self.config,
-            llm_client=self.async_client  # Pass LLM client for framework detection
+            llm_client=self.async_client,  # Pass LLM client for framework detection
+            nlp_query_processor=self.nlp_query_processor
         )
 
         self.response_generator = create_response_generator(
@@ -264,7 +264,7 @@ class RAGPipeline:
                    model=self.config['llm_config']['model'],
                    embedding_model=self.config['embedding_config']['model'],
                    memory_enabled=self.cache is not None,
-                   smart_filtering=self.metadata_analyzer.smart_filtering_enabled,
+                   smart_filtering=True,  # Using intelligent_query_analyzer instead
                    structured_response_enabled=True,
                    enhanced_features_enabled=self.enhanced_features_enabled)
     
@@ -308,7 +308,7 @@ class RAGPipeline:
             return True
             
         except Exception as e:
-            logger.error("❌ Qdrant initialization failed", error=str(e), exc_info=True)
+            logger.error("❌ Qdrant initialization failed", exception_details=str(e), exc_info=True)
             return False
     
     def _init_cache(self):
@@ -324,7 +324,7 @@ class RAGPipeline:
             self.cache.ping()
             logger.info("Redis cache initialized")
         except Exception as e:
-            logger.info("Redis cache not available, continuing without cache", error=str(e)[:50])
+            logger.info("Redis cache not available, continuing without cache", exception_details=str(e)[:50])
             self.cache = None
     
     def _init_hybrid_search(self):
@@ -332,8 +332,8 @@ class RAGPipeline:
         try:
             # Initialize Enhanced Whoosh search engine with jurisdiction/product awareness
             from pathlib import Path
-            self.whoosh_engine = EnhancedWhooshEngine(
-                index_dir=Path("enhanced_search_index")
+            self.whoosh_engine = SimpleWhooshEngine(
+                index_dir=Path("simple_search_index")
             )
             self.keyword_search_ready = False
             logger.info("✅ Whoosh search engine initialized")
@@ -348,7 +348,7 @@ class RAGPipeline:
             logger.info("🚀 Whoosh backfill started in background")
 
         except Exception as e:
-            logger.error("Failed to initialize Whoosh search", error=str(e))
+            logger.error("Failed to initialize Whoosh search", exception_details=str(e))
             # Set fallback values
             self.whoosh_engine = None
             self.keyword_search_ready = False
@@ -481,12 +481,13 @@ class RAGPipeline:
         return await self.document_manager.add_documents(documents, doc_type)
     
     async def process_query(
-        self, 
-        query: str, 
+        self,
+        query: str,
         filters: Optional[Dict[str, Any]] = None,
         user_context: Optional[Dict[str, Any]] = None,
         session_id: Optional[str] = None,
-        conversation_history: Optional[List[Dict]] = None
+        conversation_history: Optional[List[Dict]] = None,
+        query_intent: Optional[Any] = None
     ) -> RAGResponse:
         """
         Process a user query through the RAG pipeline with conversation memory
@@ -537,9 +538,20 @@ class RAGPipeline:
             
             # Store current query for citation filtering
             self._current_query = query
-            
+
+            # Process query using NLP-based semantic analysis
+            processed_query = self.nlp_query_processor.process_query(query)
+            logger.info("NLP query processing completed",
+                       original_query=processed_query.original_query,
+                       key_phrases_count=len(processed_query.key_phrases),
+                       entities_count=len(processed_query.key_entities),
+                       intent=processed_query.query_intent,
+                       semantic_keywords=processed_query.semantic_keywords[:3])
+
             # ALWAYS search uploaded documents first
-            retrieved_docs = await self.document_retriever.retrieve_documents(expanded_query, doc_type_filter, similarity_threshold, filters)
+            # Use processed query for better matching
+            search_query = self.nlp_query_processor.generate_search_query(processed_query, mode='focused')
+            retrieved_docs = await self.document_retriever.retrieve_documents(search_query, doc_type_filter, similarity_threshold, filters)
             
             # Check if we found relevant documents in uploaded content
             if retrieved_docs and len(retrieved_docs) > 0:
@@ -682,7 +694,7 @@ class RAGPipeline:
             return rag_response
 
         except Exception as e:
-            logger.error("Failed to process query", error=str(e), query=query[:100])
+            logger.error("Failed to process query", exception_details=str(e), query=query[:100])
             raise
 
     async def process_query_enhanced(
@@ -714,7 +726,7 @@ class RAGPipeline:
 
         if not self.enhanced_features_enabled or not self.enhanced_pipeline:
             logger.warning("Enhanced features not available, falling back to standard processing")
-            standard_response = await self.process_query(query, filters, user_context, session_id, conversation_history)
+            standard_response = await self.process_query(query, filters, user_context, session_id, conversation_history, query_intent)
             return {
                 "response": standard_response.answer,
                 "documents": [{"content": c.content, "metadata": c.metadata} for c in standard_response.citations] if standard_response.citations else [],
@@ -738,12 +750,13 @@ class RAGPipeline:
                 # Determine document type filter
                 doc_type_filter = self._get_doc_type_filter(filters)
 
-                # Expand query for better retrieval
-                expanded_query = self.query_analyzer.expand_query(search_query)
+                # Process query using NLP analyzer
+                processed_query_obj = self.nlp_query_processor.process_query(search_query)
+                expanded_query_str = self.nlp_query_processor.generate_search_query(processed_query_obj, mode='focused')
 
-                # Retrieve documents using existing system with query intent
+                # Retrieve documents using simplified approach
                 retrieved_docs = await self.document_retriever.retrieve_documents(
-                    expanded_query, doc_type_filter, similarity_threshold, filters, query_intent
+                    expanded_query_str, doc_type_filter, similarity_threshold, filters
                 )
 
                 # Convert to format expected by enhanced pipeline
@@ -797,7 +810,7 @@ class RAGPipeline:
             logger.info("Falling back to standard processing")
 
             # Fallback to standard processing
-            standard_response = await self.process_query(query, filters, user_context, session_id, conversation_history)
+            standard_response = await self.process_query(query, filters, user_context, session_id, conversation_history, query_intent)
             return {
                 "response": standard_response.answer,
                 "documents": [{"content": c.content, "metadata": c.metadata} for c in standard_response.citations] if standard_response.citations else [],
@@ -866,7 +879,7 @@ class RAGPipeline:
             return questions[:3]  # Limit to 3 questions
             
         except Exception as e:
-            logger.error("Follow-up generation failed", error=str(e))
+            logger.error("Follow-up generation failed", exception_details=str(e))
             return []
     
 
@@ -1151,7 +1164,7 @@ Provide a detailed response covering all information that relates to the questio
                 return {"status": "success", "message": "All documents cleared", "method": "local_recreate"}
                 
         except Exception as e:
-            logger.error("Failed to clear all documents", error=str(e))
+            logger.error("Failed to clear all documents", exception_details=str(e))
             return {"status": "error", "error": str(e)}
 
     async def delete_document(self, job_id: str) -> Dict[str, Any]:
@@ -1201,7 +1214,7 @@ Provide a detailed response covering all information that relates to the questio
             }
             
         except Exception as e:
-            logger.error(f"Failed to cleanup orphaned chunks", error=str(e))
+            logger.error(f"Failed to cleanup orphaned chunks", exception_details=str(e))
             return {
                 "status": "error",
                 "error": str(e)
@@ -1238,7 +1251,7 @@ Provide a detailed response covering all information that relates to the questio
             }
             
         except Exception as e:
-            logger.error(f"Failed to get all documents", error=str(e))
+            logger.error(f"Failed to get all documents", exception_details=str(e))
             return {
                 "status": "error",
                 "error": str(e)
@@ -1261,7 +1274,7 @@ Provide a detailed response covering all information that relates to the questio
                 "cleared_entries": cleared_count
             }
         except Exception as e:
-            logger.error("Failed to clear cache", error=str(e))
+            logger.error("Failed to clear cache", exception_details=str(e))
             return {
                 "status": "error",
                 "error": str(e)
@@ -1395,7 +1408,7 @@ Use professional, precise language with specific details. Include relevant accou
             }
             
         except Exception as e:
-            logger.error("Failed to generate document summary", error=str(e))
+            logger.error("Failed to generate document summary", exception_details=str(e))
             return {
                 "summary": "Unable to generate summary at this time. The document has been processed and indexed for search.",
                 "key_insights": [],
@@ -1469,7 +1482,7 @@ Use professional, precise language with specific details. Include relevant accou
         """
         try:
             # Import the enhanced components
-            from extraction.bridge_adapter import IntelligentDocumentExtractor
+            from src.extraction.bridge_adapter import IntelligentDocumentExtractor
 
             # Initialize components
             query_handler = EnhancedQueryHandler(self.llm)
@@ -1479,15 +1492,15 @@ Use professional, precise language with specific details. Include relevant accou
                        query=query[:100], 
                        session_id=session_id)
             
-            # Step 1: Intelligent query analysis for jurisdiction/product awareness
-            query_intent = self.intelligent_query_analyzer.analyze_query(query)
+            # Step 1: NLP-based query processing for better term matching
+            processed_query = self.nlp_query_processor.process_query(query)
 
-            logger.info("Query intent analysis completed",
-                       jurisdiction=query_intent.jurisdiction_hint.value,
-                       product=query_intent.product_hint.value,
-                       jurisdiction_confidence=query_intent.jurisdiction_confidence,
-                       product_confidence=query_intent.product_confidence,
-                       disambiguation_needed=query_intent.disambiguation_needed)
+            logger.info("NLP query processing completed",
+                       original_query=processed_query.original_query,
+                       key_phrases_count=len(processed_query.key_phrases),
+                       entities_count=len(processed_query.key_entities),
+                       intent=processed_query.query_intent,
+                       semantic_keywords=processed_query.semantic_keywords)
 
             # Step 2: Analyze query to determine processing strategy
             routing_decision = await query_handler.route_query(query, user_context)
@@ -1549,7 +1562,7 @@ Use professional, precise language with specific details. Include relevant accou
                 else:
                     logger.warning("Enhanced RAG requested but not available, falling back to standard")
                     return await self.process_query(
-                        query, filters, user_context, session_id, conversation_history
+                        query, filters, user_context, session_id, conversation_history, query_intent
                     )
             else:
                 # Fall back to standard RAG processing
@@ -1559,10 +1572,9 @@ Use professional, precise language with specific details. Include relevant accou
                 )
                 
         except Exception as e:
-            logger.error("Enhanced query processing failed", 
-                        error=str(e), 
-                        query=query[:50],
-                        event="Enhanced query processing failed")
+            logger.error("Enhanced query processing failed",
+                        error=str(e),
+                        query=query[:50])
             
             # Fallback to standard processing
             logger.info("Falling back to standard RAG processing")
@@ -1646,7 +1658,7 @@ Use professional, precise language with specific details. Include relevant accou
             return rag_response
             
         except Exception as e:
-            logger.error("Intelligent extraction processing failed", error=str(e))
+            logger.error("Intelligent extraction processing failed", exception_details=str(e))
             # Return the basic RAG response if enhancement fails
             return await self.process_query(
                 query, filters, user_context, session_id, conversation_history
@@ -1827,7 +1839,7 @@ Return JSON with:
             # Also check for framework detection using LLM
             framework_detected = False
             try:
-                from rag_modules.filtering import LLMFrameworkDetector
+                from src.rag_modules.filtering import LLMFrameworkDetector
                 detector = LLMFrameworkDetector(self.async_client)
                 framework_detection = await detector.detect_framework(query)
                 framework_detected = framework_detection.primary_framework is not None

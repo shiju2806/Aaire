@@ -27,15 +27,15 @@ class DocumentRetriever:
     """Handles document retrieval operations with hybrid search capabilities"""
 
     def __init__(self, vector_index=None, whoosh_engine=None, relevance_engine=None,
-                 metadata_analyzer=None, quality_metrics_manager=None, config=None, llm_client=None):
+                 quality_metrics_manager=None, config=None, llm_client=None, nlp_query_processor=None):
         """Initialize retriever with required components"""
         self.index = vector_index
         self.whoosh_engine = whoosh_engine
         self.relevance_engine = relevance_engine
-        self.metadata_analyzer = metadata_analyzer
         self.quality_metrics_manager = quality_metrics_manager
         self.config = config or {}
         self.llm_client = llm_client
+        self.nlp_query_processor = nlp_query_processor
 
         # Derived attributes
         self.keyword_search_ready = whoosh_engine is not None
@@ -47,7 +47,7 @@ class DocumentRetriever:
                 self.framework_filter = create_llm_framework_filter(llm_client)
                 logger.info("LLM-based framework filtering enabled")
             except Exception as e:
-                logger.warning("LLM framework filter initialization failed", error=str(e))
+                logger.warning("LLM framework filter initialization failed", exception_details=str(e))
                 self.framework_filter = None
         else:
             logger.info("LLM framework filtering not available", has_filter=create_llm_framework_filter is not None, has_client=llm_client is not None)
@@ -58,39 +58,37 @@ class DocumentRetriever:
                                query_intent: Optional[Any] = None) -> List[Dict]:
         """Hybrid retrieval: combines vector search with BM25 keyword search using buffer approach"""
 
-        # Analyze query intent for smart filtering
-        try:
-            query_intent = await self.metadata_analyzer.analyze_query_intent(query)
-            logger.info(f"Query intent analyzed",
+        # Use provided query intent from intelligent analyzer or fallback to metadata analyzer
+        smart_filters = filters.copy() if filters else {}
+        use_smart_filtering = False
+
+        if query_intent is not None:
+            # Use perfect intent analysis from intelligent_query_analyzer
+            logger.info(f"Using provided query intent from intelligent analysis",
                        query=query[:50],
-                       confidence=query_intent.confidence,
-                       domains=query_intent.content_domains,
-                       framework=query_intent.required_filters.get('framework'),
-                       tags=query_intent.context_tags[:3])  # First 3 tags for brevity
+                       jurisdiction=getattr(query_intent, 'jurisdiction_hint', 'unknown'),
+                       product=getattr(query_intent, 'product_hint', 'unknown'),
+                       jurisdiction_confidence=getattr(query_intent, 'jurisdiction_confidence', 0.0),
+                       product_confidence=getattr(query_intent, 'product_confidence', 0.0))
+            # Smart filtering with intelligent analyzer results is always enabled if high confidence
+            use_smart_filtering = (getattr(query_intent, 'jurisdiction_confidence', 0.0) > 0.8 or
+                                 getattr(query_intent, 'product_confidence', 0.0) > 0.8)
+        else:
+            # No query intent provided - proceed without smart filtering
+            logger.info("No query intent provided - proceeding with standard retrieval")
+            query_intent = None
+            use_smart_filtering = False
 
-            # Apply smart filtering if confidence is high enough
-            if query_intent.confidence > 0.6 and self.metadata_analyzer.smart_filtering_enabled:
-                # Merge intent-based filters with existing filters
-                smart_filters = filters.copy() if filters else {}
-
-                # Apply required filters from intent analysis
-                for key, value in query_intent.required_filters.items():
-                    smart_filters[key] = value
-
-                # Apply excluded filters (handled in vector/keyword search methods)
-                if query_intent.excluded_filters:
-                    smart_filters['_excluded'] = query_intent.excluded_filters
-
-                logger.info(f"Smart filtering applied",
-                           original_filters=filters,
-                           smart_filters=smart_filters,
-                           confidence=query_intent.confidence)
-
-                filters = smart_filters
+        # Apply smart filtering if appropriate
+        try:
+            if use_smart_filtering and query_intent:
+                logger.info(f"Query intent available for filtering",
+                           jurisdiction=getattr(query_intent, 'jurisdiction_hint', None),
+                           product=getattr(query_intent, 'product_hint', None),
+                           jurisdiction_confidence=getattr(query_intent, 'jurisdiction_confidence', None),
+                           product_confidence=getattr(query_intent, 'product_confidence', None))
             else:
-                logger.debug(f"Smart filtering skipped",
-                           confidence=query_intent.confidence,
-                           enabled=self.metadata_analyzer.smart_filtering_enabled)
+                logger.debug(f"Smart filtering skipped - criteria not met")
 
         except Exception as e:
             logger.warning(f"Query intent analysis failed, proceeding without smart filtering",
@@ -147,7 +145,7 @@ class DocumentRetriever:
                 logger.info("Framework filtering applied",
                            framework_adjustments=len([r for r in filtered_results if r.get('framework_analysis', {}).get('alignment_score', 1.0) != 1.0]))
             except Exception as e:
-                logger.warning("Framework filtering failed, continuing without", error=str(e))
+                logger.warning("Framework filtering failed, continuing without", exception_details=str(e))
 
         # Apply the document limit to the final combined results
         if len(combined_results) > doc_limit:
@@ -253,7 +251,7 @@ class DocumentRetriever:
                     })
 
         except Exception as e:
-            logger.warning("Failed to retrieve from index", error=str(e))
+            logger.warning("Failed to retrieve from index", exception_details=str(e))
 
         # Sort by relevance score
         all_results.sort(key=lambda x: x['score'], reverse=True)
@@ -281,28 +279,72 @@ class DocumentRetriever:
                 # For standalone search, allocate 30% to keyword search
                 keyword_limit = int(doc_limit * 0.3)
 
-            # Convert filters to Whoosh format, including query intent
-            whoosh_filters = self.convert_filters_for_whoosh(filters, doc_type_filter, query_intent)
+            # Process query with NLP processor for better semantic search if available
+            processed_query = query  # Default to original query
+            if self.nlp_query_processor:
+                try:
+                    nlp_result = self.nlp_query_processor.process_query(query)
+                    # Use focused query generation for keyword search to get precise terms
+                    processed_query = self.nlp_query_processor.generate_search_query(nlp_result, mode="focused")
+                    logger.info(f"🧠 NLP Query Processing: '{query}' → '{processed_query}'")
+                    logger.info(f"🔍 NLP extracted entities: {nlp_result.key_entities}")
+                    logger.info(f"🔍 NLP extracted phrases: {nlp_result.key_phrases}")
+                except Exception as e:
+                    logger.warning(f"NLP query processing failed, using original query: {str(e)}")
+                    processed_query = query
 
-            # Use original query - let Whoosh handle parsing intelligently
-            search_query = query
+            # Extract jurisdiction and product hints from query intent for Enhanced Whoosh
+            jurisdiction_hint = None
+            product_hint = None
 
-            # Perform Whoosh search
-            search_results = self.whoosh_engine.search(
-                query=search_query,
-                filters=whoosh_filters,
-                limit=keyword_limit,
-                highlight=False
-            )
+            if query_intent:
+                # Extract jurisdiction hint
+                if hasattr(query_intent, 'jurisdiction_hint') and query_intent.jurisdiction_hint:
+                    if hasattr(query_intent.jurisdiction_hint, 'value'):
+                        jurisdiction_hint = query_intent.jurisdiction_hint.value
+                    else:
+                        jurisdiction_hint = str(query_intent.jurisdiction_hint)
+
+                    if jurisdiction_hint == 'unknown':
+                        jurisdiction_hint = None
+
+                # Extract product hint
+                if hasattr(query_intent, 'product_hint') and query_intent.product_hint:
+                    if hasattr(query_intent.product_hint, 'value'):
+                        product_hint = query_intent.product_hint.value
+                    else:
+                        product_hint = str(query_intent.product_hint)
+
+                    if product_hint == 'unknown':
+                        product_hint = None
+
+            # Use Enhanced Whoosh with jurisdiction/product filtering
+            if hasattr(self.whoosh_engine, 'search_with_context'):
+                logger.info(f"Using Enhanced Whoosh with jurisdiction: {jurisdiction_hint}, product: {product_hint}")
+                search_results = self.whoosh_engine.search_with_context(
+                    query=processed_query,
+                    jurisdiction_hint=jurisdiction_hint,
+                    product_hint=product_hint,
+                    limit=keyword_limit
+                )
+            else:
+                # Fallback to legacy search for backward compatibility
+                whoosh_filters = self.convert_filters_for_whoosh(filters, doc_type_filter, query_intent)
+                search_results = self.whoosh_engine.search(
+                    query=processed_query,
+                    filters=whoosh_filters,
+                    limit=keyword_limit,
+                    highlight=False
+                )
 
             # Convert Whoosh SearchResults to our format
             for search_result in search_results:
                 results.append({
-                    'content': search_result.content,
-                    'metadata': search_result.metadata,
-                    'score': search_result.score,
-                    'source_type': search_result.metadata.get('doc_type', 'unknown'),
-                    'node_id': search_result.doc_id,
+                    'content': search_result['content'],
+                    'metadata': search_result['metadata'],
+                    'score': search_result['score'],
+                    'source_type': search_result['metadata'].get('doc_type', 'unknown'),
+                    'node_id': search_result.get('node_id', search_result.get('id', '')),
                     'search_type': 'keyword'
                 })
 
@@ -314,7 +356,7 @@ class DocumentRetriever:
                 logger.info(f"🔍 DEBUG result {i+1}: doc_id={result['node_id']}, score={result['score']:.3f}, preview='{content_preview}...'")
 
         except Exception as e:
-            logger.error("Failed to perform Whoosh keyword search", error=str(e))
+            logger.error("Failed to perform Whoosh keyword search", exception_details=str(e))
 
         return results
 
@@ -460,7 +502,7 @@ class DocumentRetriever:
             return final_results
 
         except Exception as e:
-            logger.error("Failed to combine search results", error=str(e))
+            logger.error("Failed to combine search results", exception_details=str(e))
             # Fallback to vector results only with dynamic limit
             doc_limit = self.quality_metrics_manager.get_document_limit(query)
             return vector_results[:doc_limit]
@@ -474,14 +516,14 @@ class DocumentRetriever:
 
 
 def create_document_retriever(vector_index=None, whoosh_engine=None, relevance_engine=None,
-                            metadata_analyzer=None, quality_metrics_manager=None, config=None, llm_client=None):
+                            quality_metrics_manager=None, config=None, llm_client=None, nlp_query_processor=None):
     """Factory function to create a DocumentRetriever instance"""
     return DocumentRetriever(
         vector_index=vector_index,
         whoosh_engine=whoosh_engine,
         relevance_engine=relevance_engine,
-        metadata_analyzer=metadata_analyzer,
         quality_metrics_manager=quality_metrics_manager,
         config=config,
-        llm_client=llm_client
+        llm_client=llm_client,
+        nlp_query_processor=nlp_query_processor
     )
