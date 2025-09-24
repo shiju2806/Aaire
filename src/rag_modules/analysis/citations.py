@@ -33,11 +33,23 @@ class CitationAnalyzer:
         doc_summaries = []
         for i, doc in enumerate(retrieved_docs[:10]):  # Limit to top 10 for LLM analysis
             metadata = doc.get('metadata', {})
-            filename = (metadata.get('title') or
-                       metadata.get('filename') or
-                       metadata.get('source_document') or
-                       metadata.get('file_name') or
-                       f'Document_{i+1}')
+            filename = (
+                # Standard metadata fields
+                metadata.get('title') or
+                metadata.get('filename') or
+                metadata.get('source_document') or
+                metadata.get('file_name') or
+                metadata.get('source') or
+                metadata.get('document_name') or
+                metadata.get('name') or
+                # Check document root level for source info
+                doc.get('filename') or
+                doc.get('title') or
+                doc.get('source') or
+                doc.get('document_name') or
+                # Fallback with index
+                f'Document_{i+1}'
+            )
 
             content_preview = doc.get('content', '')[:500]  # First 500 chars
             doc_summaries.append({
@@ -139,11 +151,25 @@ Your response:"""
             top_doc = retrieved_docs[0]
             # Enhanced filename extraction with better fallback handling
             metadata = top_doc.get('metadata', {})
-            filename = (metadata.get('title') or
-                       metadata.get('filename') or
-                       metadata.get('source_document') or
-                       metadata.get('file_name') or
-                       'Unknown')
+            filename = (
+                # Standard metadata fields
+                metadata.get('title') or
+                metadata.get('filename') or
+                metadata.get('source_document') or
+                metadata.get('file_name') or
+                metadata.get('source') or
+                metadata.get('document_name') or
+                metadata.get('name') or
+                # Check document root level for source info
+                top_doc.get('filename') or
+                top_doc.get('title') or
+                top_doc.get('source') or
+                top_doc.get('document_name') or
+                # Check if there's a source_type that gives hints
+                (f"Document ({metadata.get('source_type', 'unknown')} source)" if metadata.get('source_type') and metadata.get('source_type') != 'unknown' else None) or
+                # Last resort
+                'Unknown'
+            )
 
             # Clean up filename if it contains file extension or path
             if filename != 'Unknown':
@@ -222,11 +248,27 @@ Your response:"""
 
             # Enhanced filename extraction with better fallback handling
             metadata = doc.get('metadata', {})
-            filename = (metadata.get('title') or
-                       metadata.get('filename') or
-                       metadata.get('source_document') or
-                       metadata.get('file_name') or
-                       'Unknown')
+
+            # Try multiple metadata extraction approaches
+            filename = (
+                # Standard metadata fields
+                metadata.get('title') or
+                metadata.get('filename') or
+                metadata.get('source_document') or
+                metadata.get('file_name') or
+                metadata.get('source') or
+                metadata.get('document_name') or
+                metadata.get('name') or
+                # Check document root level for source info
+                doc.get('filename') or
+                doc.get('title') or
+                doc.get('source') or
+                doc.get('document_name') or
+                # Check if there's a source_type that gives hints
+                (f"Document ({metadata.get('source_type', 'unknown')} source)" if metadata.get('source_type') and metadata.get('source_type') != 'unknown' else None) or
+                # Last resort
+                'Unknown'
+            )
 
             # Clean up filename if it contains file extension or path
             if filename != 'Unknown':
@@ -340,11 +382,25 @@ Your response:"""
 
             # Enhanced filename extraction with logging
             metadata = doc.get('metadata', {})
-            filename = (metadata.get('title') or
-                       metadata.get('filename') or
-                       metadata.get('source_document') or
-                       metadata.get('file_name') or
-                       'Unknown')
+            filename = (
+                # Standard metadata fields
+                metadata.get('title') or
+                metadata.get('filename') or
+                metadata.get('source_document') or
+                metadata.get('file_name') or
+                metadata.get('source') or
+                metadata.get('document_name') or
+                metadata.get('name') or
+                # Check document root level for source info
+                doc.get('filename') or
+                doc.get('title') or
+                doc.get('source') or
+                doc.get('document_name') or
+                # Check if there's a source_type that gives hints
+                (f"Document ({metadata.get('source_type', 'unknown')} source)" if metadata.get('source_type') and metadata.get('source_type') != 'unknown' else None) or
+                # Last resort
+                'Unknown'
+            )
 
             # Log metadata for first document to debug (use info level to ensure visibility)
             if i == 0:

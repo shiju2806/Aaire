@@ -9,8 +9,9 @@ import numpy as np
 from typing import Dict, List, Optional
 from dataclasses import dataclass
 import structlog
-import openai
+from openai import OpenAI
 from sklearn.metrics.pairwise import cosine_similarity
+import os
 
 logger = structlog.get_logger()
 
@@ -41,6 +42,9 @@ class OpenAIAlignmentValidator:
         """
         self.model = model
         self.config = config
+
+        # Initialize OpenAI client
+        self.client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
 
         # Use configuration thresholds if available, otherwise use defaults
         if config:
@@ -132,11 +136,11 @@ class OpenAIAlignmentValidator:
     def _get_embedding(self, text: str) -> List[float]:
         """Get embedding from OpenAI API"""
         try:
-            response = openai.Embedding.create(
+            response = self.client.embeddings.create(
                 model=self.model,
                 input=text
             )
-            return response['data'][0]['embedding']
+            return response.data[0].embedding
         except Exception as e:
             logger.error("Failed to get OpenAI embedding", exception_details=str(e))
             # Return random embedding on error

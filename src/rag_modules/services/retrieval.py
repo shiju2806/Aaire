@@ -20,6 +20,18 @@ try:
 except ImportError:
     create_llm_framework_filter = None
 
+# Quality validation imports
+try:
+    from ..quality.semantic_alignment_validator import SemanticAlignmentValidator
+    from ..quality.unified_validator import UnifiedQualityValidator
+    from ..retrieval.reflective_retriever import ReflectiveRetriever
+    QUALITY_VALIDATORS_AVAILABLE = True
+except ImportError:
+    SemanticAlignmentValidator = None
+    UnifiedQualityValidator = None
+    ReflectiveRetriever = None
+    QUALITY_VALIDATORS_AVAILABLE = False
+
 logger = structlog.get_logger()
 
 
@@ -39,6 +51,40 @@ class DocumentRetriever:
 
         # Derived attributes
         self.keyword_search_ready = whoosh_engine is not None
+
+        # Initialize quality validators
+        self.semantic_validator = None
+        self.quality_validator = None
+        self.reflective_retriever = None
+
+        if QUALITY_VALIDATORS_AVAILABLE and config:
+            try:
+                # Initialize semantic alignment validator with config
+                self.semantic_validator = SemanticAlignmentValidator(config=config)
+                logger.info("Semantic alignment validator initialized")
+
+                # Initialize unified quality validator with config
+                self.quality_validator = UnifiedQualityValidator(config=config)
+                logger.info("Unified quality validator initialized")
+
+                # Initialize reflective retriever if LLM client available
+                if llm_client:
+                    self.reflective_retriever = ReflectiveRetriever(
+                        base_retriever=self,
+                        llm_client=llm_client,
+                        config=config.config if hasattr(config, 'config') else {}
+                    )
+                    logger.info("Reflective retriever initialized")
+
+            except Exception as e:
+                logger.warning("Quality validator initialization failed", exception_details=str(e))
+                self.semantic_validator = None
+                self.quality_validator = None
+                self.reflective_retriever = None
+        else:
+            logger.info("Quality validators not available",
+                       validators_available=QUALITY_VALIDATORS_AVAILABLE,
+                       has_config=config is not None)
 
         # Initialize LLM-based framework filter for actuarial content
         self.framework_filter = None
@@ -95,7 +141,7 @@ class DocumentRetriever:
                          error=str(e))
 
         # Get the target document limit
-        doc_limit = self.quality_metrics_manager.get_document_limit(query)
+        doc_limit = self.quality_metrics_manager.get_document_limit(query) if self.quality_metrics_manager else 20
 
         # Use buffer approach: both searches get the full limit to ensure we don't miss important documents
         # This allows the best documents from either method to compete fairly
@@ -152,6 +198,44 @@ class DocumentRetriever:
             logger.info(f"Trimming combined results from {len(combined_results)} to {doc_limit}")
             combined_results = combined_results[:doc_limit]
 
+        # Apply semantic alignment validation
+        if self.semantic_validator and combined_results:
+            try:
+                semantic_result = self.semantic_validator.validate_alignment(query, combined_results)
+
+                if not semantic_result.is_aligned:
+                    logger.warning("Semantic alignment validation failed",
+                                 alignment_score=semantic_result.alignment_score,
+                                 confidence=semantic_result.confidence,
+                                 explanation=semantic_result.explanation)
+
+                    # Use reflective retrieval for quality improvement if available
+                    if self.reflective_retriever:
+                        logger.info("Attempting retrieval improvement with reflective retriever")
+                        try:
+                            reflective_result = await self.reflective_retriever.retrieve_with_reflection(
+                                query,
+                                doc_type_filter=doc_type_filter,
+                                similarity_threshold=similarity_threshold,
+                                filters=filters,
+                                query_intent=query_intent
+                            )
+                            if reflective_result.improvement_achieved:
+                                logger.info("Reflective retrieval improved results",
+                                           original_docs=len(combined_results),
+                                           improved_docs=len(reflective_result.documents),
+                                           quality_improvement=reflective_result.final_quality_score)
+                                combined_results = reflective_result.documents[:doc_limit]
+                        except Exception as e:
+                            logger.warning("Reflective retrieval failed", exception_details=str(e))
+                else:
+                    logger.info("Semantic alignment validation passed",
+                               alignment_score=semantic_result.alignment_score,
+                               confidence=semantic_result.confidence)
+
+            except Exception as e:
+                logger.warning("Semantic validation failed", exception_details=str(e))
+
         return combined_results
 
     async def vector_search(self, query: str, doc_type_filter: Optional[List[str]],
@@ -167,7 +251,7 @@ class DocumentRetriever:
                 vector_limit = buffer_limit
             else:
                 # Get dynamic document limit based on query
-                doc_limit = self.quality_metrics_manager.get_document_limit(query)
+                doc_limit = self.quality_metrics_manager.get_document_limit(query) if self.quality_metrics_manager else 20 if self.quality_metrics_manager else 20
                 # For standalone search, allocate 70% to vector search
                 vector_limit = int(doc_limit * 0.7)
 
@@ -275,7 +359,7 @@ class DocumentRetriever:
                 keyword_limit = buffer_limit
             else:
                 # Get dynamic document limit based on query
-                doc_limit = self.quality_metrics_manager.get_document_limit(query)
+                doc_limit = self.quality_metrics_manager.get_document_limit(query) if self.quality_metrics_manager else 20 if self.quality_metrics_manager else 20
                 # For standalone search, allocate 30% to keyword search
                 keyword_limit = int(doc_limit * 0.3)
 
@@ -487,7 +571,7 @@ class DocumentRetriever:
             final_results.sort(key=lambda x: x['combined_score'], reverse=True)
 
             # Take top results and clean up temporary scoring fields
-            doc_limit = self.quality_metrics_manager.get_document_limit(query)
+            doc_limit = self.quality_metrics_manager.get_document_limit(query) if self.quality_metrics_manager else 20
             final_results = final_results[:doc_limit]
             for result in final_results:
                 result['score'] = result['combined_score']  # Set final score
@@ -504,7 +588,7 @@ class DocumentRetriever:
         except Exception as e:
             logger.error("Failed to combine search results", exception_details=str(e))
             # Fallback to vector results only with dynamic limit
-            doc_limit = self.quality_metrics_manager.get_document_limit(query)
+            doc_limit = self.quality_metrics_manager.get_document_limit(query) if self.quality_metrics_manager else 20
             return vector_results[:doc_limit]
 
     def get_diverse_context_documents(self, documents: List[Dict]) -> List[Dict]:
