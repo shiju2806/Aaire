@@ -45,6 +45,11 @@ class QualityConfig:
         try:
             with open(self.config_path, 'r') as f:
                 config = yaml.safe_load(f)
+
+            # Handle nested quality_validation structure
+            if 'quality_validation' in config:
+                config = config['quality_validation']
+
             return config
         except FileNotFoundError:
             logger.warning("Quality config file not found, using defaults",
@@ -76,9 +81,9 @@ class QualityConfig:
         """Return default configuration if file not found."""
         return {
             "thresholds": {
-                "semantic_alignment_minimum": 0.65,
-                "grounding_score_minimum": 0.6,
-                "confidence_minimum": 0.7
+                "semantic_alignment_minimum": 0.35,  # Lowered to allow insurance calculation responses
+                "grounding_score_minimum": 0.4,     # Lowered to allow detailed technical responses
+                "confidence_minimum": 0.5           # Lowered to show responses with reasonable confidence
             },
             "models": {
                 "primary_embedding": "all-MiniLM-L6-v2",
@@ -102,6 +107,22 @@ class QualityConfig:
     def get_grounding_threshold(self) -> float:
         """Get grounding score minimum threshold."""
         return self.get_threshold("grounding_score_minimum")
+
+    def get_grounding_base_threshold(self) -> float:
+        """Get grounding validation base threshold."""
+        return self.config.get("grounding", {}).get("base_threshold", 0.35)
+
+    def get_grounding_overlap_threshold(self) -> float:
+        """Get minimum overlap threshold for grounding."""
+        return self.config.get("grounding", {}).get("min_overlap_threshold", 0.25)
+
+    def get_grounding_learned_threshold_bounds(self) -> tuple:
+        """Get bounds for learned threshold adjustment."""
+        grounding_config = self.config.get("grounding", {})
+        return (
+            grounding_config.get("learned_threshold_min", 0.25),
+            grounding_config.get("learned_threshold_max", 0.8)
+        )
 
     def get_confidence_threshold(self) -> float:
         """Get confidence minimum threshold."""

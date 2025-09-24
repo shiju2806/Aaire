@@ -1,0 +1,2182 @@
+{
+  "summary": {
+    "files_scanned": 86,
+    "files_with_violations": 60,
+    "total_hardcoded_values": 118,
+    "total_missing_config": 56
+  },
+  "violations_by_category": {
+    "model_params": [
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/relevance_engine.py",
+        "line": 253,
+        "value": "0.1"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/relevance_engine.py",
+        "line": 363,
+        "value": "0.1"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/relevance_engine.py",
+        "line": 254,
+        "value": "10"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/relevance_engine.py",
+        "line": 364,
+        "value": "10"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/relevance_engine.py",
+        "line": 251,
+        "value": "gpt-4o-mini"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/relevance_engine.py",
+        "line": 361,
+        "value": "gpt-4o-mini"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/smart_metadata_analyzer.py",
+        "line": 224,
+        "value": "0.1"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/smart_metadata_analyzer.py",
+        "line": 294,
+        "value": "0.1"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/smart_metadata_analyzer.py",
+        "line": 401,
+        "value": "0.1"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/smart_metadata_analyzer.py",
+        "line": 225,
+        "value": "400"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/smart_metadata_analyzer.py",
+        "line": 295,
+        "value": "200"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/smart_metadata_analyzer.py",
+        "line": 402,
+        "value": "400"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/smart_metadata_analyzer.py",
+        "line": 222,
+        "value": "gpt-4o-mini"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/smart_metadata_analyzer.py",
+        "line": 292,
+        "value": "gpt-4o-mini"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/smart_metadata_analyzer.py",
+        "line": 399,
+        "value": "gpt-4o-mini"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_pipeline.py",
+        "line": 874,
+        "value": "0.3"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_pipeline.py",
+        "line": 1782,
+        "value": "0.3"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_pipeline.py",
+        "line": 1832,
+        "value": "0.1"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_pipeline.py",
+        "line": 875,
+        "value": "200"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_pipeline.py",
+        "line": 1108,
+        "value": "4000"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_pipeline.py",
+        "line": 1783,
+        "value": "4000"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_pipeline.py",
+        "line": 869,
+        "value": "gpt-4o-mini"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_pipeline.py",
+        "line": 1830,
+        "value": "gpt-4o-mini"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/response_generation/structured_generator.py",
+        "line": 281,
+        "value": "0.1"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/response_generation/structured_generator.py",
+        "line": 728,
+        "value": "0.1"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/response_generation/structured_generator.py",
+        "line": 282,
+        "value": "2000"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/response_generation/structured_generator.py",
+        "line": 644,
+        "value": "300"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/response_generation/structured_generator.py",
+        "line": 279,
+        "value": "gpt-4o-mini"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/response_generation/structured_generator.py",
+        "line": 725,
+        "value": "gpt-4o-mini"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/extraction/document_processing_adapter.py",
+        "line": 482,
+        "value": "0.1"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/extraction/document_processing_adapter.py",
+        "line": 483,
+        "value": "1000"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/extraction/document_processing_adapter.py",
+        "line": 480,
+        "value": "gpt-4o-mini"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/extraction/base_extractor.py",
+        "line": 361,
+        "value": "0.0"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/extraction/base_extractor.py",
+        "line": 362,
+        "value": "2000"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/analysis/citations.py",
+        "line": 88,
+        "value": "gpt-4o-mini"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/quality/semantic_alignment_validator.py",
+        "line": 40,
+        "value": "all-MiniLM-L6-v2"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/quality/openai_alignment_validator.py",
+        "line": 34,
+        "value": "text-embedding-ada-002"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/config/rag_config.py",
+        "line": 13,
+        "value": "gpt-4o-mini"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/config/rag_config.py",
+        "line": 71,
+        "value": "cross-encoder/ms-marco-MiniLM-L-6-v2"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/config/rag_config.py",
+        "line": 87,
+        "value": "gpt-4o-mini"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/config/rag_config.py",
+        "line": 88,
+        "value": "text-embedding-ada-002"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/config/quality_config.py",
+        "line": 145,
+        "value": "name"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/filtering/llm_framework_detector.py",
+        "line": 75,
+        "value": "0.1"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/filtering/llm_framework_detector.py",
+        "line": 171,
+        "value": "0.1"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/filtering/llm_framework_detector.py",
+        "line": 172,
+        "value": "100"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/filtering/llm_framework_detector.py",
+        "line": 30,
+        "value": "gpt-4o-mini"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/filtering/llm_framework_detector.py",
+        "line": 107,
+        "value": "gpt-4o-mini"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/filtering/llm_framework_detector.py",
+        "line": 194,
+        "value": "gpt-4o-mini"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/reasoning/self_correction.py",
+        "line": 429,
+        "value": "0.1"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/reasoning/self_correction.py",
+        "line": 430,
+        "value": "800"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/retrieval/reflective_retriever.py",
+        "line": 93,
+        "value": "0.1"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/retrieval/reflective_retriever.py",
+        "line": 94,
+        "value": "1000"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/retrieval/reflective_retriever.py",
+        "line": 43,
+        "value": "gpt-4o-mini"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/formatting/manager.py",
+        "line": 377,
+        "value": "0.1"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/formatting/manager.py",
+        "line": 424,
+        "value": "0.2"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/formatting/manager.py",
+        "line": 635,
+        "value": "0.1"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/formatting/manager.py",
+        "line": 636,
+        "value": "4000"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/formatting/manager.py",
+        "line": 28,
+        "value": "gpt-4o-mini"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/formatting/manager.py",
+        "line": 719,
+        "value": "gpt-4o-mini"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/services/generation.py",
+        "line": 577,
+        "value": "0.3"
+      }
+    ],
+    "limits": [
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/ocr_processor_doctr.py",
+        "line": 59,
+        "value": "3"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/external_apis.py",
+        "line": 330,
+        "value": "1"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/external_apis.py",
+        "line": 408,
+        "value": "1"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/external_apis.py",
+        "line": 416,
+        "value": "1"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/audit_logger.py",
+        "line": 232,
+        "value": "10000"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_pipeline.py",
+        "line": 1195,
+        "value": "1000"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_pipeline.py",
+        "line": 1232,
+        "value": "1000"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_pipeline.py",
+        "line": 1887,
+        "value": "1000"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_pipeline.py",
+        "line": 367,
+        "value": "50"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_pipeline.py",
+        "line": 894,
+        "value": "5"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/conversation_memory.py",
+        "line": 346,
+        "value": "10"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/extraction/repository.py",
+        "line": 254,
+        "value": "1"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/extraction/repository.py",
+        "line": 287,
+        "value": "1"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/extraction/repository.py",
+        "line": 508,
+        "value": "1"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/analysis/citations.py",
+        "line": 200,
+        "value": "30"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/storage/documents.py",
+        "line": 154,
+        "value": "8"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/storage/documents.py",
+        "line": 367,
+        "value": "1000"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/storage/documents.py",
+        "line": 432,
+        "value": "1000"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/storage/documents.py",
+        "line": 469,
+        "value": "1000"
+      }
+    ],
+    "thresholds": [
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/external_apis.py",
+        "line": 31,
+        "value": "1.0"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/shape_aware_processor.py",
+        "line": 34,
+        "value": "0.7"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/shape_aware_processor.py",
+        "line": 35,
+        "value": "0.6"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_pipeline.py",
+        "line": 622,
+        "value": "0.1"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/enhanced_query_handler.py",
+        "line": 29,
+        "value": "0.3"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/enhanced_query_handler.py",
+        "line": 81,
+        "value": "0.0"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/extraction/repository.py",
+        "line": 77,
+        "value": "0.2"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/analysis/citations.py",
+        "line": 429,
+        "value": "0.1"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/analysis/citations.py",
+        "line": 252,
+        "value": "0.1"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/analysis/citations.py",
+        "line": 421,
+        "value": "0.1"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/quality/semantic_alignment_validator.py",
+        "line": 56,
+        "value": "0.35"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/quality/semantic_alignment_validator.py",
+        "line": 57,
+        "value": "0.30"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/quality/semantic_alignment_validator.py",
+        "line": 250,
+        "value": "0.3"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/quality/semantic_alignment_validator.py",
+        "line": 251,
+        "value": "0.4"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/quality/openai_alignment_validator.py",
+        "line": 42,
+        "value": "0.65"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/quality/openai_alignment_validator.py",
+        "line": 43,
+        "value": "0.7"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/quality/grounding_validator.py",
+        "line": 592,
+        "value": "0.6"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/quality/grounding_validator.py",
+        "line": 680,
+        "value": "0.6"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/quality/grounding_validator.py",
+        "line": 677,
+        "value": "0.4"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/quality/grounding_validator.py",
+        "line": 538,
+        "value": "0.4"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/config/rag_config.py",
+        "line": 37,
+        "value": "0.7"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/config/rag_config.py",
+        "line": 38,
+        "value": "0.5"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/config/rag_config.py",
+        "line": 39,
+        "value": "0.6"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/config/rag_config.py",
+        "line": 40,
+        "value": "0.7"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/config/rag_config.py",
+        "line": 41,
+        "value": "0.8"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/config/rag_config.py",
+        "line": 48,
+        "value": "0.05"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/config/rag_config.py",
+        "line": 49,
+        "value": "0.1"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/config/rag_config.py",
+        "line": 72,
+        "value": "0.3"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/search/dynamic_phrase_detector.py",
+        "line": 288,
+        "value": "1.0"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/search/dynamic_phrase_detector.py",
+        "line": 33,
+        "value": "0.6"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/services/retrieval.py",
+        "line": 433,
+        "value": "1.0"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/services/retrieval.py",
+        "line": 454,
+        "value": "1.0"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/services/quality_metrics_service.py",
+        "line": 27,
+        "value": "0.70"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/services/quality_metrics_service.py",
+        "line": 219,
+        "value": "0.4"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/services/quality_metrics_service.py",
+        "line": 253,
+        "value": "0.6"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/services/quality_metrics_service.py",
+        "line": 255,
+        "value": "0.9"
+      }
+    ],
+    "weights": [
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/ocr_processor.py",
+        "line": 57,
+        "value": "1.3"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/quality/unified_validator.py",
+        "line": 173,
+        "value": "0.0"
+      },
+      {
+        "file": "/Users/shijuprakash/AAIRE/src/rag_modules/quality/grounding_validator.py",
+        "line": 574,
+        "value": "0.0"
+      }
+    ]
+  },
+  "high_priority_files": [
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/rag_modules/quality/unified_validator.py",
+      "hardcoded_count": 1,
+      "missing_config_count": 0
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/rag_modules/quality/semantic_alignment_validator.py",
+      "hardcoded_count": 5,
+      "missing_config_count": 0
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/rag_modules/quality/openai_alignment_validator.py",
+      "hardcoded_count": 3,
+      "missing_config_count": 1
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/rag_modules/quality/grounding_validator.py",
+      "hardcoded_count": 5,
+      "missing_config_count": 1
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/rag_modules/config/quality_config.py",
+      "hardcoded_count": 1,
+      "missing_config_count": 0
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/rag_modules/services/quality_metrics_service.py",
+      "hardcoded_count": 4,
+      "missing_config_count": 0
+    }
+  ],
+  "detailed_results": [
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/relevance_engine.py",
+      "hardcoded_values": [
+        {
+          "category": "model_params",
+          "line": 253,
+          "content": "temperature=0.1,",
+          "value": "0.1",
+          "pattern": "temperature\\s*=\\s*([0-9]+\\.[0-9]*)"
+        },
+        {
+          "category": "model_params",
+          "line": 363,
+          "content": "temperature=0.1,",
+          "value": "0.1",
+          "pattern": "temperature\\s*=\\s*([0-9]+\\.[0-9]*)"
+        },
+        {
+          "category": "model_params",
+          "line": 254,
+          "content": "max_tokens=10",
+          "value": "10",
+          "pattern": "max_tokens\\s*=\\s*([0-9]+)"
+        },
+        {
+          "category": "model_params",
+          "line": 364,
+          "content": "max_tokens=10",
+          "value": "10",
+          "pattern": "max_tokens\\s*=\\s*([0-9]+)"
+        },
+        {
+          "category": "model_params",
+          "line": 251,
+          "content": "model=\"gpt-4o-mini\",",
+          "value": "gpt-4o-mini",
+          "pattern": "model.*=\\s*[\"\\']([^\"\\']+)[\"\\']"
+        },
+        {
+          "category": "model_params",
+          "line": 361,
+          "content": "model=\"gpt-4o-mini\",",
+          "value": "gpt-4o-mini",
+          "pattern": "model.*=\\s*[\"\\']([^\"\\']+)[\"\\']"
+        }
+      ],
+      "missing_config_injection": [],
+      "line_count": 631
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/chart_analyzer.py",
+      "hardcoded_values": [],
+      "missing_config_injection": [
+        {
+          "line": 15,
+          "content": "def __init__(self):",
+          "pattern": "def __init__\\(self\\):"
+        }
+      ],
+      "line_count": 950
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/auth.py",
+      "hardcoded_values": [],
+      "missing_config_injection": [
+        {
+          "line": 30,
+          "content": "def __init__(self):",
+          "pattern": "def __init__\\(self\\):"
+        }
+      ],
+      "line_count": 282
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/nlp_query_processor.py",
+      "hardcoded_values": [],
+      "missing_config_injection": [
+        {
+          "line": 35,
+          "content": "def __init__(self):",
+          "pattern": "def __init__\\(self\\):"
+        }
+      ],
+      "line_count": 379
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/compliance_engine.py",
+      "hardcoded_values": [],
+      "missing_config_injection": [
+        {
+          "line": 30,
+          "content": "def __init__(self):",
+          "pattern": "def __init__\\(self\\):"
+        }
+      ],
+      "line_count": 266
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/intelligent_query_analyzer.py",
+      "hardcoded_values": [],
+      "missing_config_injection": [
+        {
+          "line": 44,
+          "content": "def __init__(self):",
+          "pattern": "def __init__\\(self\\):"
+        }
+      ],
+      "line_count": 320
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/intelligent_text_parser.py",
+      "hardcoded_values": [],
+      "missing_config_injection": [
+        {
+          "line": 34,
+          "content": "def __init__(self):",
+          "pattern": "def __init__\\(self\\):"
+        }
+      ],
+      "line_count": 396
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/pptx_shape_extractor.py",
+      "hardcoded_values": [],
+      "missing_config_injection": [
+        {
+          "line": 30,
+          "content": "def __init__(self):",
+          "pattern": "def __init__\\(self\\):"
+        },
+        {
+          "line": 35,
+          "content": "def __init__(self):",
+          "pattern": "def __init__\\(self\\):"
+        },
+        {
+          "line": 132,
+          "content": "def __init__(self):",
+          "pattern": "def __init__\\(self\\):"
+        },
+        {
+          "line": 26,
+          "content": "def __init__(self, *args, **kwargs):",
+          "pattern": "def __init__\\(self,(?!.*config)[^)]*\\):"
+        }
+      ],
+      "line_count": 597
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/finance_structures_parser.py",
+      "hardcoded_values": [],
+      "missing_config_injection": [
+        {
+          "line": 26,
+          "content": "def __init__(self):",
+          "pattern": "def __init__\\(self\\):"
+        }
+      ],
+      "line_count": 354
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/ocr_processor_google.py",
+      "hardcoded_values": [],
+      "missing_config_injection": [
+        {
+          "line": 15,
+          "content": "def __init__(self):",
+          "pattern": "def __init__\\(self\\):"
+        }
+      ],
+      "line_count": 101
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/sec_edgar_source.py",
+      "hardcoded_values": [],
+      "missing_config_injection": [
+        {
+          "line": 18,
+          "content": "def __init__(self):",
+          "pattern": "def __init__\\(self\\):"
+        }
+      ],
+      "line_count": 161
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/workflow_engine.py",
+      "hardcoded_values": [],
+      "missing_config_injection": [
+        {
+          "line": 16,
+          "content": "def __init__(self, step_id: str, step_data: Dict[str, Any]):",
+          "pattern": "def __init__\\(self,(?!.*config)[^)]*\\):"
+        },
+        {
+          "line": 30,
+          "content": "def __init__(self, template_data: Dict[str, Any]):",
+          "pattern": "def __init__\\(self,(?!.*config)[^)]*\\):"
+        },
+        {
+          "line": 44,
+          "content": "def __init__(self, session_id: str, template: WorkflowTemplate, user_id: str = \"demo-user\"):",
+          "pattern": "def __init__\\(self,(?!.*config)[^)]*\\):"
+        },
+        {
+          "line": 56,
+          "content": "def __init__(self, templates_dir: str = \"data/workflows\"):",
+          "pattern": "def __init__\\(self,(?!.*config)[^)]*\\):"
+        }
+      ],
+      "line_count": 482
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/document_processor.py",
+      "hardcoded_values": [],
+      "missing_config_injection": [
+        {
+          "line": 62,
+          "content": "def __init__(self, rag_pipeline: RAGPipeline = None):",
+          "pattern": "def __init__\\(self,(?!.*config)[^)]*\\):"
+        }
+      ],
+      "line_count": 1000
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/ocr_processor_tesseract.py",
+      "hardcoded_values": [],
+      "missing_config_injection": [
+        {
+          "line": 18,
+          "content": "def __init__(self):",
+          "pattern": "def __init__\\(self\\):"
+        }
+      ],
+      "line_count": 195
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/ocr_processor_doctr.py",
+      "hardcoded_values": [
+        {
+          "category": "limits",
+          "line": 59,
+          "content": "clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))",
+          "value": "3",
+          "pattern": "limit\\s*=\\s*([0-9]+)"
+        }
+      ],
+      "missing_config_injection": [
+        {
+          "line": 16,
+          "content": "def __init__(self):",
+          "pattern": "def __init__\\(self\\):"
+        }
+      ],
+      "line_count": 311
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/external_apis.py",
+      "hardcoded_values": [
+        {
+          "category": "thresholds",
+          "line": 31,
+          "content": "self.min_interval = 1.0 / requests_per_second",
+          "value": "1.0",
+          "pattern": "min.*=\\s*([0-9]+\\.[0-9]+)"
+        },
+        {
+          "category": "limits",
+          "line": 330,
+          "content": "response = await self.get_series_data(series_id, limit=1)",
+          "value": "1",
+          "pattern": "limit\\s*=\\s*([0-9]+)"
+        },
+        {
+          "category": "limits",
+          "line": 408,
+          "content": "search_response = await self.sec_connector.search_companies(company, limit=1)",
+          "value": "1",
+          "pattern": "limit\\s*=\\s*([0-9]+)"
+        },
+        {
+          "category": "limits",
+          "line": 416,
+          "content": "filings_response = await self.sec_connector.get_company_filings(cik, '10-K', limit=1)",
+          "value": "1",
+          "pattern": "limit\\s*=\\s*([0-9]+)"
+        }
+      ],
+      "missing_config_injection": [
+        {
+          "line": 44,
+          "content": "def __init__(self):",
+          "pattern": "def __init__\\(self\\):"
+        },
+        {
+          "line": 202,
+          "content": "def __init__(self):",
+          "pattern": "def __init__\\(self\\):"
+        },
+        {
+          "line": 29,
+          "content": "def __init__(self, requests_per_second: float):",
+          "pattern": "def __init__\\(self,(?!.*config)[^)]*\\):"
+        },
+        {
+          "line": 353,
+          "content": "def __init__(self, rag_pipeline=None):",
+          "pattern": "def __init__\\(self,(?!.*config)[^)]*\\):"
+        }
+      ],
+      "line_count": 506
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/document_deduplicator.py",
+      "hardcoded_values": [],
+      "missing_config_injection": [
+        {
+          "line": 21,
+          "content": "def __init__(self, storage_path: str = \"data/document_hashes.json\"):",
+          "pattern": "def __init__\\(self,(?!.*config)[^)]*\\):"
+        }
+      ],
+      "line_count": 286
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/smart_metadata_analyzer.py",
+      "hardcoded_values": [
+        {
+          "category": "model_params",
+          "line": 224,
+          "content": "temperature=0.1,",
+          "value": "0.1",
+          "pattern": "temperature\\s*=\\s*([0-9]+\\.[0-9]*)"
+        },
+        {
+          "category": "model_params",
+          "line": 294,
+          "content": "temperature=0.1,",
+          "value": "0.1",
+          "pattern": "temperature\\s*=\\s*([0-9]+\\.[0-9]*)"
+        },
+        {
+          "category": "model_params",
+          "line": 401,
+          "content": "temperature=0.1,",
+          "value": "0.1",
+          "pattern": "temperature\\s*=\\s*([0-9]+\\.[0-9]*)"
+        },
+        {
+          "category": "model_params",
+          "line": 225,
+          "content": "max_tokens=400",
+          "value": "400",
+          "pattern": "max_tokens\\s*=\\s*([0-9]+)"
+        },
+        {
+          "category": "model_params",
+          "line": 295,
+          "content": "max_tokens=200",
+          "value": "200",
+          "pattern": "max_tokens\\s*=\\s*([0-9]+)"
+        },
+        {
+          "category": "model_params",
+          "line": 402,
+          "content": "max_tokens=400",
+          "value": "400",
+          "pattern": "max_tokens\\s*=\\s*([0-9]+)"
+        },
+        {
+          "category": "model_params",
+          "line": 222,
+          "content": "model=\"gpt-4o-mini\",",
+          "value": "gpt-4o-mini",
+          "pattern": "model.*=\\s*[\"\\']([^\"\\']+)[\"\\']"
+        },
+        {
+          "category": "model_params",
+          "line": 292,
+          "content": "model=\"gpt-4o-mini\",",
+          "value": "gpt-4o-mini",
+          "pattern": "model.*=\\s*[\"\\']([^\"\\']+)[\"\\']"
+        },
+        {
+          "category": "model_params",
+          "line": 399,
+          "content": "model=\"gpt-4o-mini\",",
+          "value": "gpt-4o-mini",
+          "pattern": "model.*=\\s*[\"\\']([^\"\\']+)[\"\\']"
+        }
+      ],
+      "missing_config_injection": [
+        {
+          "line": 92,
+          "content": "def __init__(self, openai_api_key: str = None):",
+          "pattern": "def __init__\\(self,(?!.*config)[^)]*\\):"
+        }
+      ],
+      "line_count": 599
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/ocr_processor.py",
+      "hardcoded_values": [
+        {
+          "category": "weights",
+          "line": 57,
+          "content": "enhanced = cv2.convertScaleAbs(denoised, alpha=1.3, beta=10)",
+          "value": "1.3",
+          "pattern": "alpha\\s*=\\s*([0-9]+\\.[0-9]+)"
+        }
+      ],
+      "missing_config_injection": [
+        {
+          "line": 23,
+          "content": "def __init__(self):",
+          "pattern": "def __init__\\(self\\):"
+        }
+      ],
+      "line_count": 386
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/advanced_org_parser.py",
+      "hardcoded_values": [],
+      "missing_config_injection": [
+        {
+          "line": 33,
+          "content": "def __init__(self):",
+          "pattern": "def __init__\\(self\\):"
+        }
+      ],
+      "line_count": 480
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/query_expansion_analyzer.py",
+      "hardcoded_values": [],
+      "missing_config_injection": [
+        {
+          "line": 27,
+          "content": "def __init__(self):",
+          "pattern": "def __init__\\(self\\):"
+        }
+      ],
+      "line_count": 246
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/audit_logger.py",
+      "hardcoded_values": [
+        {
+          "category": "limits",
+          "line": 232,
+          "content": "limit=10000  # No limit for compliance reports",
+          "value": "10000",
+          "pattern": "limit\\s*=\\s*([0-9]+)"
+        }
+      ],
+      "missing_config_injection": [
+        {
+          "line": 50,
+          "content": "def __init__(self):",
+          "pattern": "def __init__\\(self\\):"
+        }
+      ],
+      "line_count": 363
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/validation_layer.py",
+      "hardcoded_values": [],
+      "missing_config_injection": [
+        {
+          "line": 14,
+          "content": "def __init__(self):",
+          "pattern": "def __init__\\(self\\):"
+        }
+      ],
+      "line_count": 32
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/query_processor.py",
+      "hardcoded_values": [],
+      "missing_config_injection": [
+        {
+          "line": 14,
+          "content": "def __init__(self):",
+          "pattern": "def __init__\\(self\\):"
+        }
+      ],
+      "line_count": 24
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/enhanced_whoosh_engine.py",
+      "hardcoded_values": [],
+      "missing_config_injection": [
+        {
+          "line": 59,
+          "content": "def __init__(self):",
+          "pattern": "def __init__\\(self\\):"
+        },
+        {
+          "line": 129,
+          "content": "def __init__(self, index_dir: Path):",
+          "pattern": "def __init__\\(self,(?!.*config)[^)]*\\):"
+        }
+      ],
+      "line_count": 325
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/shape_aware_processor.py",
+      "hardcoded_values": [
+        {
+          "category": "thresholds",
+          "line": 34,
+          "content": "self.confidence_threshold = 0.7",
+          "value": "0.7",
+          "pattern": "threshold\\s*=\\s*([0-9]+\\.[0-9]+)"
+        },
+        {
+          "category": "thresholds",
+          "line": 35,
+          "content": "self.spatial_confidence_threshold = 0.6",
+          "value": "0.6",
+          "pattern": "threshold\\s*=\\s*([0-9]+\\.[0-9]+)"
+        }
+      ],
+      "missing_config_injection": [
+        {
+          "line": 32,
+          "content": "def __init__(self, llm_client=None):",
+          "pattern": "def __init__\\(self,(?!.*config)[^)]*\\):"
+        }
+      ],
+      "line_count": 364
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/rag_pipeline.py",
+      "hardcoded_values": [
+        {
+          "category": "thresholds",
+          "line": 622,
+          "content": "sample_docs = await self.document_retriever.vector_search(\"document\", None, 0.1)  # Very low threshold",
+          "value": "0.1",
+          "pattern": "([0-9]+\\.[0-9]+)\\s*.*threshold"
+        },
+        {
+          "category": "model_params",
+          "line": 874,
+          "content": "temperature=0.3,",
+          "value": "0.3",
+          "pattern": "temperature\\s*=\\s*([0-9]+\\.[0-9]*)"
+        },
+        {
+          "category": "model_params",
+          "line": 1782,
+          "content": "temperature=0.3,",
+          "value": "0.3",
+          "pattern": "temperature\\s*=\\s*([0-9]+\\.[0-9]*)"
+        },
+        {
+          "category": "model_params",
+          "line": 1832,
+          "content": "temperature=0.1,",
+          "value": "0.1",
+          "pattern": "temperature\\s*=\\s*([0-9]+\\.[0-9]*)"
+        },
+        {
+          "category": "model_params",
+          "line": 875,
+          "content": "max_tokens=200",
+          "value": "200",
+          "pattern": "max_tokens\\s*=\\s*([0-9]+)"
+        },
+        {
+          "category": "model_params",
+          "line": 1108,
+          "content": "max_tokens=4000",
+          "value": "4000",
+          "pattern": "max_tokens\\s*=\\s*([0-9]+)"
+        },
+        {
+          "category": "model_params",
+          "line": 1783,
+          "content": "max_tokens=4000",
+          "value": "4000",
+          "pattern": "max_tokens\\s*=\\s*([0-9]+)"
+        },
+        {
+          "category": "model_params",
+          "line": 869,
+          "content": "model=\"gpt-4o-mini\",",
+          "value": "gpt-4o-mini",
+          "pattern": "model.*=\\s*[\"\\']([^\"\\']+)[\"\\']"
+        },
+        {
+          "category": "model_params",
+          "line": 1830,
+          "content": "model=\"gpt-4o-mini\",",
+          "value": "gpt-4o-mini",
+          "pattern": "model.*=\\s*[\"\\']([^\"\\']+)[\"\\']"
+        },
+        {
+          "category": "limits",
+          "line": 1195,
+          "content": "limit=1000",
+          "value": "1000",
+          "pattern": "limit\\s*=\\s*([0-9]+)"
+        },
+        {
+          "category": "limits",
+          "line": 1232,
+          "content": "limit=1000  # Adjust if you have more documents",
+          "value": "1000",
+          "pattern": "limit\\s*=\\s*([0-9]+)"
+        },
+        {
+          "category": "limits",
+          "line": 1887,
+          "content": "limit=1000",
+          "value": "1000",
+          "pattern": "limit\\s*=\\s*([0-9]+)"
+        },
+        {
+          "category": "limits",
+          "line": 367,
+          "content": "batch_size = 50",
+          "value": "50",
+          "pattern": "batch_size\\s*=\\s*([0-9]+)"
+        },
+        {
+          "category": "limits",
+          "line": 894,
+          "content": "chunk_size = 5",
+          "value": "5",
+          "pattern": "chunk_size\\s*=\\s*([0-9]+)"
+        }
+      ],
+      "missing_config_injection": [],
+      "line_count": 1956
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/simple_whoosh_engine.py",
+      "hardcoded_values": [],
+      "missing_config_injection": [
+        {
+          "line": 32,
+          "content": "def __init__(self, index_dir: Path):",
+          "pattern": "def __init__\\(self,(?!.*config)[^)]*\\):"
+        }
+      ],
+      "line_count": 193
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/enhanced_query_handler.py",
+      "hardcoded_values": [
+        {
+          "category": "thresholds",
+          "line": 29,
+          "content": "self.extraction_threshold = 0.3",
+          "value": "0.3",
+          "pattern": "threshold\\s*=\\s*([0-9]+\\.[0-9]+)"
+        },
+        {
+          "category": "thresholds",
+          "line": 81,
+          "content": "max_confidence = 0.0",
+          "value": "0.0",
+          "pattern": "max.*=\\s*([0-9]+\\.[0-9]+)"
+        }
+      ],
+      "missing_config_injection": [
+        {
+          "line": 27,
+          "content": "def __init__(self, llm_client):",
+          "pattern": "def __init__\\(self,(?!.*config)[^)]*\\):"
+        }
+      ],
+      "line_count": 177
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/enhanced_document_processor.py",
+      "hardcoded_values": [],
+      "missing_config_injection": [
+        {
+          "line": 31,
+          "content": "def __init__(self, rag_pipeline: RAGPipeline = None):",
+          "pattern": "def __init__\\(self,(?!.*config)[^)]*\\):"
+        }
+      ],
+      "line_count": 281
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/pdf_spatial_extractor.py",
+      "hardcoded_values": [],
+      "missing_config_injection": [
+        {
+          "line": 97,
+          "content": "def __init__(self):",
+          "pattern": "def __init__\\(self\\):"
+        }
+      ],
+      "line_count": 736
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/conversation_memory.py",
+      "hardcoded_values": [
+        {
+          "category": "limits",
+          "line": 346,
+          "content": "recent_messages = await self.get_messages(session_id, limit=10)",
+          "value": "10",
+          "pattern": "limit\\s*=\\s*([0-9]+)"
+        }
+      ],
+      "missing_config_injection": [],
+      "line_count": 459
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/analytics_engine.py",
+      "hardcoded_values": [],
+      "missing_config_injection": [
+        {
+          "line": 18,
+          "content": "def __init__(self, data_dir: str = \"data/analytics\"):",
+          "pattern": "def __init__\\(self,(?!.*config)[^)]*\\):"
+        }
+      ],
+      "line_count": 328
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/response_generation/structured_generator.py",
+      "hardcoded_values": [
+        {
+          "category": "model_params",
+          "line": 281,
+          "content": "temperature=0.1,",
+          "value": "0.1",
+          "pattern": "temperature\\s*=\\s*([0-9]+\\.[0-9]*)"
+        },
+        {
+          "category": "model_params",
+          "line": 728,
+          "content": "temperature=0.1",
+          "value": "0.1",
+          "pattern": "temperature\\s*=\\s*([0-9]+\\.[0-9]*)"
+        },
+        {
+          "category": "model_params",
+          "line": 282,
+          "content": "max_tokens=2000",
+          "value": "2000",
+          "pattern": "max_tokens\\s*=\\s*([0-9]+)"
+        },
+        {
+          "category": "model_params",
+          "line": 644,
+          "content": "response_text = await self._call_llm(alignment_prompt, max_tokens=300)",
+          "value": "300",
+          "pattern": "max_tokens\\s*=\\s*([0-9]+)"
+        },
+        {
+          "category": "model_params",
+          "line": 279,
+          "content": "model=\"gpt-4o-mini\",",
+          "value": "gpt-4o-mini",
+          "pattern": "model.*=\\s*[\"\\']([^\"\\']+)[\"\\']"
+        },
+        {
+          "category": "model_params",
+          "line": 725,
+          "content": "model=\"gpt-4o-mini\",",
+          "value": "gpt-4o-mini",
+          "pattern": "model.*=\\s*[\"\\']([^\"\\']+)[\"\\']"
+        }
+      ],
+      "missing_config_injection": [],
+      "line_count": 735
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/extraction/document_processing_adapter.py",
+      "hardcoded_values": [
+        {
+          "category": "model_params",
+          "line": 482,
+          "content": "temperature=0.1,",
+          "value": "0.1",
+          "pattern": "temperature\\s*=\\s*([0-9]+\\.[0-9]*)"
+        },
+        {
+          "category": "model_params",
+          "line": 483,
+          "content": "max_tokens=1000",
+          "value": "1000",
+          "pattern": "max_tokens\\s*=\\s*([0-9]+)"
+        },
+        {
+          "category": "model_params",
+          "line": 480,
+          "content": "model=\"gpt-4o-mini\",",
+          "value": "gpt-4o-mini",
+          "pattern": "model.*=\\s*[\"\\']([^\"\\']+)[\"\\']"
+        }
+      ],
+      "missing_config_injection": [
+        {
+          "line": 28,
+          "content": "def __init__(self, qdrant_client=None, llm_client=None):",
+          "pattern": "def __init__\\(self,(?!.*config)[^)]*\\):"
+        }
+      ],
+      "line_count": 558
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/extraction/smart_router.py",
+      "hardcoded_values": [],
+      "missing_config_injection": [
+        {
+          "line": 42,
+          "content": "def __init__(self, failure_threshold: int = 5, timeout_seconds: int = 60):",
+          "pattern": "def __init__\\(self,(?!.*config)[^)]*\\):"
+        }
+      ],
+      "line_count": 446
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/extraction/fingerprinting.py",
+      "hardcoded_values": [],
+      "missing_config_injection": [
+        {
+          "line": 23,
+          "content": "def __init__(self):",
+          "pattern": "def __init__\\(self\\):"
+        },
+        {
+          "line": 254,
+          "content": "def __init__(self, ttl_hours: int = 24):",
+          "pattern": "def __init__\\(self,(?!.*config)[^)]*\\):"
+        }
+      ],
+      "line_count": 285
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/extraction/bridge_adapter.py",
+      "hardcoded_values": [],
+      "missing_config_injection": [
+        {
+          "line": 52,
+          "content": "def __init__(self, llm_client):",
+          "pattern": "def __init__\\(self,(?!.*config)[^)]*\\):"
+        }
+      ],
+      "line_count": 169
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/extraction/metadata_builder.py",
+      "hardcoded_values": [],
+      "missing_config_injection": [
+        {
+          "line": 23,
+          "content": "def __init__(self):",
+          "pattern": "def __init__\\(self\\):"
+        }
+      ],
+      "line_count": 379
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/extraction/base_extractor.py",
+      "hardcoded_values": [
+        {
+          "category": "model_params",
+          "line": 361,
+          "content": "temperature=0.0,",
+          "value": "0.0",
+          "pattern": "temperature\\s*=\\s*([0-9]+\\.[0-9]*)"
+        },
+        {
+          "category": "model_params",
+          "line": 362,
+          "content": "max_tokens=2000",
+          "value": "2000",
+          "pattern": "max_tokens\\s*=\\s*([0-9]+)"
+        }
+      ],
+      "missing_config_injection": [],
+      "line_count": 399
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/extraction/repository.py",
+      "hardcoded_values": [
+        {
+          "category": "thresholds",
+          "line": 77,
+          "content": "deleted_threshold=0.2,",
+          "value": "0.2",
+          "pattern": "threshold\\s*=\\s*([0-9]+\\.[0-9]+)"
+        },
+        {
+          "category": "limits",
+          "line": 254,
+          "content": "limit=1,",
+          "value": "1",
+          "pattern": "limit\\s*=\\s*([0-9]+)"
+        },
+        {
+          "category": "limits",
+          "line": 287,
+          "content": "limit=1,",
+          "value": "1",
+          "pattern": "limit\\s*=\\s*([0-9]+)"
+        },
+        {
+          "category": "limits",
+          "line": 508,
+          "content": "limit=1",
+          "value": "1",
+          "pattern": "limit\\s*=\\s*([0-9]+)"
+        }
+      ],
+      "missing_config_injection": [],
+      "line_count": 521
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/rag_modules/core/dependency_injection.py",
+      "hardcoded_values": [],
+      "missing_config_injection": [
+        {
+          "line": 435,
+          "content": "def __init__(self, *args, **kwargs):",
+          "pattern": "def __init__\\(self,(?!.*config)[^)]*\\):"
+        }
+      ],
+      "line_count": 448
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/rag_modules/analysis/citations.py",
+      "hardcoded_values": [
+        {
+          "category": "thresholds",
+          "line": 429,
+          "content": "citation_threshold = 0.1",
+          "value": "0.1",
+          "pattern": "threshold\\s*=\\s*([0-9]+\\.[0-9]+)"
+        },
+        {
+          "category": "thresholds",
+          "line": 252,
+          "content": "if relevance_score < 0.1:  # Very permissive threshold",
+          "value": "0.1",
+          "pattern": "([0-9]+\\.[0-9]+)\\s*.*threshold"
+        },
+        {
+          "category": "thresholds",
+          "line": 421,
+          "content": "if usage_score > 0.1:  # Threshold for inclusion",
+          "value": "0.1",
+          "pattern": "([0-9]+\\.[0-9]+)\\s*.*threshold"
+        },
+        {
+          "category": "model_params",
+          "line": 88,
+          "content": "llm = OpenAI(model=\"gpt-4o-mini\", temperature=0)",
+          "value": "gpt-4o-mini",
+          "pattern": "model.*=\\s*[\"\\']([^\"\\']+)[\"\\']"
+        },
+        {
+          "category": "limits",
+          "line": 200,
+          "content": "used_doc_list = future.result(timeout=30)  # 30 second timeout",
+          "value": "30",
+          "pattern": "timeout\\s*=\\s*([0-9]+)"
+        }
+      ],
+      "missing_config_injection": [],
+      "line_count": 545
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/rag_modules/cache/manager.py",
+      "hardcoded_values": [],
+      "missing_config_injection": [
+        {
+          "line": 21,
+          "content": "def __init__(self, redis_client=None):",
+          "pattern": "def __init__\\(self,(?!.*config)[^)]*\\):"
+        }
+      ],
+      "line_count": 164
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/rag_modules/quality/unified_validator.py",
+      "hardcoded_values": [
+        {
+          "category": "weights",
+          "line": 173,
+          "content": "total_weight = 0.0",
+          "value": "0.0",
+          "pattern": "weight\\s*=\\s*([0-9]+\\.[0-9]+)"
+        }
+      ],
+      "missing_config_injection": [],
+      "line_count": 267
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/rag_modules/quality/semantic_alignment_validator.py",
+      "hardcoded_values": [
+        {
+          "category": "thresholds",
+          "line": 56,
+          "content": "self.alignment_threshold = 0.35  # Lowered default for technical content",
+          "value": "0.35",
+          "pattern": "threshold\\s*=\\s*([0-9]+\\.[0-9]+)"
+        },
+        {
+          "category": "thresholds",
+          "line": 57,
+          "content": "self.confidence_threshold = 0.30  # Lowered default for technical content",
+          "value": "0.30",
+          "pattern": "threshold\\s*=\\s*([0-9]+\\.[0-9]+)"
+        },
+        {
+          "category": "thresholds",
+          "line": 250,
+          "content": "new_threshold = 0.3 * unsatisfied_mean + 0.7 * satisfied_mean",
+          "value": "0.3",
+          "pattern": "threshold\\s*=\\s*([0-9]+\\.[0-9]+)"
+        },
+        {
+          "category": "thresholds",
+          "line": 251,
+          "content": "self.alignment_threshold = max(0.4, min(0.8, new_threshold))",
+          "value": "0.4",
+          "pattern": "([0-9]+\\.[0-9]+)\\s*.*threshold"
+        },
+        {
+          "category": "model_params",
+          "line": 40,
+          "content": "def __init__(self, model_name: str = \"all-MiniLM-L6-v2\", config=None):",
+          "value": "all-MiniLM-L6-v2",
+          "pattern": "model.*=\\s*[\"\\']([^\"\\']+)[\"\\']"
+        }
+      ],
+      "missing_config_injection": [],
+      "line_count": 261
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/rag_modules/quality/openai_alignment_validator.py",
+      "hardcoded_values": [
+        {
+          "category": "thresholds",
+          "line": 42,
+          "content": "self.alignment_threshold = 0.65",
+          "value": "0.65",
+          "pattern": "threshold\\s*=\\s*([0-9]+\\.[0-9]+)"
+        },
+        {
+          "category": "thresholds",
+          "line": 43,
+          "content": "self.confidence_threshold = 0.7",
+          "value": "0.7",
+          "pattern": "threshold\\s*=\\s*([0-9]+\\.[0-9]+)"
+        },
+        {
+          "category": "model_params",
+          "line": 34,
+          "content": "def __init__(self, model: str = \"text-embedding-ada-002\"):",
+          "value": "text-embedding-ada-002",
+          "pattern": "model.*=\\s*[\"\\']([^\"\\']+)[\"\\']"
+        }
+      ],
+      "missing_config_injection": [
+        {
+          "line": 34,
+          "content": "def __init__(self, model: str = \"text-embedding-ada-002\"):",
+          "pattern": "def __init__\\(self,(?!.*config)[^)]*\\):"
+        }
+      ],
+      "line_count": 179
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/rag_modules/quality/grounding_validator.py",
+      "hardcoded_values": [
+        {
+          "category": "thresholds",
+          "line": 592,
+          "content": "base_threshold = 0.6",
+          "value": "0.6",
+          "pattern": "threshold\\s*=\\s*([0-9]+\\.[0-9]+)"
+        },
+        {
+          "category": "thresholds",
+          "line": 680,
+          "content": "old_threshold=0.6,",
+          "value": "0.6",
+          "pattern": "threshold\\s*=\\s*([0-9]+\\.[0-9]+)"
+        },
+        {
+          "category": "thresholds",
+          "line": 677,
+          "content": "self.learned_threshold = max(0.4, min(0.8, optimal_threshold))",
+          "value": "0.4",
+          "pattern": "([0-9]+\\.[0-9]+)\\s*.*threshold"
+        },
+        {
+          "category": "thresholds",
+          "line": 538,
+          "content": "if max_overlap >= 0.4:",
+          "value": "0.4",
+          "pattern": "max.*=\\s*([0-9]+\\.[0-9]+)"
+        },
+        {
+          "category": "weights",
+          "line": 574,
+          "content": "total_weight = 0.0",
+          "value": "0.0",
+          "pattern": "weight\\s*=\\s*([0-9]+\\.[0-9]+)"
+        }
+      ],
+      "missing_config_injection": [
+        {
+          "line": 46,
+          "content": "def __init__(self, learning_data_path: str = \"/tmp/rag_grounding_data.json\"):",
+          "pattern": "def __init__\\(self,(?!.*config)[^)]*\\):"
+        }
+      ],
+      "line_count": 728
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/rag_modules/config/rag_config.py",
+      "hardcoded_values": [
+        {
+          "category": "thresholds",
+          "line": 37,
+          "content": "min_response_quality: float = 0.7",
+          "value": "0.7",
+          "pattern": "min.*=\\s*([0-9]+\\.[0-9]+)"
+        },
+        {
+          "category": "thresholds",
+          "line": 38,
+          "content": "min_relevance_score: float = 0.5",
+          "value": "0.5",
+          "pattern": "min.*=\\s*([0-9]+\\.[0-9]+)"
+        },
+        {
+          "category": "thresholds",
+          "line": 39,
+          "content": "min_completeness_score: float = 0.6",
+          "value": "0.6",
+          "pattern": "min.*=\\s*([0-9]+\\.[0-9]+)"
+        },
+        {
+          "category": "thresholds",
+          "line": 40,
+          "content": "min_accuracy_score: float = 0.7",
+          "value": "0.7",
+          "pattern": "min.*=\\s*([0-9]+\\.[0-9]+)"
+        },
+        {
+          "category": "thresholds",
+          "line": 41,
+          "content": "min_formatting_score: float = 0.8",
+          "value": "0.8",
+          "pattern": "min.*=\\s*([0-9]+\\.[0-9]+)"
+        },
+        {
+          "category": "thresholds",
+          "line": 48,
+          "content": "min_usage_score_threshold: float = 0.05",
+          "value": "0.05",
+          "pattern": "min.*=\\s*([0-9]+\\.[0-9]+)"
+        },
+        {
+          "category": "thresholds",
+          "line": 49,
+          "content": "min_relevance_threshold: float = 0.1",
+          "value": "0.1",
+          "pattern": "min.*=\\s*([0-9]+\\.[0-9]+)"
+        },
+        {
+          "category": "thresholds",
+          "line": 72,
+          "content": "min_similarity_threshold: float = 0.3",
+          "value": "0.3",
+          "pattern": "min.*=\\s*([0-9]+\\.[0-9]+)"
+        },
+        {
+          "category": "model_params",
+          "line": 13,
+          "content": "model: str = \"gpt-4o-mini\"",
+          "value": "gpt-4o-mini",
+          "pattern": "model.*=\\s*[\"\\']([^\"\\']+)[\"\\']"
+        },
+        {
+          "category": "model_params",
+          "line": 71,
+          "content": "reranking_model: str = \"cross-encoder/ms-marco-MiniLM-L-6-v2\"",
+          "value": "cross-encoder/ms-marco-MiniLM-L-6-v2",
+          "pattern": "model.*=\\s*[\"\\']([^\"\\']+)[\"\\']"
+        },
+        {
+          "category": "model_params",
+          "line": 87,
+          "content": "default_llm_model: str = \"gpt-4o-mini\"",
+          "value": "gpt-4o-mini",
+          "pattern": "model.*=\\s*[\"\\']([^\"\\']+)[\"\\']"
+        },
+        {
+          "category": "model_params",
+          "line": 88,
+          "content": "default_embedding_model: str = \"text-embedding-ada-002\"",
+          "value": "text-embedding-ada-002",
+          "pattern": "model.*=\\s*[\"\\']([^\"\\']+)[\"\\']"
+        }
+      ],
+      "missing_config_injection": [],
+      "line_count": 228
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/rag_modules/config/quality_config.py",
+      "hardcoded_values": [
+        {
+          "category": "model_params",
+          "line": 145,
+          "content": "return {k: v for k, v in model_config.items() if k != 'name'}",
+          "value": "name",
+          "pattern": "model.*=\\s*[\"\\']([^\"\\']+)[\"\\']"
+        }
+      ],
+      "missing_config_injection": [],
+      "line_count": 344
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/rag_modules/filtering/llm_framework_detector.py",
+      "hardcoded_values": [
+        {
+          "category": "model_params",
+          "line": 75,
+          "content": "temperature=0.1,  # Low temperature for consistency",
+          "value": "0.1",
+          "pattern": "temperature\\s*=\\s*([0-9]+\\.[0-9]*)"
+        },
+        {
+          "category": "model_params",
+          "line": 171,
+          "content": "temperature=0.1,",
+          "value": "0.1",
+          "pattern": "temperature\\s*=\\s*([0-9]+\\.[0-9]*)"
+        },
+        {
+          "category": "model_params",
+          "line": 172,
+          "content": "max_tokens=100,",
+          "value": "100",
+          "pattern": "max_tokens\\s*=\\s*([0-9]+)"
+        },
+        {
+          "category": "model_params",
+          "line": 30,
+          "content": "def __init__(self, llm_client: AsyncOpenAI, model: str = \"gpt-4o-mini\"):",
+          "value": "gpt-4o-mini",
+          "pattern": "model.*=\\s*[\"\\']([^\"\\']+)[\"\\']"
+        },
+        {
+          "category": "model_params",
+          "line": 107,
+          "content": "def __init__(self, llm_client: AsyncOpenAI, model: str = \"gpt-4o-mini\"):",
+          "value": "gpt-4o-mini",
+          "pattern": "model.*=\\s*[\"\\']([^\"\\']+)[\"\\']"
+        },
+        {
+          "category": "model_params",
+          "line": 194,
+          "content": "def create_llm_framework_filter(llm_client: AsyncOpenAI, model: str = \"gpt-4o-mini\") -> LLMEnhancedFrameworkFilter:",
+          "value": "gpt-4o-mini",
+          "pattern": "model.*=\\s*[\"\\']([^\"\\']+)[\"\\']"
+        }
+      ],
+      "missing_config_injection": [
+        {
+          "line": 30,
+          "content": "def __init__(self, llm_client: AsyncOpenAI, model: str = \"gpt-4o-mini\"):",
+          "pattern": "def __init__\\(self,(?!.*config)[^)]*\\):"
+        },
+        {
+          "line": 107,
+          "content": "def __init__(self, llm_client: AsyncOpenAI, model: str = \"gpt-4o-mini\"):",
+          "pattern": "def __init__\\(self,(?!.*config)[^)]*\\):"
+        }
+      ],
+      "line_count": 196
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/rag_modules/reasoning/self_correction.py",
+      "hardcoded_values": [
+        {
+          "category": "model_params",
+          "line": 429,
+          "content": "temperature=0.1,",
+          "value": "0.1",
+          "pattern": "temperature\\s*=\\s*([0-9]+\\.[0-9]*)"
+        },
+        {
+          "category": "model_params",
+          "line": 430,
+          "content": "max_tokens=800",
+          "value": "800",
+          "pattern": "max_tokens\\s*=\\s*([0-9]+)"
+        }
+      ],
+      "missing_config_injection": [],
+      "line_count": 673
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/rag_modules/storage/documents.py",
+      "hardcoded_values": [
+        {
+          "category": "limits",
+          "line": 154,
+          "content": "parallel_limit = 8  # Process 8 chunks concurrently",
+          "value": "8",
+          "pattern": "limit\\s*=\\s*([0-9]+)"
+        },
+        {
+          "category": "limits",
+          "line": 367,
+          "content": "limit=1000  # Get all chunks for this document",
+          "value": "1000",
+          "pattern": "limit\\s*=\\s*([0-9]+)"
+        },
+        {
+          "category": "limits",
+          "line": 432,
+          "content": "limit=1000",
+          "value": "1000",
+          "pattern": "limit\\s*=\\s*([0-9]+)"
+        },
+        {
+          "category": "limits",
+          "line": 469,
+          "content": "limit=1000  # Adjust if you have more documents",
+          "value": "1000",
+          "pattern": "limit\\s*=\\s*([0-9]+)"
+        }
+      ],
+      "missing_config_injection": [],
+      "line_count": 837
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/rag_modules/search/dynamic_phrase_detector.py",
+      "hardcoded_values": [
+        {
+          "category": "thresholds",
+          "line": 288,
+          "content": "confidence = min(1.0, freq / (len(documents) * 0.05))  # Higher threshold for trigrams",
+          "value": "1.0",
+          "pattern": "([0-9]+\\.[0-9]+)\\s*.*threshold"
+        },
+        {
+          "category": "thresholds",
+          "line": 33,
+          "content": "def __init__(self, min_phrase_freq: int = 3, min_confidence: float = 0.6):",
+          "value": "0.6",
+          "pattern": "min.*=\\s*([0-9]+\\.[0-9]+)"
+        }
+      ],
+      "missing_config_injection": [
+        {
+          "line": 33,
+          "content": "def __init__(self, min_phrase_freq: int = 3, min_confidence: float = 0.6):",
+          "pattern": "def __init__\\(self,(?!.*config)[^)]*\\):"
+        }
+      ],
+      "line_count": 335
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/rag_modules/retrieval/reflective_retriever.py",
+      "hardcoded_values": [
+        {
+          "category": "model_params",
+          "line": 93,
+          "content": "temperature=0.1,",
+          "value": "0.1",
+          "pattern": "temperature\\s*=\\s*([0-9]+\\.[0-9]*)"
+        },
+        {
+          "category": "model_params",
+          "line": 94,
+          "content": "max_tokens=1000",
+          "value": "1000",
+          "pattern": "max_tokens\\s*=\\s*([0-9]+)"
+        },
+        {
+          "category": "model_params",
+          "line": 43,
+          "content": "self.model = \"gpt-4o-mini\"",
+          "value": "gpt-4o-mini",
+          "pattern": "model.*=\\s*[\"\\']([^\"\\']+)[\"\\']"
+        }
+      ],
+      "missing_config_injection": [],
+      "line_count": 324
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/rag_modules/formatting/manager.py",
+      "hardcoded_values": [
+        {
+          "category": "model_params",
+          "line": 377,
+          "content": "corrected = self.formatting_llm.complete(correction_prompt, temperature=0.1)",
+          "value": "0.1",
+          "pattern": "temperature\\s*=\\s*([0-9]+\\.[0-9]*)"
+        },
+        {
+          "category": "model_params",
+          "line": 424,
+          "content": "response = self.formatting_llm.complete(structured_prompt, temperature=0.2)",
+          "value": "0.2",
+          "pattern": "temperature\\s*=\\s*([0-9]+\\.[0-9]*)"
+        },
+        {
+          "category": "model_params",
+          "line": 635,
+          "content": "temperature=0.1,",
+          "value": "0.1",
+          "pattern": "temperature\\s*=\\s*([0-9]+\\.[0-9]*)"
+        },
+        {
+          "category": "model_params",
+          "line": 636,
+          "content": "max_tokens=4000",
+          "value": "4000",
+          "pattern": "max_tokens\\s*=\\s*([0-9]+)"
+        },
+        {
+          "category": "model_params",
+          "line": 28,
+          "content": "def __init__(self, llm_client: Optional[Any] = None, llm_model: str = \"gpt-4o-mini\", config: Optional[Dict] = None):",
+          "value": "gpt-4o-mini",
+          "pattern": "model.*=\\s*[\"\\']([^\"\\']+)[\"\\']"
+        },
+        {
+          "category": "model_params",
+          "line": 719,
+          "content": "def create_formatting_manager(llm_client: Optional[Any] = None, llm_model: str = \"gpt-4o-mini\", config: Optional[Dict] = None) -> FormattingManager:",
+          "value": "gpt-4o-mini",
+          "pattern": "model.*=\\s*[\"\\']([^\"\\']+)[\"\\']"
+        }
+      ],
+      "missing_config_injection": [],
+      "line_count": 731
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/rag_modules/query/analyzer.py",
+      "hardcoded_values": [],
+      "missing_config_injection": [
+        {
+          "line": 29,
+          "content": "def __init__(self, llm: OpenAI):",
+          "pattern": "def __init__\\(self,(?!.*config)[^)]*\\):"
+        }
+      ],
+      "line_count": 441
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/rag_modules/services/generation.py",
+      "hardcoded_values": [
+        {
+          "category": "model_params",
+          "line": 577,
+          "content": "temperature=0.3,",
+          "value": "0.3",
+          "pattern": "temperature\\s*=\\s*([0-9]+\\.[0-9]*)"
+        }
+      ],
+      "missing_config_injection": [
+        {
+          "line": 24,
+          "content": "def __init__(self, llm_client=None, async_client=None, memory_manager=None,",
+          "pattern": "def __init__\\(self,(?!.*config)[^)]*\\):"
+        }
+      ],
+      "line_count": 1036
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/rag_modules/services/retrieval.py",
+      "hardcoded_values": [
+        {
+          "category": "thresholds",
+          "line": 433,
+          "content": "max_vector_score = max([r['score'] for r in vector_results], default=1.0)",
+          "value": "1.0",
+          "pattern": "max.*=\\s*([0-9]+\\.[0-9]+)"
+        },
+        {
+          "category": "thresholds",
+          "line": 454,
+          "content": "max_keyword_score = max([r['score'] for r in keyword_results], default=1.0)",
+          "value": "1.0",
+          "pattern": "max.*=\\s*([0-9]+\\.[0-9]+)"
+        }
+      ],
+      "missing_config_injection": [
+        {
+          "line": 29,
+          "content": "def __init__(self, vector_index=None, whoosh_engine=None, relevance_engine=None,",
+          "pattern": "def __init__\\(self,(?!.*config)[^)]*\\):"
+        }
+      ],
+      "line_count": 529
+    },
+    {
+      "file": "/Users/shijuprakash/AAIRE/src/rag_modules/services/quality_metrics_service.py",
+      "hardcoded_values": [
+        {
+          "category": "thresholds",
+          "line": 27,
+          "content": "self.learned_similarity_threshold = 0.70",
+          "value": "0.70",
+          "pattern": "threshold\\s*=\\s*([0-9]+\\.[0-9]+)"
+        },
+        {
+          "category": "thresholds",
+          "line": 219,
+          "content": "self.learned_similarity_threshold = max(0.4, min(0.9, new_threshold))",
+          "value": "0.4",
+          "pattern": "([0-9]+\\.[0-9]+)\\s*.*threshold"
+        },
+        {
+          "category": "thresholds",
+          "line": 253,
+          "content": "if success_rate < 0.6:  # Too many failures, lower threshold",
+          "value": "0.6",
+          "pattern": "([0-9]+\\.[0-9]+)\\s*.*threshold"
+        },
+        {
+          "category": "thresholds",
+          "line": 255,
+          "content": "elif success_rate > 0.9:  # Too easy, raise threshold",
+          "value": "0.9",
+          "pattern": "([0-9]+\\.[0-9]+)\\s*.*threshold"
+        }
+      ],
+      "missing_config_injection": [],
+      "line_count": 267
+    }
+  ]
+}

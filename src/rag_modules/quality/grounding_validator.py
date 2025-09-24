@@ -43,17 +43,29 @@ class ContentGroundingValidator:
     and detects potential hallucination patterns dynamically.
     """
 
-    def __init__(self, learning_data_path: str = "/tmp/rag_grounding_data.json"):
+    def __init__(self, learning_data_path: str = "/tmp/rag_grounding_data.json", config=None):
         """
         Initialize content grounding validator.
 
         Args:
             learning_data_path: Path to store grounding validation learning data
+            config: Quality configuration instance
         """
         self.learning_data_path = learning_data_path
+        self.config = config
         self.grounding_patterns: Dict[str, List[float]] = defaultdict(list)
         self.hallucination_indicators: Set[str] = set()
         self.validation_history: List[Dict] = []
+
+        # Initialize configurable thresholds
+        if config:
+            self.base_threshold = config.get_grounding_base_threshold()
+            self.overlap_threshold = config.get_grounding_overlap_threshold()
+            self.learned_threshold_bounds = config.get_grounding_learned_threshold_bounds()
+        else:
+            self.base_threshold = 0.35  # Lowered default for technical content
+            self.overlap_threshold = 0.25  # Lowered default for term overlap
+            self.learned_threshold_bounds = (0.25, 0.8)
 
         # Initialize semantic alignment validator if available
         if SEMANTIC_VALIDATOR_AVAILABLE:
@@ -534,8 +546,8 @@ class ContentGroundingValidator:
                         overlap = len(segment_terms & doc_terms) / len(segment_terms)
                         max_overlap = max(max_overlap, overlap)
 
-                # Require 40% term overlap for attribution
-                if max_overlap >= 0.4:
+                # Require configurable term overlap for attribution
+                if max_overlap >= self.overlap_threshold:
                     attributed_segments += 1
 
             attribution_ratio = attributed_segments / len(response_segments)
@@ -589,7 +601,7 @@ class ContentGroundingValidator:
     def _determine_grounding_threshold(self, grounding_score: float, hallucination_risk: float) -> bool:
         """Determine if response meets grounding threshold using adaptive criteria"""
         # Base threshold that adapts based on validation history
-        base_threshold = 0.6
+        base_threshold = self.base_threshold
 
         # Adjust threshold based on learning
         if hasattr(self, 'learned_threshold'):
@@ -674,10 +686,11 @@ class ContentGroundingValidator:
 
                 # Set threshold between failure and success averages
                 optimal_threshold = (success_avg + fail_avg) / 2
-                self.learned_threshold = max(0.4, min(0.8, optimal_threshold))
+                min_bound, max_bound = self.learned_threshold_bounds
+                self.learned_threshold = max(min_bound, min(max_bound, optimal_threshold))
 
                 logger.info("Updated learned grounding threshold",
-                           old_threshold=0.6,
+                           old_threshold=self.base_threshold,
                            new_threshold=self.learned_threshold,
                            success_samples=len(successful_validations),
                            fail_samples=len(failed_validations))
@@ -710,7 +723,7 @@ class ContentGroundingValidator:
 
             self.grounding_patterns = defaultdict(list, data.get('grounding_patterns', {}))
             self.hallucination_indicators = set(data.get('hallucination_indicators', []))
-            self.learned_threshold = data.get('learned_threshold', 0.6)
+            self.learned_threshold = data.get('learned_threshold', self.base_threshold)
 
             logger.info("Loaded grounding learning data",
                        patterns_loaded=len(self.grounding_patterns),

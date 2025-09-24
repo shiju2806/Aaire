@@ -166,7 +166,8 @@ class ServiceContainer:
         embedding_model_name = self.config.get_model_params('embedding').get('name', 'all-MiniLM-L6-v2')
 
         validator = SemanticAlignmentValidator(
-            model_name=embedding_model_name
+            model_name=embedding_model_name,
+            config=self.config
         )
 
         logger.info("Semantic alignment validator created")
@@ -177,10 +178,11 @@ class ServiceContainer:
         from ..quality.grounding_validator import ContentGroundingValidator
 
         validator = ContentGroundingValidator(
-            learning_data_path="/tmp/rag_grounding_data.json"
+            learning_data_path="/tmp/rag_grounding_data.json",
+            config=self.config
         )
 
-        logger.info("Grounding validator created")
+        logger.info("Grounding validator created with configuration")
         return validator
 
     def _create_openai_alignment_validator(self):
@@ -191,9 +193,12 @@ class ServiceContainer:
 
         from ..quality.openai_alignment_validator import OpenAIAlignmentValidator
 
+        # Get embedding model name from configuration
+        embedding_model_name = self.config.get_model_params('embedding').get('name', 'text-embedding-ada-002')
+
         validator = OpenAIAlignmentValidator(
-            config=self.config,
-            llm_client=self.get_singleton('advanced_llm_client')
+            model=embedding_model_name,
+            config=self.config
         )
 
         logger.info("OpenAI alignment validator created")

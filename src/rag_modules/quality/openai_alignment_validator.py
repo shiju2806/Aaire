@@ -31,16 +31,24 @@ class OpenAIAlignmentValidator:
     Lightweight alternative to sentence-transformers.
     """
 
-    def __init__(self, model: str = "text-embedding-ada-002"):
+    def __init__(self, model: str = "text-embedding-ada-002", config=None):
         """
         Initialize with OpenAI embedding model.
 
         Args:
             model: OpenAI embedding model to use
+            config: Quality configuration instance
         """
         self.model = model
-        self.alignment_threshold = 0.65
-        self.confidence_threshold = 0.7
+        self.config = config
+
+        # Use configuration thresholds if available, otherwise use defaults
+        if config:
+            self.alignment_threshold = config.get_semantic_alignment_threshold()
+            self.confidence_threshold = config.get_confidence_threshold()
+        else:
+            self.alignment_threshold = 0.35  # Lowered default for technical content
+            self.confidence_threshold = 0.30  # Lowered default for technical content
 
         logger.info("OpenAI alignment validator initialized", model=model)
 

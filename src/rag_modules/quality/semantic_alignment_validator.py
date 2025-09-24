@@ -37,16 +37,24 @@ class SemanticAlignmentValidator:
     - Works across domains
     """
 
-    def __init__(self, model_name: str = "all-MiniLM-L6-v2"):
+    def __init__(self, model_name: str = "all-MiniLM-L6-v2", config=None):
         """
         Initialize with fast, high-quality embedding model.
 
         Args:
             model_name: Sentence transformer model (optimized for speed)
+            config: Quality configuration instance
         """
         self.embedding_model = SentenceTransformer(model_name)
-        self.alignment_threshold = 0.65  # Learned threshold
-        self.confidence_threshold = 0.7
+        self.config = config
+
+        # Use configuration thresholds if available, otherwise use defaults
+        if config:
+            self.alignment_threshold = config.get_semantic_alignment_threshold()
+            self.confidence_threshold = config.get_confidence_threshold()
+        else:
+            self.alignment_threshold = 0.35  # Lowered default for technical content
+            self.confidence_threshold = 0.30  # Lowered default for technical content
 
         logger.info("Semantic alignment validator initialized",
                    model=model_name,

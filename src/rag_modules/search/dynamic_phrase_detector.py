@@ -30,16 +30,31 @@ class DynamicPhraseDetector:
     Learns phrases from actual document content and query patterns.
     """
 
-    def __init__(self, min_phrase_freq: int = 3, min_confidence: float = 0.6):
+    def __init__(self, min_phrase_freq: int = None, min_confidence: float = None, config=None):
         """
         Initialize dynamic phrase detector.
 
         Args:
             min_phrase_freq: Minimum frequency for a phrase to be considered
             min_confidence: Minimum confidence score for phrase detection
+            config: Quality configuration instance
         """
-        self.min_phrase_freq = min_phrase_freq
-        self.min_confidence = min_confidence
+        # Use configuration if available, otherwise fall back to parameters or defaults
+        if config:
+            phrase_config = config.config.get("phrase_detection", {})
+            self.min_phrase_freq = min_phrase_freq or phrase_config.get("min_phrase_frequency", 3)
+            self.min_confidence = min_confidence or phrase_config.get("min_confidence", 0.6)
+            # Additional configuration for confidence calculations
+            self.high_confidence_threshold = phrase_config.get("high_confidence_threshold", 0.8)
+            self.bigram_confidence_factor = phrase_config.get("bigram_confidence_factor", 0.1)
+            self.trigram_confidence_factor = phrase_config.get("trigram_confidence_factor", 0.05)
+        else:
+            self.min_phrase_freq = min_phrase_freq or 3
+            self.min_confidence = min_confidence or 0.6
+            # Default configuration for confidence calculations
+            self.high_confidence_threshold = 0.8
+            self.bigram_confidence_factor = 0.1
+            self.trigram_confidence_factor = 0.05
 
         # Cached phrase data
         self.phrase_cache: Dict[str, List[str]] = {}
@@ -176,7 +191,7 @@ class DynamicPhraseDetector:
                     matches.append(phrase_text)
 
                 # Check for partial matches with high-confidence phrases
-                elif candidate.confidence > 0.8:
+                elif candidate.confidence > self.high_confidence_threshold:
                     phrase_words = phrase_text.split()
                     if all(word in query_lower for word in phrase_words):
                         matches.append(phrase_text)
@@ -275,7 +290,7 @@ class DynamicPhraseDetector:
         # Convert frequent n-grams to phrase candidates
         for ngram, freq in all_bigrams.items():
             if freq >= self.min_phrase_freq and self._is_meaningful_phrase(ngram):
-                confidence = min(1.0, freq / (len(documents) * 0.1))  # Normalize by document count
+                confidence = min(1.0, freq / (len(documents) * self.bigram_confidence_factor))  # Normalize by document count
                 self.corpus_phrases[ngram] = PhraseCandidate(
                     text=ngram,
                     frequency=freq,
@@ -285,7 +300,7 @@ class DynamicPhraseDetector:
 
         for ngram, freq in all_trigrams.items():
             if freq >= self.min_phrase_freq and self._is_meaningful_phrase(ngram):
-                confidence = min(1.0, freq / (len(documents) * 0.05))  # Higher threshold for trigrams
+                confidence = min(1.0, freq / (len(documents) * self.trigram_confidence_factor))  # Higher threshold for trigrams
                 self.corpus_phrases[ngram] = PhraseCandidate(
                     text=ngram,
                     frequency=freq,

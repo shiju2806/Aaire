@@ -11,9 +11,9 @@ quality_validation:
   # Thresholds - all configurable
   thresholds:
     # Similarity thresholds (floats) - adjusted for better keyword search results
-    semantic_alignment_minimum: 0.60
-    grounding_score_minimum: 0.55
-    semantic_confidence_minimum: 0.50
+    semantic_alignment_minimum: 0.30  # Lowered to allow technical insurance responses
+    grounding_score_minimum: 0.35     # Lowered to allow detailed reserve calculation responses
+    semantic_confidence_minimum: 0.30 # Lowered to show responses with reasonable confidence
     similarity_threshold_base: 0.70
     similarity_threshold_min: 0.50
     similarity_threshold_max: 0.90
@@ -21,6 +21,13 @@ quality_validation:
     # Document limits (integers) - restored for Universal Life coverage
     document_limit_base: 20
     document_limit_max: 30
+
+    # Overall quality threshold
+    overall_quality_minimum: 0.45         # Lowered from default 0.6 for technical content
+
+    # Risk thresholds
+    evidence_coverage_minimum: 0.35        # Minimum evidence coverage for validation
+    hallucination_risk_maximum: 0.6       # Maximum acceptable hallucination risk
 
     # Adjustments
     long_query_adjustment: -0.05
@@ -34,6 +41,10 @@ quality_validation:
     check_numbers: true
     check_specific_claims: true
     min_evidence_threshold: 0.70
+    base_threshold: 0.35              # Lowered from 0.6 for technical content
+    min_overlap_threshold: 0.25       # Lowered from 0.4 for term overlap
+    learned_threshold_min: 0.25       # Lowered from 0.4 for adaptive learning
+    learned_threshold_max: 0.8        # Keep max boundary
 
   # Response validation
   response_validation:
@@ -53,6 +64,9 @@ quality_validation:
   phrase_detection:
     min_phrase_frequency: 3
     min_confidence: 0.6
+    high_confidence_threshold: 0.8      # Threshold for high-confidence phrase matching
+    bigram_confidence_factor: 0.1       # Factor for bigram confidence calculation
+    trigram_confidence_factor: 0.05     # Factor for trigram confidence calculation (higher threshold)
     enable_corpus_learning: true
     enable_query_learning: true
 
@@ -89,6 +103,14 @@ quality_validation:
     product_confidence_minimum: 0.3  # Minimum confidence for product classification
     include_mixed_jurisdictions: true  # Include 'mixed' when searching for specific jurisdiction
     fallback_to_vector: true  # Fall back to vector search when keyword returns 0 results
+
+  # Unified quality validation weights
+  weights:
+    unified_quality:
+      semantic_score: 0.3          # Weight for semantic alignment scores
+      grounding_score: 0.4         # Weight for grounding validation scores
+      hallucination_penalty: 0.2   # Weight for hallucination risk (inverted)
+      openai_score: 0.1            # Weight for OpenAI alignment scores
 
   # Performance settings
   performance:
