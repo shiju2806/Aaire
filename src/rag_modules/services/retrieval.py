@@ -13,6 +13,7 @@ import re
 import asyncio
 import structlog
 from typing import List, Dict, Any, Optional
+import numpy as np
 
 # LLM-based framework filtering imports
 try:
@@ -25,27 +26,33 @@ try:
     from ..quality.semantic_alignment_validator import SemanticAlignmentValidator
     from ..quality.unified_validator import UnifiedQualityValidator
     from ..retrieval.reflective_retriever import ReflectiveRetriever
+    from ..config.quality_config import get_quality_config
     QUALITY_VALIDATORS_AVAILABLE = True
 except ImportError:
     SemanticAlignmentValidator = None
     UnifiedQualityValidator = None
     ReflectiveRetriever = None
+    get_quality_config = None
     QUALITY_VALIDATORS_AVAILABLE = False
+
+# Core dependency injection for entropy disambiguation
+from ..core.dependency_injection import ServiceMixin
 
 logger = structlog.get_logger()
 
 
-class DocumentRetriever:
-    """Handles document retrieval operations with hybrid search capabilities"""
+class DocumentRetriever(ServiceMixin):
+    """Handles document retrieval operations with hybrid search capabilities and entropy disambiguation"""
 
     def __init__(self, vector_index=None, whoosh_engine=None, relevance_engine=None,
                  quality_metrics_manager=None, config=None, llm_client=None, nlp_query_processor=None):
         """Initialize retriever with required components"""
+        super().__init__()
         self.index = vector_index
         self.whoosh_engine = whoosh_engine
         self.relevance_engine = relevance_engine
         self.quality_metrics_manager = quality_metrics_manager
-        self.config = config or {}
+        self._local_config = config or {}  # Use _local_config to avoid conflict with ServiceMixin.config
         self.llm_client = llm_client
         self.nlp_query_processor = nlp_query_processor
 
@@ -59,28 +66,34 @@ class DocumentRetriever:
 
         if QUALITY_VALIDATORS_AVAILABLE and config:
             try:
-                # Initialize semantic alignment validator with config
-                self.semantic_validator = SemanticAlignmentValidator(config=config)
+                # Get proper quality config object (not plain dict)
+                quality_config = get_quality_config() if get_quality_config else None
+
+                # Initialize semantic alignment validator with proper config object
+                self.semantic_validator = SemanticAlignmentValidator(config=quality_config)
                 logger.info("Semantic alignment validator initialized")
 
-                # Initialize unified quality validator with config
-                self.quality_validator = UnifiedQualityValidator(config=config)
+                # Initialize unified quality validator with proper config object
+                self.quality_validator = UnifiedQualityValidator(config=quality_config)
                 logger.info("Unified quality validator initialized")
 
                 # Initialize reflective retriever if LLM client available
                 if llm_client:
+                    reflective_config = quality_config.config if hasattr(quality_config, 'config') else config
                     self.reflective_retriever = ReflectiveRetriever(
                         base_retriever=self,
                         llm_client=llm_client,
-                        config=config.config if hasattr(config, 'config') else {}
+                        config=reflective_config
                     )
                     logger.info("Reflective retriever initialized")
 
             except Exception as e:
                 logger.warning("Quality validator initialization failed", exception_details=str(e))
+                # Gracefully degrade to no quality validation rather than breaking the system
                 self.semantic_validator = None
                 self.quality_validator = None
                 self.reflective_retriever = None
+                logger.info("System will operate without quality validation to prevent failures")
         else:
             logger.info("Quality validators not available",
                        validators_available=QUALITY_VALIDATORS_AVAILABLE,
@@ -97,6 +110,22 @@ class DocumentRetriever:
                 self.framework_filter = None
         else:
             logger.info("LLM framework filtering not available", has_filter=create_llm_framework_filter is not None, has_client=llm_client is not None)
+
+        # Initialize entropy disambiguation service for semantic confusion detection
+        self.entropy_service = None
+        try:
+            self.entropy_service = self.get_service('entropy_disambiguation_service', singleton=True)
+            logger.info("Entropy disambiguation service connected for semantic confusion detection")
+        except Exception as e:
+            logger.warning("Entropy disambiguation service not available", exception_details=str(e))
+
+        # Initialize performance optimizer for tiered processing and async learning
+        self.performance_optimizer = None
+        try:
+            self.performance_optimizer = self.get_service('performance_optimizer', singleton=True)
+            logger.info("Performance optimizer connected for tiered processing")
+        except Exception as e:
+            logger.warning("Performance optimizer not available", exception_details=str(e))
 
     async def retrieve_documents(self, query: str, doc_type_filter: Optional[List[str]],
                                similarity_threshold: Optional[float] = None,
@@ -234,9 +263,403 @@ class DocumentRetriever:
                                confidence=semantic_result.confidence)
 
             except Exception as e:
-                logger.warning("Semantic validation failed", exception_details=str(e))
+                logger.warning("Semantic validation failed - continuing without validation",
+                             exception_details=str(e))
+                # Continue without semantic validation to prevent system failure
 
         return combined_results
+
+    async def enhanced_retrieve(self, query: str, doc_type_filter: Optional[List[str]] = None,
+                               similarity_threshold: Optional[float] = None,
+                               filters: Optional[Dict[str, Any]] = None,
+                               query_intent: Optional[Any] = None) -> Dict[str, Any]:
+        """
+        Performance-optimized enhanced retrieval with tiered processing:
+        1. Determine processing tier (fast/cached/full)
+        2. Route to appropriate processing path
+        3. Record metrics and learn patterns asynchronously
+        """
+        import time
+        start_time = time.time()
+        tier_used = "full"  # Default fallback
+        cache_hit = False
+        disambiguation_result = None
+
+        try:
+            # 1. Determine processing tier
+            if self.performance_optimizer:
+                tier_used = self.performance_optimizer.determine_processing_tier(query)
+                logger.info("Processing tier determined", query_preview=query[:50] + "..." if len(query) > 50 else query, tier=tier_used)
+
+            # 2. Route to appropriate processing path
+            if tier_used == "fast":
+                # Fast path: Simple lookup, skip disambiguation
+                chunks = await self._fast_retrieve(query, doc_type_filter, similarity_threshold, filters, query_intent)
+
+            elif tier_used == "cached" and self.performance_optimizer:
+                # Cached path: Use cached disambiguation pattern
+                cached_pattern = await self.performance_optimizer.get_cached_pattern(query)
+                if cached_pattern:
+                    cache_hit = True
+                    chunks = await self._cached_retrieve(query, cached_pattern, doc_type_filter, similarity_threshold, filters, query_intent)
+                    disambiguation_result = cached_pattern
+                else:
+                    # Fallback to full processing if no cache hit
+                    tier_used = "full"
+                    chunks = await self._full_retrieve_legacy(query, doc_type_filter, similarity_threshold, filters, query_intent)
+                    disambiguation_result = chunks.get('disambiguation_metadata', {})
+
+            else:
+                # Full path: Complete entropy + disambiguation
+                chunks = await self._full_retrieve_legacy(query, doc_type_filter, similarity_threshold, filters, query_intent)
+                disambiguation_result = chunks.get('disambiguation_metadata', {})
+
+            # Extract documents from result if needed
+            if isinstance(chunks, dict):
+                final_chunks = chunks.get('documents', [])
+                validation_result = chunks.get('validation_result')
+                disambiguation_metadata = chunks.get('disambiguation_metadata', {})
+            else:
+                final_chunks = chunks
+                validation_result = None
+                disambiguation_metadata = disambiguation_result or {}
+
+            # 3. Record performance metrics and learn patterns asynchronously
+            response_time = time.time() - start_time
+
+            if self.performance_optimizer:
+                # Record interaction for monitoring and learning (non-blocking)
+                asyncio.create_task(
+                    self.performance_optimizer.record_interaction(
+                        query=query,
+                        tier_used=tier_used,
+                        response_time=response_time,
+                        disambiguation_result=disambiguation_result,
+                        cache_hit=cache_hit
+                    )
+                )
+
+                # Record circuit breaker success
+                self.performance_optimizer.record_circuit_breaker_event(success=True)
+
+            # Return optimized results with performance metadata
+            return {
+                'documents': final_chunks,
+                'validation_result': validation_result,
+                'disambiguation_metadata': disambiguation_metadata,
+                'performance_metadata': {
+                    'tier_used': tier_used,
+                    'response_time': response_time,
+                    'cache_hit': cache_hit,
+                    'optimization_applied': True
+                }
+            }
+
+        except Exception as e:
+            response_time = time.time() - start_time
+            logger.error("Enhanced retrieve optimization failed", error=str(e), tier=tier_used, response_time=response_time)
+
+            # Record circuit breaker failure
+            if self.performance_optimizer:
+                self.performance_optimizer.record_circuit_breaker_event(success=False)
+
+            # Fallback to legacy enhanced retrieve
+            try:
+                result = await self._full_retrieve_legacy(query, doc_type_filter, similarity_threshold, filters, query_intent)
+                if isinstance(result, dict):
+                    result['performance_metadata'] = {
+                        'tier_used': 'fallback',
+                        'response_time': time.time() - start_time,
+                        'cache_hit': False,
+                        'optimization_applied': False,
+                        'fallback_reason': str(e)
+                    }
+                    return result
+                else:
+                    return {
+                        'documents': result,
+                        'validation_result': None,
+                        'disambiguation_metadata': {},
+                        'performance_metadata': {
+                            'tier_used': 'fallback',
+                            'response_time': time.time() - start_time,
+                            'cache_hit': False,
+                            'optimization_applied': False,
+                            'fallback_reason': str(e)
+                        }
+                    }
+            except Exception as fallback_error:
+                logger.error("Fallback also failed", error=str(fallback_error))
+                raise e
+
+    async def dynamic_negative_sampling(self, query: str, chunks: List[Dict],
+                                      disambiguation_result) -> List[Dict]:
+        """
+        Apply dynamic negative sampling to reduce semantic confusion
+        by filtering out documents that contain conflicting concepts
+        """
+        if not disambiguation_result or not disambiguation_result.conflicting_pairs:
+            return chunks
+
+        # Extract conflicting concept pairs
+        conflicting_concepts = set()
+        for pair in disambiguation_result.conflicting_pairs:
+            conflicting_concepts.add(pair.concept_a.lower())
+            conflicting_concepts.add(pair.concept_b.lower())
+
+        logger.info("Applying dynamic negative sampling",
+                   conflicting_concepts=list(conflicting_concepts))
+
+        # Score documents based on conflicting concept presence
+        scored_chunks = []
+        for chunk in chunks:
+            content_lower = chunk.get('content', '').lower()
+
+            # Count conflicting concepts in this document
+            conflict_count = sum(1 for concept in conflicting_concepts
+                                if concept in content_lower)
+
+            # Prefer documents with fewer conflicting concepts
+            disambiguation_penalty = conflict_count * 0.1
+            adjusted_score = chunk.get('score', 0.0) - disambiguation_penalty
+
+            chunk_copy = chunk.copy()
+            chunk_copy['disambiguation_score'] = adjusted_score
+            chunk_copy['conflict_count'] = conflict_count
+            scored_chunks.append(chunk_copy)
+
+        # Sort by disambiguation-adjusted score
+        scored_chunks.sort(key=lambda x: x['disambiguation_score'], reverse=True)
+
+        # Return top documents with lower conflict scores
+        filtered_chunks = [chunk for chunk in scored_chunks
+                          if chunk['conflict_count'] <= 1]  # Allow at most 1 conflicting concept
+
+        # If filtering is too aggressive, return original chunks
+        if len(filtered_chunks) < len(chunks) * 0.3:  # Keep at least 30% of original
+            logger.info("Dynamic filtering too aggressive, using top scored chunks")
+            return [chunk for chunk in scored_chunks[:len(chunks)]]
+
+        logger.info("Dynamic negative sampling completed",
+                   original_count=len(chunks),
+                   filtered_count=len(filtered_chunks))
+
+        return filtered_chunks
+
+    async def _full_retrieve_legacy(self, query: str, doc_type_filter: Optional[List[str]] = None,
+                                   similarity_threshold: Optional[float] = None,
+                                   filters: Optional[Dict[str, Any]] = None,
+                                   query_intent: Optional[Any] = None) -> Dict[str, Any]:
+        """
+        Legacy enhanced retrieval with entropy-based disambiguation following Phase 2 architecture:
+        1. Initial retrieval (existing hybrid search)
+        2. Entropy detection (semantic confusion detection)
+        3. Dynamic disambiguation (negative sampling if needed)
+        4. Cross-encoder rerank (existing relevance engine)
+        5. SmartValidator (existing validation with disambiguation learning)
+        """
+        # 1. Initial retrieval (existing hybrid search) - retrieve more documents for disambiguation
+        initial_doc_limit = (self.quality_metrics_manager.get_document_limit(query)
+                           if self.quality_metrics_manager else 20)
+
+        # Increase initial retrieval for better disambiguation analysis
+        expanded_limit = min(initial_doc_limit * 2, 40)
+
+        logger.info("Legacy enhanced retrieval starting",
+                   query=query[:50] + "..." if len(query) > 50 else query,
+                   initial_limit=initial_doc_limit,
+                   expanded_limit=expanded_limit)
+
+        # Use the existing hybrid search but with expanded limit
+        chunks = await self.retrieve_documents(
+            query=query,
+            doc_type_filter=doc_type_filter,
+            similarity_threshold=similarity_threshold,
+            filters=filters,
+            query_intent=query_intent
+        )
+
+        # 2. Entropy detection (semantic confusion detection)
+        confusion_score = 0.0
+        disambiguation_result = None
+
+        if self.entropy_service and len(chunks) > 0:
+            try:
+                disambiguation_result = await self.entropy_service.disambiguate_query(query, chunks)
+                confusion_score = 1.0 - disambiguation_result.confidence
+
+                logger.info("Semantic confusion analysis completed",
+                           confusion_score=confusion_score,
+                           detected_concepts=len(disambiguation_result.detected_concepts),
+                           conflicts_found=len(disambiguation_result.conflicting_pairs))
+
+            except Exception as e:
+                logger.warning("Entropy disambiguation failed, continuing without",
+                             exception_details=str(e))
+
+        # 3. Dynamic disambiguation (negative sampling if confusion detected)
+        if confusion_score > 0.7 and disambiguation_result:
+            try:
+                chunks = await self.dynamic_negative_sampling(query, chunks, disambiguation_result)
+                logger.info("Dynamic negative sampling applied due to high confusion",
+                           confusion_score=confusion_score,
+                           final_chunks=len(chunks))
+            except Exception as e:
+                logger.warning("Dynamic negative sampling failed, using original chunks",
+                             exception_details=str(e))
+
+        # 4. Cross-encoder rerank (existing relevance engine) - apply final limit
+        if self.relevance_engine and len(chunks) > initial_doc_limit:
+            try:
+                chunks = self.relevance_engine.rank_documents(query, chunks)
+                chunks = chunks[:initial_doc_limit]
+                logger.info("Cross-encoder reranking applied", final_count=len(chunks))
+            except Exception as e:
+                logger.warning("Cross-encoder reranking failed", exception_details=str(e))
+                chunks = chunks[:initial_doc_limit]
+
+        # 5. SmartValidator (existing validation with disambiguation learning)
+        validation_result = None
+        if hasattr(self, 'semantic_validator') and self.semantic_validator:
+            try:
+                validation_result = self.semantic_validator.validate_alignment(query, chunks)
+
+                # Pass disambiguation insights to validator for learning
+                if disambiguation_result and hasattr(validation_result, 'add_disambiguation_context'):
+                    validation_result.add_disambiguation_context(disambiguation_result)
+
+                logger.info("SmartValidator validation completed",
+                           is_aligned=validation_result.is_aligned,
+                           confidence=validation_result.confidence)
+
+            except Exception as e:
+                logger.warning("SmartValidator validation failed", exception_details=str(e))
+
+        # Return enhanced results with disambiguation metadata
+        return {
+            'documents': chunks,
+            'validation_result': validation_result,
+            'disambiguation_metadata': {
+                'confusion_score': confusion_score,
+                'disambiguation_applied': confusion_score > 0.7,
+                'detected_concepts': disambiguation_result.detected_concepts if disambiguation_result else [],
+                'conflicting_pairs': len(disambiguation_result.conflicting_pairs) if disambiguation_result else 0,
+                'recommendation': disambiguation_result.recommended_disambiguation if disambiguation_result else None
+            }
+        }
+
+    async def _fast_retrieve(self, query: str, doc_type_filter: Optional[List[str]] = None,
+                           similarity_threshold: Optional[float] = None,
+                           filters: Optional[Dict[str, Any]] = None,
+                           query_intent: Optional[Any] = None) -> List[Dict]:
+        """Fast retrieval path - skip disambiguation, basic hybrid search only"""
+        try:
+            # Use existing retrieve_documents but skip validation to be faster
+            chunks = await self.retrieve_documents(
+                query=query,
+                doc_type_filter=doc_type_filter,
+                similarity_threshold=similarity_threshold,
+                filters=filters,
+                query_intent=query_intent
+            )
+
+            logger.debug("Fast retrieve completed", chunks_count=len(chunks))
+            return chunks
+
+        except Exception as e:
+            logger.warning("Fast retrieve failed, using fallback", error=str(e))
+            # Minimal fallback - just vector search
+            return await self.vector_search(query, doc_type_filter, similarity_threshold, filters)
+
+    async def _cached_retrieve(self, query: str, cached_pattern: Dict[str, Any],
+                             doc_type_filter: Optional[List[str]] = None,
+                             similarity_threshold: Optional[float] = None,
+                             filters: Optional[Dict[str, Any]] = None,
+                             query_intent: Optional[Any] = None) -> List[Dict]:
+        """Cached retrieval path - use cached disambiguation pattern"""
+        try:
+            # Get base documents
+            chunks = await self.retrieve_documents(
+                query=query,
+                doc_type_filter=doc_type_filter,
+                similarity_threshold=similarity_threshold,
+                filters=filters,
+                query_intent=query_intent
+            )
+
+            # Apply cached disambiguation if there were conflicts
+            if cached_pattern.get('conflicting_pairs', []):
+                # Use cached pattern to apply disambiguation
+                disambiguation_metadata = {
+                    'confusion_score': 1.0 - cached_pattern.get('confidence', 1.0),
+                    'disambiguation_applied': True,
+                    'detected_concepts': cached_pattern.get('detected_concepts', []),
+                    'conflicting_pairs': len(cached_pattern.get('conflicting_pairs', [])),
+                    'recommendation': cached_pattern.get('recommended_disambiguation'),
+                    'cached': True
+                }
+
+                # Apply light disambiguation using cached pattern
+                filtered_chunks = self._apply_cached_disambiguation(chunks, cached_pattern)
+
+                logger.debug("Cached retrieve with disambiguation completed",
+                           original_count=len(chunks),
+                           filtered_count=len(filtered_chunks))
+
+                return {
+                    'documents': filtered_chunks,
+                    'disambiguation_metadata': disambiguation_metadata
+                }
+            else:
+                logger.debug("Cached retrieve without disambiguation completed", chunks_count=len(chunks))
+                return chunks
+
+        except Exception as e:
+            logger.warning("Cached retrieve failed, using basic retrieve", error=str(e))
+            return await self._fast_retrieve(query, doc_type_filter, similarity_threshold, filters, query_intent)
+
+    async def _full_retrieve(self, query: str, doc_type_filter: Optional[List[str]] = None,
+                           similarity_threshold: Optional[float] = None,
+                           filters: Optional[Dict[str, Any]] = None,
+                           query_intent: Optional[Any] = None) -> Dict[str, Any]:
+        """Full retrieval path - complete entropy + disambiguation processing"""
+        # Use the legacy enhanced retrieve function for full processing
+        return await self._full_retrieve_legacy(query, doc_type_filter, similarity_threshold, filters, query_intent)
+
+    def _apply_cached_disambiguation(self, chunks: List[Dict], cached_pattern: Dict[str, Any]) -> List[Dict]:
+        """Apply disambiguation using cached pattern"""
+        conflicting_pairs = cached_pattern.get('conflicting_pairs', [])
+        if not conflicting_pairs:
+            return chunks
+
+        # Extract conflicting concepts from cached pattern
+        conflicting_concepts = set()
+        for pair_info in conflicting_pairs:
+            if isinstance(pair_info, dict):
+                conflicting_concepts.add(pair_info.get('concept_a', '').lower())
+                conflicting_concepts.add(pair_info.get('concept_b', '').lower())
+
+        # Score and filter documents
+        scored_chunks = []
+        for chunk in chunks:
+            content_lower = chunk.get('content', '').lower()
+
+            # Count conflicting concepts
+            conflict_count = sum(1 for concept in conflicting_concepts
+                               if concept in content_lower)
+
+            # Apply disambiguation penalty
+            disambiguation_penalty = conflict_count * 0.1
+            adjusted_score = chunk.get('score', 0.0) - disambiguation_penalty
+
+            chunk_copy = chunk.copy()
+            chunk_copy['disambiguation_score'] = adjusted_score
+            chunk_copy['conflict_count'] = conflict_count
+            scored_chunks.append(chunk_copy)
+
+        # Sort by adjusted score and return top results
+        scored_chunks.sort(key=lambda x: x['disambiguation_score'], reverse=True)
+        return scored_chunks
 
     async def vector_search(self, query: str, doc_type_filter: Optional[List[str]],
                           similarity_threshold: Optional[float] = None,
@@ -264,7 +687,7 @@ class DocumentRetriever:
             nodes = retriever.retrieve(query)
 
             # Use adaptive threshold if provided, otherwise fall back to config
-            threshold = similarity_threshold if similarity_threshold is not None else self.config.get('retrieval_config', {}).get('similarity_threshold', 0.5)
+            threshold = similarity_threshold if similarity_threshold is not None else self._local_config.get('retrieval_config', {}).get('similarity_threshold', 0.5)
 
             for node in nodes:
                 if node.score >= threshold:

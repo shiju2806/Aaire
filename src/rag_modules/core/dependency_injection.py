@@ -41,12 +41,6 @@ class ServiceContainer:
             'advanced_llm_client': self._create_advanced_llm_client,
             'async_llm_client': self._create_async_llm_client,
 
-            # Validator factories
-            'semantic_alignment_validator': self._create_semantic_alignment_validator,
-            'grounding_validator': self._create_grounding_validator,
-            'openai_alignment_validator': self._create_openai_alignment_validator,
-            'unified_validator': self._create_unified_validator,
-
             # Core services
             'document_retriever': self._create_document_retriever,
             'response_generator': self._create_response_generator,
@@ -62,8 +56,18 @@ class ServiceContainer:
             # Formatting services
             'formatting_manager': self._create_formatting_manager,
 
-            # Enhanced grounding validation
-            'enhanced_grounding_validator': self._create_enhanced_grounding_validator
+
+            # Smart validator optimized for GPT-4o-mini
+            'smart_validator': self._create_smart_validator,
+
+            # Domain knowledge service for authoritative terminology
+            'domain_knowledge_service': self._create_domain_knowledge_service,
+
+            # Entropy-based disambiguation for semantically similar concepts
+            'entropy_disambiguation_service': self._create_entropy_disambiguation_service,
+
+            # Performance optimization for tiered processing and async learning
+            'performance_optimizer': self._create_performance_optimizer
         })
 
     def register_factory(self, service_name: str, factory: Callable[[], T]):
@@ -157,62 +161,6 @@ class ServiceContainer:
         logger.info("Advanced LLM client created", model=model_name)
         return client
 
-    # Validator Factories
-    def _create_semantic_alignment_validator(self):
-        """Create semantic alignment validator with configuration."""
-        from ..quality.semantic_alignment_validator import SemanticAlignmentValidator
-
-        # Get embedding model name from configuration
-        embedding_model_name = self.config.get_model_params('embedding').get('name', 'all-MiniLM-L6-v2')
-
-        validator = SemanticAlignmentValidator(
-            model_name=embedding_model_name,
-            config=self.config
-        )
-
-        logger.info("Semantic alignment validator created")
-        return validator
-
-    def _create_grounding_validator(self):
-        """Create grounding validator with configuration."""
-        from ..quality.grounding_validator import ContentGroundingValidator
-
-        validator = ContentGroundingValidator(
-            learning_data_path="/tmp/rag_grounding_data.json",
-            config=self.config
-        )
-
-        logger.info("Grounding validator created with configuration")
-        return validator
-
-    def _create_openai_alignment_validator(self):
-        """Create OpenAI alignment validator if enabled."""
-        if not self.config.is_openai_alignment_enabled():
-            logger.info("OpenAI alignment validator disabled by feature flag")
-            return None
-
-        from ..quality.openai_alignment_validator import OpenAIAlignmentValidator
-
-        # Get embedding model name from configuration
-        embedding_model_name = self.config.get_model_params('embedding').get('name', 'text-embedding-ada-002')
-
-        validator = OpenAIAlignmentValidator(
-            model=embedding_model_name,
-            config=self.config
-        )
-
-        logger.info("OpenAI alignment validator created")
-        return validator
-
-
-    def _create_unified_validator(self):
-        """Create new unified quality validator (recommended approach)."""
-        from ..quality.unified_validator import UnifiedQualityValidator
-
-        validator = UnifiedQualityValidator(config=self.config)
-
-        logger.info("Unified validator created")
-        return validator
 
     def _create_quality_metrics_service(self):
         """Create quality metrics service (replacement for QualityMetricsManager)."""
@@ -248,7 +196,8 @@ class ServiceContainer:
             llm_client = self.get_singleton('llm_client')
             async_client = self.get_singleton('async_llm_client')
             formatting_manager = self.get_singleton('formatting_manager')
-            grounding_validator = self.get_singleton('enhanced_grounding_validator')
+            # Use smart_validator instead of enhanced_grounding_validator
+            grounding_validator = self.get_singleton('smart_validator')
 
             # Create response generator with all dependencies
             generator = create_response_generator(
@@ -328,17 +277,89 @@ class ServiceContainer:
             logger.error("Failed to create formatting manager", exception_details=str(e))
             return None
 
-    def _create_enhanced_grounding_validator(self):
-        """Create enhanced grounding validator for hallucination detection."""
+
+    def _create_smart_validator(self):
+        """Create smart validator optimized for GPT-4o-mini hallucination detection."""
         try:
-            from ..quality.enhanced_grounding_validator import EnhancedGroundingValidator
+            from ..validation.smart_validator import SmartValidator
 
-            validator = EnhancedGroundingValidator(config=self.config)
+            # Get domain knowledge service for authoritative terminology
+            domain_knowledge = self.get_singleton('domain_knowledge_service')
+            validator = SmartValidator(config=self.config, domain_knowledge_service=domain_knowledge)
 
-            logger.info("Enhanced grounding validator created")
+            logger.info("Smart validator created for GPT-4o-mini optimization")
             return validator
         except Exception as e:
-            logger.error("Failed to create enhanced grounding validator", exception_details=str(e))
+            logger.error("Failed to create smart validator", exception_details=str(e))
+            return None
+
+    def _create_domain_knowledge_service(self):
+        """Create domain knowledge service with authoritative terminology sources."""
+        try:
+            from ..services.domain_knowledge_service import DomainKnowledgeService
+
+            service = DomainKnowledgeService(config=self.config)
+
+            # Initialize domain knowledge asynchronously in background
+            import asyncio
+            try:
+                # Try to get current event loop
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    # Create task for background initialization
+                    asyncio.create_task(service.initialize_domain_knowledge())
+                else:
+                    # Run initialization synchronously
+                    loop.run_until_complete(service.initialize_domain_knowledge())
+            except RuntimeError:
+                # No event loop running, create new one
+                asyncio.run(service.initialize_domain_knowledge())
+
+            logger.info("Domain knowledge service created with authoritative sources")
+            return service
+        except Exception as e:
+            logger.error("Failed to create domain knowledge service", exception_details=str(e))
+            return None
+
+    def _create_entropy_disambiguation_service(self):
+        """Create entropy-based disambiguation service for semantically similar concepts."""
+        try:
+            from ..services.entropy_disambiguation_service import EntropyDisambiguationService
+
+            service = EntropyDisambiguationService(config=self.config)
+
+            # Initialize models asynchronously in background
+            import asyncio
+            try:
+                # Try to get current event loop
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    # Create task for background initialization
+                    asyncio.create_task(service.initialize_models())
+                else:
+                    # Run initialization synchronously
+                    loop.run_until_complete(service.initialize_models())
+            except RuntimeError:
+                # No event loop running, create new one
+                asyncio.run(service.initialize_models())
+
+            logger.info("Entropy disambiguation service created with KeyBERT integration")
+            return service
+        except Exception as e:
+            logger.error("Failed to create entropy disambiguation service", exception_details=str(e))
+            return None
+
+    def _create_performance_optimizer(self):
+        """Create performance optimizer for tiered processing and async learning."""
+        try:
+            from ..services.performance_optimizer import PerformanceOptimizer
+
+            optimizer = PerformanceOptimizer(config=self.config)
+
+            logger.info("Performance optimizer created with tiered processing and async learning")
+            return optimizer
+        except Exception as e:
+            logger.error("Failed to create performance optimizer", exception_details=str(e))
             return None
 
     # Utility methods
@@ -363,7 +384,7 @@ class ServiceContainer:
 
         # Test critical services
         critical_services = [
-            'embedding_model', 'llm_client', 'semantic_alignment_validator'
+            'embedding_model', 'llm_client', 'smart_validator', 'entropy_disambiguation_service'
         ]
 
         for service in critical_services:

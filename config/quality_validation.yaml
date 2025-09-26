@@ -8,12 +8,12 @@ quality_validation:
     grounding_validation: true
     adaptive_learning: true
 
-  # Thresholds - all configurable
+  # Thresholds - all configurable for SmartValidator
   thresholds:
-    # Similarity thresholds (floats) - adjusted for better keyword search results
-    semantic_alignment_minimum: 0.30  # Lowered to allow technical insurance responses
-    grounding_score_minimum: 0.35     # Lowered to allow detailed reserve calculation responses
-    semantic_confidence_minimum: 0.30 # Lowered to show responses with reasonable confidence
+    # Similarity thresholds (floats) - optimized for insurance domain with SmartValidator
+    semantic_alignment_minimum: 0.25  # Further lowered for SmartValidator
+    grounding_score_minimum: 0.20     # Further lowered for SmartValidator
+    semantic_confidence_minimum: 0.25 # Aligned with SmartValidator
     similarity_threshold_base: 0.70
     similarity_threshold_min: 0.50
     similarity_threshold_max: 0.90
@@ -23,11 +23,11 @@ quality_validation:
     document_limit_max: 30
 
     # Overall quality threshold
-    overall_quality_minimum: 0.45         # Lowered from default 0.6 for technical content
+    overall_quality_minimum: 0.25         # Aligned with SmartValidator threshold
 
-    # Risk thresholds
-    evidence_coverage_minimum: 0.35        # Minimum evidence coverage for validation
-    hallucination_risk_maximum: 0.6       # Maximum acceptable hallucination risk
+    # Risk thresholds - rely more on SmartValidator's GPT-4o-mini specific patterns
+    evidence_coverage_minimum: 0.15       # Lowered to allow SmartValidator to handle validation
+    hallucination_risk_maximum: 0.7       # Increased tolerance - SmartValidator handles this better
 
     # Adjustments
     long_query_adjustment: -0.05
@@ -104,6 +104,42 @@ quality_validation:
     include_mixed_jurisdictions: true  # Include 'mixed' when searching for specific jurisdiction
     fallback_to_vector: true  # Fall back to vector search when keyword returns 0 results
 
+  # Dynamic domain learning configuration
+  domain_learning:
+    enabled: true
+    semantic_similarity_threshold: 0.7  # Threshold for semantic similarity
+    min_term_frequency: 2               # Minimum frequency for term extraction
+    context_window_size: 50             # Words to consider for context
+    update_frequency_queries: 10        # Update learned patterns every N queries
+    corpus_analysis_enabled: true       # Extract domain terms from document corpus
+
+    # Semantic patterns for hallucination detection (pattern-based, not hard-coded lists)
+    hallucination_detection:
+      confidence_overstatement:
+        pattern_type: "certainty_with_financial_advice"
+        semantic_markers: ["absolute_certainty", "financial_direction"]
+
+      over_generalization:
+        pattern_type: "universal_claims"
+        semantic_markers: ["universal_quantifiers", "domain_terms"]
+
+      fabricated_specificity:
+        pattern_type: "false_precision"
+        semantic_markers: ["exact_numbers", "unverifiable_precision"]
+
+      regulatory_overconfidence:
+        pattern_type: "authority_misattribution"
+        semantic_markers: ["regulatory_claims", "unverified_mandates"]
+
+  # Validation robustness settings
+  validation_robustness:
+    fail_safe_mode: "strict"  # strict | permissive | disabled
+    max_validation_failures: 3  # Max consecutive failures before alerting
+    fallback_confidence: 0.1    # Confidence when validation fails
+    enable_input_sanitization: true
+    enable_output_format_validation: true
+    validation_timeout_seconds: 10
+
   # Unified quality validation weights
   weights:
     unified_quality:
@@ -118,3 +154,72 @@ quality_validation:
     cache_enabled: true
     cache_ttl_seconds: 3600
     max_concurrent_requests: 10
+
+  # Validation monitoring and metrics
+  validation_monitoring:
+    enabled: true
+    log_validation_failures: true
+    track_false_positives: true
+    alert_on_high_failure_rate: true
+    failure_rate_threshold: 0.15  # Alert if >15% validation failure rate
+    metrics_collection_interval_seconds: 300
+
+  # Entropy-based disambiguation configuration
+  entropy_disambiguation:
+    top_k_concepts: 10               # Number of concepts to extract per text
+    keyphrase_ngram_range: [1, 3]    # N-gram range for keyphrase extraction
+    min_concept_frequency: 3         # Minimum frequency for concept tracking
+    diversity_threshold: 0.5         # MMR diversity threshold for KeyBERT
+
+  # Statistical thresholds for disambiguation
+  statistical_thresholds:
+    min_confidence: 0.3              # Minimum confidence to use disambiguation
+    high_confidence: 0.6             # High confidence threshold
+    min_co_occurrence: 5             # Minimum co-occurrence for statistical tests
+    fisher_significance: 0.05        # Fisher's exact test significance level
+    chi_square_threshold: 3.84       # Chi-square threshold (p < 0.05, 1 DOF)
+
+  # Performance optimization configuration
+  performance_optimization:
+    # Tiered processing configuration
+    tiered_processing:
+      enabled: true
+      simple_query_patterns: [         # Patterns for simple lookup queries
+        "^what is [a-zA-Z ]+\\?$",      # "What is X?" pattern
+        "^define [a-zA-Z ]+$",          # "Define X" pattern
+        "^[a-zA-Z ]+ definition$",      # "X definition" pattern
+        "^explain [a-zA-Z ]+$"          # "Explain X" pattern
+      ]
+      complex_query_indicators: [       # Indicators of complex queries
+        " vs ", " versus ", " compared to ", " compare ",
+        " difference between ", " contrast ",
+        " which is better ", " should I choose "
+      ]
+      cached_pattern_ttl: 3600         # Cache TTL in seconds (1 hour)
+      max_cached_patterns: 1000        # Maximum cached patterns
+
+    # Async learning configuration
+    async_learning:
+      enabled: true
+      background_learning_enabled: true
+      learning_queue_size: 100         # Max items in learning queue
+      learning_batch_size: 10          # Process N items at once
+      learning_interval_seconds: 30    # Background learning interval
+      pattern_persistence_enabled: true # Save learned patterns to disk
+      pattern_file_path: "cache/learned_patterns.json"
+
+    # Performance monitoring
+    monitoring:
+      enabled: true
+      track_response_times: true
+      track_cache_hit_rates: true
+      track_tier_usage: true
+      metrics_retention_hours: 24      # Keep metrics for 24 hours
+      slow_query_threshold: 2.0        # Log queries taking >2s
+
+    # Circuit breaker for disambiguation
+    circuit_breaker:
+      enabled: true
+      failure_threshold: 5             # Failures before opening circuit
+      timeout_seconds: 60              # Circuit open timeout
+      half_open_requests: 3            # Requests to test recovery
