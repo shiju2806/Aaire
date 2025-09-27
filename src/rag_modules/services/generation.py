@@ -162,11 +162,11 @@ Question: {query}
 Organizational data:
 {context}
 
-🚨 CRITICAL CONSTRAINT: ONLY use information explicitly stated in the provided documents above.
-If the documents do not contain sufficient information to answer the query, respond with:
-"I don't have sufficient information about [specific topic] in the uploaded documents to provide a complete answer."
+🚨 CRITICAL CONSTRAINT: Base your response primarily on information from the provided documents above.
+Use the documents as your primary source, but you may supplement with relevant context when helpful for understanding.
+Only respond with "I don't have sufficient information..." if the documents are completely unrelated to the query or contain no relevant information at all.
 
-DO NOT use your general knowledge, training data, or external information beyond what is explicitly stated in the documents.
+Prioritize being helpful while staying grounded in the document content.
 
 Provide a clear organizational breakdown based ONLY on the spatial extraction data found in the documents.
 Use appropriate headings and structure the information clearly."""
@@ -185,11 +185,11 @@ Question: {query}
 Documents:
 {context}
 
-🚨 CRITICAL CONSTRAINT: ONLY use information explicitly stated in the provided documents above.
-If the documents do not contain sufficient information to answer the query, respond with:
-"I don't have sufficient information about [specific topic] in the uploaded documents to provide a complete answer."
+🚨 CRITICAL CONSTRAINT: Base your response primarily on information from the provided documents above.
+Use the documents as your primary source, but you may supplement with relevant context when helpful for understanding.
+Only respond with "I don't have sufficient information..." if the documents are completely unrelated to the query or contain no relevant information at all.
 
-DO NOT use your general knowledge, training data, or external information beyond what is explicitly stated in the documents.
+Prioritize being helpful while staying grounded in the document content.
 
 CONTENT REQUIREMENTS:
 - ONLY include information directly found in the provided documents
@@ -379,12 +379,26 @@ Provide your part of the response using the exact numbering specified above."""
             ]):
                 continue
 
-            # Include documents with good relevance scores
+            # Include documents with good relevance or similarity scores
+            # Handle both relevance_score (typically 0-1) and similarity scores (typically 0-1)
             relevance_score = doc.get('relevance_score', doc.get('score', 0.0))
-            if relevance_score > self.relevance_threshold:
+
+            # For vector similarity scores (typically 0.3-1.0 range), use lower threshold
+            # For relevance scores (typically 0-1 range), use original threshold
+            # If documents are being retrieved, they likely passed initial filtering, so be less aggressive
+            effective_threshold = 0.01 if len(documents) <= 20 else self.relevance_threshold
+
+            if relevance_score > effective_threshold:
                 relevant_docs.append(doc)
 
-        logger.info(f"📋 Filtered to {len(relevant_docs)} relevant documents from {len(documents)} total")
+        logger.info(f"📋 Filtered to {len(relevant_docs)} relevant documents from {len(documents)} total (threshold: {effective_threshold})")
+
+        # If filtering removed all documents but we had documents to start with,
+        # return top documents to avoid empty responses
+        if not relevant_docs and documents:
+            logger.warning("All documents filtered out, returning top 5 to prevent empty response")
+            return documents[:5]
+
         return relevant_docs
 
     def create_semantic_document_groups(self, documents: List[Dict]) -> List[List[Dict]]:

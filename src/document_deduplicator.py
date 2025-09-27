@@ -215,6 +215,28 @@ class DocumentDeduplicator:
             "cleaned_at": datetime.utcnow().isoformat()
         }
 
+    def remove_document(self, content_hash: str) -> bool:
+        """
+        Remove a document from the hash database
+
+        Args:
+            content_hash: SHA-256 hash of document content to remove
+
+        Returns:
+            True if document was removed, False if not found
+        """
+        if content_hash in self.hash_db:
+            doc_info = self.hash_db[content_hash]
+            del self.hash_db[content_hash]
+            self._save_hash_database()
+
+            logger.info(f"Document removed from deduplication database: {content_hash[:8]}...",
+                       job_id=doc_info.get("job_id"),
+                       filename=doc_info.get("filename"))
+            return True
+
+        return False
+
     def rebuild_from_existing_files(self, uploads_dir: Path) -> Dict[str, Any]:
         """
         Rebuild hash database by scanning existing uploaded files

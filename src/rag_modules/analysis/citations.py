@@ -249,11 +249,22 @@ Your response:"""
             # Enhanced filename extraction with better fallback handling
             metadata = doc.get('metadata', {})
 
+            # CRITICAL FIX: Filter out documents with corrupted metadata that would create generic citations
+            # Skip documents that would result in "Document (X source)" citations
+            title = metadata.get('title')
+            filename = metadata.get('filename')
+
+            # Check if document has corrupted metadata (literal string 'None' or None values)
+            if (title is None or title == 'None' or title == '') and \
+               (filename is None or filename == 'None' or filename == ''):
+                logger.info(f"❌ SKIPPING document with corrupted metadata - would create generic citation")
+                continue
+
             # Try multiple metadata extraction approaches
-            filename = (
+            extracted_filename = (
                 # Standard metadata fields
-                metadata.get('title') or
-                metadata.get('filename') or
+                title or
+                filename or
                 metadata.get('source_document') or
                 metadata.get('file_name') or
                 metadata.get('source') or
@@ -264,9 +275,7 @@ Your response:"""
                 doc.get('title') or
                 doc.get('source') or
                 doc.get('document_name') or
-                # Check if there's a source_type that gives hints
-                (f"Document ({metadata.get('source_type', 'unknown')} source)" if metadata.get('source_type') and metadata.get('source_type') != 'unknown' else None) or
-                # Last resort
+                # Last resort - but this should now be rare due to filtering above
                 'Unknown'
             )
 

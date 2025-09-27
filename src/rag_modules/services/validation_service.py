@@ -60,11 +60,11 @@ class ValidationService(ServiceMixin):
         start_time = time.time()
 
         try:
-            # Get unified validator from service container
-            unified_validator = self.get_service('unified_validator')
+            # Get smart validator from service container (replaces unified_validator)
+            smart_validator = self.get_service('smart_validator')
 
-            # Perform comprehensive validation
-            validation_result = unified_validator.validate_response_quality(
+            # Perform comprehensive validation using SmartValidator
+            validation_result = smart_validator.validate_response(
                 query, response, retrieved_docs
             )
 
@@ -163,8 +163,9 @@ class ValidationService(ServiceMixin):
 
     def get_validation_summary(self) -> Dict[str, Any]:
         """Get summary of validation configuration."""
-        unified_validator = self.get_service('unified_validator')
-        return unified_validator.get_validation_summary()
+        smart_validator = self.get_service('smart_validator')
+        # SmartValidator doesn't have get_validation_summary, return simple status
+        return {'validator': 'smart_validator', 'status': 'active', 'enabled': smart_validator.enabled}
 
 
 def create_validation_service(config: Optional[QualityConfig] = None) -> ValidationService:

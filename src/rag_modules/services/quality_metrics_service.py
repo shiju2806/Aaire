@@ -120,17 +120,14 @@ class QualityMetricsService(ServiceMixin):
         if not retrieved_docs or not response:
             return 0.1
 
-        # Try to use semantic alignment validator for confidence calculation
+        # Use simple fallback confidence calculation (semantic validator removed)
         try:
-            semantic_validator = self.get_service('semantic_alignment_validator')
-            # Create a simple query simulation for validation
-            mock_query = "confidence calculation"
-            validation_result = semantic_validator.validate_alignment(mock_query, retrieved_docs)
-            base_confidence = validation_result.confidence
-        except Exception as e:
-            logger.debug("Semantic validator not available, using fallback confidence", exception_details=str(e))
-            # Fallback confidence calculation
+            # Simplified confidence calculation without validator dependency
             base_confidence = min(0.8, len(retrieved_docs) / 5.0)  # More docs = higher confidence
+            logger.debug("Using simplified confidence calculation")
+        except Exception as e:
+            logger.debug("Confidence calculation failed, using default", exception_details=str(e))
+            base_confidence = 0.5  # Default confidence
 
         # Adjust confidence based on response length and document count
         response_length_factor = min(1.0, len(response.split()) / 100)  # Longer responses can be more confident
@@ -160,11 +157,11 @@ class QualityMetricsService(ServiceMixin):
             Dictionary containing quality metrics
         """
         try:
-            # Get unified validator for comprehensive metrics
-            unified_validator = self.get_service('unified_validator')
+            # Get smart validator for comprehensive metrics (replaces unified_validator)
+            smart_validator = self.get_service('smart_validator')
 
             # Perform quality validation
-            validation_result = unified_validator.validate_response_quality(
+            validation_result = smart_validator.validate_response(
                 query, response, retrieved_docs
             )
 

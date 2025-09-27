@@ -211,23 +211,25 @@ class EnhancedGroundingValidator:
         }
 
     def _validate_specific_claims(self, response: str, documents: str) -> Dict[str, Any]:
-        """Validate specific technical claims and terminology"""
-        # Extract technical terms and claims
-        technical_patterns = [
-            r'(weighting factor [A-Z])',
-            r'(guarantee duration)',
-            r'(CSO rate)',
-            r'(VM-20)',
-            r'(NPR|net premium reserve)',
-            r'(stochastic exclusion test)',
-            r'(deterministic reserve)',
-            r'(actuarial present value)'
-        ]
+        """Validate specific technical claims and terminology using dynamic extraction"""
+        # Extract technical terms dynamically based on patterns
+        # Look for technical terms that are uppercase acronyms or specific terminology patterns
+        acronym_pattern = r'\b[A-Z]{2,5}\b'  # 2-5 letter acronyms
+        technical_term_pattern = r'\b[a-z]+\s+[a-z]+\s+[a-z]+\b'  # Multi-word technical terms
 
         claims = []
-        for pattern in technical_patterns:
-            matches = re.findall(pattern, response, re.IGNORECASE)
-            claims.extend(matches)
+
+        # Find acronyms
+        acronyms = re.findall(acronym_pattern, response)
+        claims.extend(acronyms)
+
+        # Find technical terms (multi-word phrases that might be technical)
+        technical_terms = re.findall(technical_term_pattern, response, re.IGNORECASE)
+        # Filter for potentially technical terms (containing specific indicators)
+        for term in technical_terms:
+            term_lower = term.lower()
+            if any(indicator in term_lower for indicator in ['factor', 'rate', 'test', 'reserve', 'value', 'duration']):
+                claims.append(term)
 
         valid_claims = []
         ungrounded_claims = []

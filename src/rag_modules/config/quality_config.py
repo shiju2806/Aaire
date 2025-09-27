@@ -83,7 +83,8 @@ class QualityConfig:
             "thresholds": {
                 "semantic_alignment_minimum": 0.35,  # Lowered to allow insurance calculation responses
                 "grounding_score_minimum": 0.4,     # Lowered to allow detailed technical responses
-                "confidence_minimum": 0.5           # Lowered to show responses with reasonable confidence
+                "confidence_minimum": 0.5,          # Lowered to show responses with reasonable confidence
+                "evidence_coverage_minimum": 0.15   # Lowered to allow reasonable evidence coverage
             },
             "models": {
                 "primary_embedding": "all-MiniLM-L6-v2",

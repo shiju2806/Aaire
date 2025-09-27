@@ -67,6 +67,9 @@ from src.rag_modules.services import DocumentRetriever, create_document_retrieve
 from src.rag_modules.services import ResponseGenerator, create_response_generator
 from src.rag_modules.storage import DocumentManager, create_document_manager
 
+# Import enhanced quality system
+# Removed: enhanced_quality_system - replaced with SmartValidator
+
 # Import enhanced modules
 from src.rag_modules.enhanced_pipeline import EnhancedRAGPipeline
 
@@ -201,7 +204,20 @@ class RAGPipeline:
 
         # Initialize quality services via dependency injection
         self.quality_metrics_service = container.get_singleton('quality_metrics_service')
-        self.validation_service = container.get_singleton('validation_service')
+
+        # Initialize SmartValidator (replaces complex multi-validator system)
+        try:
+            self.smart_validator = container.get_singleton('smart_validator')
+            logger.info("SmartValidator initialized successfully")
+        except Exception as e:
+            logger.warning(f"SmartValidator initialization failed, using fallback: {e}")
+            # simple_validator is no longer available (commented out)
+            # Disable validation entirely as fallback
+            logger.warning("SmartValidator failed and no fallback available, disabling validation")
+            self.smart_validator = None
+
+        # Keep reference for backward compatibility
+        self.validation_service = self.smart_validator
 
         # Initialize Phase 3 services modules (index will be set later)
         self.document_retriever = create_document_retriever(
@@ -266,7 +282,8 @@ class RAGPipeline:
                    memory_enabled=self.cache is not None,
                    smart_filtering=True,  # Using intelligent_query_analyzer instead
                    structured_response_enabled=True,
-                   enhanced_features_enabled=self.enhanced_features_enabled)
+                   enhanced_features_enabled=self.enhanced_features_enabled,
+                   smart_validator_enabled=self.smart_validator is not None)
     
     def _try_qdrant(self) -> bool:
         """Try to initialize Qdrant vector store"""
@@ -414,23 +431,35 @@ class RAGPipeline:
 
                         text_content = extract_text_content(payload)
 
-                        if text_content and len(text_content.strip()) > 10:  # Only meaningful content
-                            logger.debug(f"🔍 WHOOSH DEBUG: Adding document {str(point.id)[:8]}... with {len(text_content)} chars")
+                        # Extract proper filename with fallback logic
+                        def get_document_filename(payload):
+                            # Try multiple filename fields in order of preference
+                            filename_fields = ['filename', 'title', 'source_document', 'file_name', 'document_name']
+                            for field in filename_fields:
+                                if payload.get(field) and payload.get(field) != 'Unknown':
+                                    return payload.get(field)
+                            # If no filename found, skip this document to avoid "Unknown" entries
+                            return None
+
+                        document_filename = get_document_filename(payload)
+
+                        if text_content and len(text_content.strip()) > 10 and document_filename:  # Only meaningful content with valid filenames
+                            logger.debug(f"🔍 WHOOSH DEBUG: Adding document {str(point.id)[:8]}... with {len(text_content)} chars, filename: {document_filename}")
                             # Convert to Whoosh document format
                             whoosh_doc = {
                                 'doc_id': str(point.id),
                                 'content': text_content,
-                                'title': payload.get('filename', 'Unknown'),
+                                'title': document_filename,
                                 'metadata': {
                                     'point_id': str(point.id),
-                                    'filename': payload.get('filename', 'Unknown'),
+                                    'filename': document_filename,
                                     'doc_type': payload.get('doc_type', 'company'),
                                     'added_at': payload.get('added_at', ''),
                                     'page': payload.get('page', 0),
                                     'primary_framework': payload.get('primary_framework', 'unknown'),
                                     'content_domains': payload.get('content_domains', []),
                                     'document_type': payload.get('document_type', 'unknown'),
-                                    'file_path': payload.get('filename', 'Unknown'),
+                                    'file_path': document_filename,
                                     'confidence_score': payload.get('confidence_score', 0.5),
                                     # Include all existing metadata for smart filtering
                                     **payload
@@ -477,8 +506,13 @@ class RAGPipeline:
             self.keyword_search_ready = True  # Mark as ready even if failed
     
     async def add_documents(self, documents: List[Document], doc_type: str = "company"):
-        """Add documents using the document manager"""
-        return await self.document_manager.add_documents(documents, doc_type)
+        """Add documents using the document manager and update learning systems"""
+        result = await self.document_manager.add_documents(documents, doc_type)
+
+        # Note: SmartValidator doesn't require document learning like old system
+        logger.info("Documents added successfully", document_count=len(documents))
+
+        return result
     
     async def process_query(
         self,
@@ -640,31 +674,35 @@ class RAGPipeline:
             # Calculate quality metrics
             quality_metrics = self.quality_metrics_service.calculate_quality_metrics(query, response, retrieved_docs, citations)
 
-            # Apply intelligent validation to the response
+            # Apply SmartValidator validation to the response
             try:
-                validation_result = await self.validation_service.validate_response(
-                    query=query,
-                    response=response,
-                    retrieved_docs=retrieved_docs,
-                    confidence=confidence
-                )
+                if self.validation_service:
+                    validation_result = self.validation_service.validate_response(
+                        query=query,
+                        response=response,
+                        retrieved_docs=retrieved_docs
+                    )
 
-                # If validation fails, use rejection message instead
-                if not validation_result.passed:
-                    logger.warning(f"Response failed intelligent validation: {validation_result.rejection_reason}")
-                    response = f"I don't have sufficient information to provide a reliable answer to your question. {validation_result.rejection_reason}"
-                    citations = []
-                    confidence = 0.1
-                    # Update quality metrics for the rejection
-                    quality_metrics = self.quality_metrics_service.calculate_quality_metrics(query, response, [], [])
+                    # If validation fails, use rejection message instead
+                    if not validation_result.is_valid:
+                        logger.warning(f"Response failed SmartValidator validation: {validation_result.rejection_reason}")
+                        response = f"I don't have sufficient information to provide a reliable answer to your question. {validation_result.rejection_reason}"
+                        citations = []
+                        confidence = 0.1
+                    else:
+                        # Use validator's confidence if higher
+                        confidence = max(confidence, validation_result.confidence)
+                else:
+                    logger.info("No validator available - skipping validation")
 
                 # Add validation results to quality metrics
-                quality_metrics['intelligent_validation'] = {
-                    'passed': validation_result.passed,
-                    'overall_score': validation_result.overall_score,
-                    'processing_time_ms': validation_result.processing_time_ms,
-                    'components': validation_result.components
-                }
+                if self.validation_service and 'validation_result' in locals():
+                    quality_metrics['smart_validation'] = {
+                        'is_valid': validation_result.is_valid,
+                        'overall_score': validation_result.overall_score,
+                        'confidence': validation_result.confidence,
+                        'details': validation_result.details or {}
+                    }
 
             except Exception as e:
                 logger.error(f"Intelligent validation failed: {e}")

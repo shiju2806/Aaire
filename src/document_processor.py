@@ -423,13 +423,36 @@ All queries using either job ID will return the same results from the shared pro
                        chunks_created=self.processing_jobs[job_id].get('chunks_created', 0))
             
         except Exception as e:
+            # Check if error is related to vector storage (Qdrant) failure
+            error_str = str(e)
+            is_storage_failure = any(keyword in error_str.lower() for keyword in [
+                'service unavailable', 'timeout', 'connection', 'qdrant', '503'
+            ])
+
+            # If storage failed, rollback deduplication entry to allow re-upload
+            if is_storage_failure and 'content_hash' in self.processing_jobs[job_id]:
+                content_hash = self.processing_jobs[job_id]['content_hash']
+                rollback_success = self.deduplicator.remove_document(content_hash)
+
+                if rollback_success:
+                    logger.warning("Deduplication entry rolled back due to storage failure",
+                                 job_id=job_id,
+                                 content_hash=content_hash[:8] + "...",
+                                 error=error_str)
+                else:
+                    logger.error("Failed to rollback deduplication entry",
+                               job_id=job_id,
+                               content_hash=content_hash[:8] + "...")
+
             self.processing_jobs[job_id]['status'] = 'failed'
-            self.processing_jobs[job_id]['error'] = str(e)
+            self.processing_jobs[job_id]['error'] = error_str
             self.processing_jobs[job_id]['failed_at'] = datetime.utcnow().isoformat()
-            
-            logger.error("Document processing failed", 
-                        job_id=job_id, 
-                        error=str(e))
+            self.processing_jobs[job_id]['rollback_performed'] = is_storage_failure
+
+            logger.error("Document processing failed",
+                        job_id=job_id,
+                        error=error_str,
+                        storage_failure=is_storage_failure)
     
     async def _extract_text(self, file_path: Path) -> str:
         """Extract text from various file formats"""
