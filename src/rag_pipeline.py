@@ -64,7 +64,6 @@ from .rag_modules.query import QueryAnalyzer, create_query_analyzer
 from .rag_modules.quality import QualityMetricsManager, create_quality_metrics_manager
 from .rag_modules.services import DocumentRetriever, create_document_retriever
 from .rag_modules.services import ResponseGenerator, create_response_generator
-from .rag_modules.services import EntropyDisambiguationService, create_entropy_disambiguation_service
 from .rag_modules.search import create_bm25_search_engine
 from .rag_modules.storage import DocumentManager, create_document_manager
 
@@ -209,8 +208,6 @@ class RAGPipeline:
             config=self.config
         )
 
-        # Initialize entropy disambiguation service
-        self.entropy_service = create_entropy_disambiguation_service(self.config.get('entropy_config', {}))
 
         # Initialize document manager (will create the index)
         self.document_manager = create_document_manager(
@@ -470,8 +467,14 @@ class RAGPipeline:
             # Determine document type filter
             doc_type_filter = self._get_doc_type_filter(filters)
             
-            # Expand query for better retrieval
-            expanded_query = self.query_analyzer.expand_query(query)
+            # Intelligent semantic query enhancement for better concept retrieval
+            try:
+                enhancement_result = await self.query_analyzer.enhance_query_semantically(query)
+                expanded_query = enhancement_result['enhanced_query']
+                logger.info(f"🚀 Query semantically enhanced: {enhancement_result['enhancement_count']} concepts added")
+            except Exception as e:
+                logger.warning(f"Semantic enhancement failed, using basic expansion: {e}")
+                expanded_query = self.query_analyzer.expand_query(query)
             
             # Get adaptive similarity threshold
             similarity_threshold = self.quality_metrics_manager.get_similarity_threshold(query)
@@ -483,10 +486,7 @@ class RAGPipeline:
             async def base_retrieval_func():
                 return await self.document_retriever.retrieve_documents(expanded_query, doc_type_filter, similarity_threshold, filters)
 
-            retrieved_docs = await self.entropy_service.enhance_retrieval(
-                original_query=query,
-                base_retrieval_func=base_retrieval_func
-            )
+            retrieved_docs = await base_retrieval_func(query)
             
             # Check if we found relevant documents in uploaded content
             if retrieved_docs and len(retrieved_docs) > 0:
