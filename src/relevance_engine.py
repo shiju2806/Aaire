@@ -464,10 +464,8 @@ Respond with only the number (e.g., "0.2"):"""
             query_analysis.entities, content
         )
 
-        # 5. LLM-driven methodology relevance boost
-        methodology_boost = self._calculate_llm_methodology_boost(
-            query_analysis, content, metadata
-        )
+        # 5. LLM-driven methodology relevance boost (DISABLED for performance)
+        methodology_boost = 0.0  # Disabled to prevent API rate limiting
 
         # 6. Calculate final weighted score
         weights = query_analysis.search_weights

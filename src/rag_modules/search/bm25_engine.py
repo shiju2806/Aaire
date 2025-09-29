@@ -83,15 +83,18 @@ class BM25SearchEngine:
 
         return unique_tokens
 
-    def add_documents(self, documents: List[Dict[str, Any]]) -> None:
+    def add_documents(self, documents: List[Dict[str, Any]]) -> int:
         """
         Add documents to the BM25 index.
         Expected document format: {'content': str, 'metadata': dict}
+
+        Returns:
+            Number of documents successfully added
         """
         try:
             if not documents:
                 logger.warning("No documents provided to BM25 engine")
-                return
+                return 0
 
             new_docs = []
             new_metadata = []
@@ -123,6 +126,7 @@ class BM25SearchEngine:
             self._rebuild_index()
 
             logger.info(f"Added {len(new_docs)} documents to BM25 index. Total: {len(self.documents)}")
+            return len(new_docs)
 
         except Exception as e:
             logger.error("Failed to add documents to BM25 index", error=str(e))

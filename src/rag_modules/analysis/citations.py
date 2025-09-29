@@ -5,6 +5,7 @@ Handles document citation extraction and analysis for RAG responses
 
 from typing import List, Dict, Any, Tuple, Optional
 import re
+import json
 import structlog
 from difflib import SequenceMatcher
 
@@ -16,6 +17,60 @@ class CitationAnalyzer:
     Analyzes retrieved documents to determine citation information
     and assess document usage in generated responses.
     """
+
+    def extract_document_content(self, doc: Dict[str, Any]) -> str:
+        """
+        Extract text content from document, handling various field locations and formats.
+        This handles the case where content might be in different fields or JSON-encoded.
+        """
+        try:
+            # Try direct content field first
+            if 'content' in doc and doc['content']:
+                return str(doc['content'])
+
+            # Try metadata fields
+            metadata = doc.get('metadata', {})
+
+            # Try various content field names
+            content_candidates = [
+                doc.get('text'),
+                doc.get('content'),
+                metadata.get('text'),
+                metadata.get('content'),
+                metadata.get('_node_content'),
+                doc.get('_node_content')
+            ]
+
+            for candidate in content_candidates:
+                if candidate:
+                    content_str = str(candidate)
+
+                    # If it looks like JSON, try to parse it
+                    if content_str.strip().startswith('{') and content_str.strip().endswith('}'):
+                        try:
+                            parsed_json = json.loads(content_str)
+                            # Extract text from JSON structure
+                            if isinstance(parsed_json, dict):
+                                # Try common text field names in the JSON
+                                for field in ['text', 'content', 'document_text', 'body']:
+                                    if field in parsed_json and parsed_json[field]:
+                                        return str(parsed_json[field])
+                                # If no specific text field, return the whole JSON as string
+                                return content_str
+                        except (json.JSONDecodeError, TypeError):
+                            # Not valid JSON, return as-is
+                            pass
+
+                    # Return the content if it has meaningful length
+                    if len(content_str.strip()) > 10:
+                        return content_str
+
+            # Fallback: return string representation of the document
+            return str(doc)
+
+        except Exception as e:
+            logger.warning(f"Error extracting document content: {e}")
+            return str(doc)
 
     def extract_citations(self, retrieved_docs: List[Dict], query: str = "", response: str = "") -> List[Dict[str, Any]]:
         """Extract citation information - analyze response to determine which documents were actually used"""
@@ -52,9 +107,12 @@ class CitationAnalyzer:
 
             logger.info(f"📄 Fallback citation using document: {filename}")
 
+            # Extract proper content using our helper function
+            doc_content = self.extract_document_content(top_doc)
+
             citations.append({
                 "id": 1,
-                "text": top_doc['content'][:200] + "..." if len(top_doc['content']) > 200 else top_doc['content'],
+                "text": doc_content[:200] + "..." if len(doc_content) > 200 else doc_content,
                 "source": filename,
                 "source_type": top_doc.get('source_type', 'unknown'),
                 "confidence": round(top_doc.get('relevance_score', top_doc.get('score', 0.0)), 3)
@@ -99,8 +157,11 @@ class CitationAnalyzer:
                 logger.info(f"❌ SKIPPING - Extremely low relevance: {relevance_score:.3f}")
                 continue
 
+            # Extract proper content using our helper function
+            doc_content = self.extract_document_content(doc)
+            content_lower = doc_content.lower()
+
             # Skip obvious generic responses only
-            content_lower = doc.get('content', '').lower()
             if any(phrase in content_lower for phrase in [
                 'how can i assist you today',
                 'feel free to share',
@@ -112,28 +173,36 @@ class CitationAnalyzer:
             # Extract page information if available
             page_info = ""
             if 'page' in doc['metadata']:
-                page_info = f", Page {doc['metadata']['page']}"
+                page_num = doc['metadata']['page']
+                # Only include page info if it's a valid positive number
+                if isinstance(page_num, (int, str)) and str(page_num).isdigit() and int(page_num) > 0:
+                    page_info = f", Page {page_num}"
             elif 'page_label' in doc['metadata']:
-                page_info = f", Page {doc['metadata']['page_label']}"
+                page_label = doc['metadata']['page_label']
+                # Only include page label if it's not empty or "0"
+                if page_label and str(page_label) != "0":
+                    page_info = f", Page {page_label}"
             elif hasattr(doc, 'node_id') and 'page_' in str(doc.get('node_id', '')):
                 # Extract page from node_id like "page_1_chunk_2"
                 try:
                     page_num = str(doc.get('node_id', '')).split('page_')[1].split('_')[0]
-                    page_info = f", Page {page_num}"
+                    if page_num.isdigit() and int(page_num) > 0:
+                        page_info = f", Page {page_num}"
                 except:
                     pass
 
             # Check if content contains page references from shape-aware extraction
-            content = doc.get('content', '')
-            if 'Source: Page' in content:
+            if 'Source: Page' in doc_content:
                 # Extract page number from content like "Source: Page 2, cluster_1_page_2"
-                page_match = re.search(r'Source: Page (\d+)', content)
+                page_match = re.search(r'Source: Page (\d+)', doc_content)
                 if page_match:
-                    page_info = f", Page {page_match.group(1)}"
+                    page_num = page_match.group(1)
+                    if int(page_num) > 0:
+                        page_info = f", Page {page_num}"
 
             citation = {
                 "id": len(citations) + 1,  # Use actual citation count, not doc index
-                "text": doc['content'][:200] + "..." if len(doc['content']) > 200 else doc['content'],
+                "text": doc_content[:200] + "..." if len(doc_content) > 200 else doc_content,
                 "source": f"{filename}{page_info}",
                 "source_type": doc['source_type'],
                 "confidence": round(relevance_score, 3)  # Use relevance score instead of original score
@@ -173,7 +242,7 @@ class CitationAnalyzer:
         logger.info(f"🔍 Analyzing response usage for {len(retrieved_docs)} documents")
 
         for i, doc in enumerate(retrieved_docs):
-            content = doc.get('content', '')
+            content = self.extract_document_content(doc)
             content_lower = content.lower()
 
             # Enhanced filename extraction with logging

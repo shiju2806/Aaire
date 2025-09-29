@@ -59,7 +59,7 @@ class DocumentManager:
             index: LlamaIndex VectorStoreIndex for document storage
             node_parser: Parser for breaking documents into chunks
             metadata_analyzer: Service for extracting document/chunk metadata
-            whoosh_engine: Search engine for keyword-based search
+            bm25_engine: Search engine for keyword-based search
             cache: Redis cache for query caching (optional)
             vector_store_type: Type of vector store ("qdrant" or "local")
             qdrant_client: QdrantClient instance (required if vector_store_type="qdrant")
@@ -202,6 +202,13 @@ class DocumentManager:
                             if 'filename' in source_doc.metadata:
                                 node.metadata['filename'] = source_doc.metadata['filename']
 
+                        # Extract page number from chunk content
+                        page_number = self._extract_page_number_from_content(
+                            getattr(node, 'text', '') or getattr(node, 'content', '')
+                        )
+                        if page_number:
+                            node.metadata['page'] = page_number
+
                         # Log chunk processing (every 20th chunk or if it's refined)
                         if chunk_index % 20 == 0 or (hasattr(chunk_metadata_obj, 'attributes') and
                                                     chunk_metadata_obj.attributes.get('chunk_focus') !=
@@ -270,7 +277,7 @@ class DocumentManager:
             self.index.insert_nodes(nodes)
 
             # Update BM25 index for hybrid search
-            self._update_whoosh_index(nodes)
+            self._update_bm25_index(nodes)
 
             # Invalidate cache for this document type
             if self.cache:
@@ -287,7 +294,7 @@ class DocumentManager:
             logger.info(f"Added {len(documents)} documents to index",
                        doc_type=doc_type,
                        total_nodes=len(nodes),
-                       whoosh_docs=self.whoosh_engine.get_document_count() if self.whoosh_engine else 0)
+                       bm25_docs=self.bm25_engine.get_stats()['total_documents'] if self.bm25_engine else 0)
 
             return len(nodes)
 
@@ -312,19 +319,19 @@ class DocumentManager:
                 # Reinitialize the index
                 self._init_qdrant_indexes()
 
-                # Clear Whoosh index as well
-                self._clear_whoosh_index()
+                # Clear BM25 index as well
+                self._clear_bm25_index()
 
-                logger.info("Successfully cleared all documents from Qdrant and Whoosh")
+                logger.info("Successfully cleared all documents from Qdrant and BM25")
                 return {"status": "success", "message": "All documents cleared", "method": "qdrant_recreate"}
             else:
                 # For local storage, recreate the index
                 self._init_local_index()
 
-                # Clear Whoosh index as well
-                self._clear_whoosh_index()
+                # Clear BM25 index as well
+                self._clear_bm25_index()
 
-                logger.info("Successfully cleared all documents from local storage and Whoosh")
+                logger.info("Successfully cleared all documents from local storage and BM25")
                 return {"status": "success", "message": "All documents cleared", "method": "local_recreate"}
 
         except Exception as e:
@@ -646,21 +653,21 @@ class DocumentManager:
 
         return sampled_content
 
-    def _update_whoosh_index(self, nodes):
-        """Update Whoosh index with new document nodes"""
+    def _update_bm25_index(self, nodes):
+        """Update BM25 index with new document nodes"""
         try:
-            if not self.whoosh_engine:
-                logger.warning("Whoosh engine not available for indexing")
+            if not self.bm25_engine:
+                logger.warning("BM25 engine not available for indexing")
                 return
 
-            # Convert nodes to Whoosh document format
-            whoosh_docs = []
+            # Convert nodes to BM25 document format
+            bm25_docs = []
             for node in nodes:
                 text = node.get_content() if hasattr(node, 'get_content') else str(node.text)
                 node_id = node.node_id if hasattr(node, 'node_id') else str(uuid.uuid4())
                 metadata = node.metadata or {}
 
-                whoosh_doc = {
+                bm25_doc = {
                     'doc_id': node_id,
                     'content': text,
                     'title': metadata.get('filename', 'Unknown'),
@@ -678,31 +685,24 @@ class DocumentManager:
                         **metadata  # Include all existing metadata
                     }
                 }
-                whoosh_docs.append(whoosh_doc)
+                bm25_docs.append(bm25_doc)
 
-            # Index documents in Whoosh (incremental)
-            if whoosh_docs:
-                indexed_count = self.whoosh_engine.add_documents(whoosh_docs, batch_processing=True)
-                logger.info(f"✅ Whoosh index updated with {indexed_count} documents")
+            # Index documents in BM25 (incremental)
+            if bm25_docs:
+                indexed_count = self.bm25_engine.add_documents(bm25_docs)
+                logger.info(f"✅ BM25 index updated with {indexed_count} documents")
         except Exception as e:
-            logger.error(f"Failed to update Whoosh index: {str(e)}")
+            logger.error(f"Failed to update BM25 index: {str(e)}")
 
-    def _clear_whoosh_index(self):
-        """Clear the Whoosh search index by deleting and recreating the index directory"""
+    def _clear_bm25_index(self):
+        """Clear the BM25 search index"""
         try:
-            if self.whoosh_engine:
-                whoosh_index_dir = self.whoosh_engine.index_dir
-
-                # Delete the index directory if it exists
-                if whoosh_index_dir.exists():
-                    shutil.rmtree(str(whoosh_index_dir))
-                    logger.info(f"Deleted Whoosh index directory: {whoosh_index_dir}")
-
-                # Reinitialize the Whoosh engine
-                self.whoosh_engine.initialize_index()
-                logger.info("Reinitialized Whoosh search engine")
+            if self.bm25_engine:
+                # Clear the BM25 engine's document store
+                self.bm25_engine.clear()
+                logger.info("Cleared BM25 search engine")
         except Exception as e:
-            logger.error(f"Failed to clear Whoosh index: {str(e)}")
+            logger.error(f"Failed to clear BM25 index: {str(e)}")
 
     def _init_qdrant_indexes(self):
         """Initialize Qdrant collection and indexes"""
@@ -755,6 +755,50 @@ class DocumentManager:
         logger.info("Initialized local vector store")
         return self.index
 
+    def _extract_page_number_from_content(self, content: str) -> Optional[int]:
+        """
+        Extract page number from chunk content.
+
+        Looks for patterns like "[Page 5]" or "Source: Page 5" in the content.
+
+        Args:
+            content: The text content of the chunk
+
+        Returns:
+            Page number if found, None otherwise
+        """
+        if not content:
+            return None
+
+        try:
+            # Look for patterns like "[Page 5]" (most common from PDF extraction)
+            page_pattern = re.search(r'\[Page (\d+)\]', content)
+            if page_pattern:
+                page_num = int(page_pattern.group(1))
+                return page_num if page_num > 0 else None
+
+            # Look for patterns like "Source: Page 5" (from shape-aware extraction)
+            source_pattern = re.search(r'Source: Page (\d+)', content)
+            if source_pattern:
+                page_num = int(source_pattern.group(1))
+                return page_num if page_num > 0 else None
+
+            # Look for patterns in content at the start of chunks
+            lines = content.split('\n')
+            for line in lines[:3]:  # Check first 3 lines only
+                line = line.strip()
+                if line.startswith('[Page ') and line.endswith(']'):
+                    page_match = re.search(r'\[Page (\d+)\]', line)
+                    if page_match:
+                        page_num = int(page_match.group(1))
+                        return page_num if page_num > 0 else None
+
+        except (ValueError, AttributeError):
+            # Failed to parse page number
+            pass
+
+        return None
+
 
 def create_document_manager(
     index: VectorStoreIndex,
@@ -773,7 +817,7 @@ def create_document_manager(
         index: LlamaIndex VectorStoreIndex for document storage
         node_parser: Parser for breaking documents into chunks
         metadata_analyzer: Service for extracting document/chunk metadata
-        whoosh_engine: Search engine for keyword-based search
+        bm25_engine: Search engine for keyword-based search
         cache: Redis cache for query caching (optional)
         vector_store_type: Type of vector store ("qdrant" or "local")
         qdrant_client: QdrantClient instance (required if vector_store_type="qdrant")

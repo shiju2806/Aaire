@@ -64,6 +64,7 @@ from .rag_modules.query import QueryAnalyzer, create_query_analyzer
 from .rag_modules.quality import QualityMetricsManager, create_quality_metrics_manager
 from .rag_modules.services import DocumentRetriever, create_document_retriever
 from .rag_modules.services import ResponseGenerator, create_response_generator
+from .rag_modules.services import SemanticSimilarityService, create_semantic_similarity_service
 from .rag_modules.search import create_bm25_search_engine
 from .rag_modules.storage import DocumentManager, create_document_manager
 
@@ -188,6 +189,10 @@ class RAGPipeline:
         self.formatting_manager = create_formatting_manager(llm_client=self.llm)
         self.query_analyzer = create_query_analyzer(llm=self.llm)
         self.quality_metrics_manager = create_quality_metrics_manager(self.config.get('retrieval_config', {}))
+
+        # Initialize semantic similarity service for enhanced retrieval
+        self.semantic_similarity_service = create_semantic_similarity_service()
+        logger.info("✅ Semantic similarity service initialized for query-agnostic disambiguation")
 
         # Initialize Phase 3 services modules (index will be set later)
         self.document_retriever = create_document_retriever(
@@ -482,11 +487,19 @@ class RAGPipeline:
             # Store current query for citation filtering
             self._current_query = query
             
-            # ALWAYS search uploaded documents first, enhanced with entropy disambiguation
+            # ALWAYS search uploaded documents first, enhanced with semantic similarity
             async def base_retrieval_func():
                 return await self.document_retriever.retrieve_documents(expanded_query, doc_type_filter, similarity_threshold, filters)
 
             retrieved_docs = await base_retrieval_func(query)
+
+            # Apply semantic similarity enhancement to improve document ranking
+            if retrieved_docs and len(retrieved_docs) > 0:
+                logger.info(f"Applying semantic similarity enhancement to {len(retrieved_docs)} retrieved documents")
+                retrieved_docs = self.semantic_similarity_service.enhance_retrieval_with_semantic_similarity(
+                    query, retrieved_docs, similarity_threshold=0.3
+                )
+                logger.info(f"Semantic enhancement completed, {len(retrieved_docs)} documents remain after filtering")
             
             # Check if we found relevant documents in uploaded content
             if retrieved_docs and len(retrieved_docs) > 0:

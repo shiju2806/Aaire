@@ -7,6 +7,7 @@ import os
 import uuid
 import json
 import asyncio
+import hashlib
 from typing import Dict, Any, List, Optional, BinaryIO
 from datetime import datetime
 from pathlib import Path
@@ -63,7 +64,7 @@ class DocumentProcessor:
         self.rag_pipeline = rag_pipeline
         self.upload_dir = Path("data/uploads")
         self.upload_dir.mkdir(parents=True, exist_ok=True)
-        
+
         # Initialize advanced OCR processor
         if AdvancedOCRProcessor:
             self.ocr_processor = AdvancedOCRProcessor()
@@ -73,7 +74,7 @@ class DocumentProcessor:
         else:
             self.ocr_processor = None
             logger.warning("No OCR processor available - image text extraction disabled")
-        
+
         # Initialize shape-aware processor for PDF charts/diagrams
         if SHAPE_AWARE_AVAILABLE and rag_pipeline:
             try:
@@ -91,9 +92,13 @@ class DocumentProcessor:
         else:
             self.shape_processor = None
             logger.warning("⚠️ Shape-aware processor not available")
-        
+
         # Document processing status tracking
         self.processing_jobs = {}
+
+        # Document deduplication tracking (in-memory cache)
+        self.document_fingerprints = {}  # content_hash -> job_id
+        self.fingerprint_metadata = {}   # content_hash -> {filename, upload_time, etc.}
         
         # Supported file types and size limits (Enhanced for multi-modal analysis)
         self.supported_formats = {
@@ -119,9 +124,67 @@ class DocumentProcessor:
             'image/webp': {'extension': '.webp', 'max_size_mb': 10, 'category': 'image'}
         }
         
-        logger.info("Document processor initialized", 
+        logger.info("Document processor initialized",
                    upload_dir=str(self.upload_dir),
                    supported_formats=list(self.supported_formats.keys()))
+
+    def _generate_content_fingerprint(self, content: str, filename: str = "") -> str:
+        """Generate a simple content-based fingerprint for deduplication"""
+        # Normalize content for consistent hashing
+        normalized_content = content.lower().strip()
+
+        # Remove extra whitespace and normalize
+        normalized_content = ' '.join(normalized_content.split())
+
+        # Combine content with filename for uniqueness
+        fingerprint_data = f"{normalized_content[:10000]}|{filename}"  # Use first 10K chars for efficiency
+
+        # Generate SHA256 hash
+        content_hash = hashlib.sha256(fingerprint_data.encode('utf-8')).hexdigest()
+
+        return content_hash
+
+    def _check_duplicate_document(self, content: str, filename: str) -> Optional[Dict[str, Any]]:
+        """Check if document content already exists, return existing job info if found"""
+        content_hash = self._generate_content_fingerprint(content, filename)
+
+        if content_hash in self.document_fingerprints:
+            existing_job_id = self.document_fingerprints[content_hash]
+            existing_metadata = self.fingerprint_metadata.get(content_hash, {})
+
+            logger.info("Duplicate document detected",
+                       new_filename=filename,
+                       existing_job_id=existing_job_id,
+                       existing_filename=existing_metadata.get('filename'),
+                       content_hash=content_hash[:12])
+
+            return {
+                'is_duplicate': True,
+                'existing_job_id': existing_job_id,
+                'existing_filename': existing_metadata.get('filename'),
+                'existing_upload_time': existing_metadata.get('upload_time'),
+                'content_hash': content_hash
+            }
+
+        return None
+
+    def _register_document_fingerprint(self, content: str, filename: str, job_id: str):
+        """Register a new document fingerprint"""
+        content_hash = self._generate_content_fingerprint(content, filename)
+
+        self.document_fingerprints[content_hash] = job_id
+        self.fingerprint_metadata[content_hash] = {
+            'filename': filename,
+            'job_id': job_id,
+            'upload_time': datetime.utcnow().isoformat(),
+            'content_size': len(content)
+        }
+
+        logger.info("Document fingerprint registered",
+                   filename=filename,
+                   job_id=job_id,
+                   content_hash=content_hash[:12],
+                   content_size=len(content))
     
     async def upload_document(
         self, 
@@ -235,19 +298,44 @@ class DocumentProcessor:
     
     async def _process_document_async(self, job_id: str):
         """Process document asynchronously - MVP-FR-011, MVP-FR-012"""
-        
+
         try:
             # Update status
             self.processing_jobs[job_id]['status'] = 'processing'
             self.processing_jobs[job_id]['progress'] = 10
-            
+
             job = self.processing_jobs[job_id]
             file_path = Path(job['file_path'])
             metadata = job['metadata']
-            
+
             # Extract text based on file type
             text_content = await self._extract_text(file_path)
-            
+
+            self.processing_jobs[job_id]['progress'] = 30
+
+            # Check for duplicate document content
+            duplicate_check = self._check_duplicate_document(text_content, job['filename'])
+
+            if duplicate_check:
+                # Document is a duplicate
+                self.processing_jobs[job_id]['status'] = 'duplicate'
+                self.processing_jobs[job_id]['duplicate_info'] = duplicate_check
+                self.processing_jobs[job_id]['progress'] = 100
+                self.processing_jobs[job_id]['completed_at'] = datetime.utcnow().isoformat()
+
+                # Clean up file
+                if file_path.exists():
+                    file_path.unlink()
+
+                logger.info("Document processing completed - duplicate detected",
+                           job_id=job_id,
+                           existing_job_id=duplicate_check['existing_job_id'],
+                           existing_filename=duplicate_check['existing_filename'])
+                return
+
+            # Register document fingerprint for future deduplication
+            self._register_document_fingerprint(text_content, job['filename'], job_id)
+
             self.processing_jobs[job_id]['progress'] = 40
             
             # Create document with metadata
@@ -829,24 +917,29 @@ class DocumentProcessor:
             'created_at': job['created_at'],
             'chunks_created': job.get('chunks_created'),
             'summary': job.get('summary'),
-            'error': job.get('error')
+            'error': job.get('error'),
+            'duplicate_info': job.get('duplicate_info')
         }
     
     def get_job_stats(self) -> Dict[str, Any]:
         """Get overall job processing statistics"""
-        
+
         statuses = {}
         for job in self.processing_jobs.values():
             status = job['status']
             statuses[status] = statuses.get(status, 0) + 1
-        
+
         return {
             'total_jobs': len(self.processing_jobs),
             'status_breakdown': statuses,
             'active_jobs': [
                 job_id for job_id, job in self.processing_jobs.items()
                 if job['status'] in ['queued', 'processing']
-            ]
+            ],
+            'deduplication_stats': {
+                'unique_documents': len(self.document_fingerprints),
+                'total_fingerprints': len(self.fingerprint_metadata)
+            }
         }
     
     async def cleanup_job(self, job_id: str, user_id: str) -> Dict[str, Any]:

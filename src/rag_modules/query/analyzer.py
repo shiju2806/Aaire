@@ -320,9 +320,123 @@ Answer:"""
             # Default to allowing the query if classification fails
             return {'is_relevant': True, 'confidence': 0.3}
 
-    def expand_query(self, query: str) -> str:
+    async def enhance_query_semantically(self, query: str) -> Dict[str, Any]:
         """
-        Expand general queries with specific domain terms for better retrieval.
+        Intelligently enhance query with domain-specific concepts and synonyms using LLM.
+        This provides comprehensive query enhancement without hardcoded rules.
+
+        Args:
+            query: The original query to enhance
+
+        Returns:
+            Dict[str, Any]: Enhanced query information with expansions and metadata
+        """
+        logger.info(f"🧠 Starting semantic query enhancement for: '{query[:50]}...'")
+
+        enhancement_prompt = f"""You are AAIRE, an expert in insurance, actuarial, and accounting domains.
+
+Analyze this query and provide semantic enhancements to improve document retrieval:
+
+Query: "{query}"
+
+For this query, identify:
+
+1. KEY_CONCEPTS: Core concepts and topics (e.g., for "universal life reserves" → "reserve calculation", "VM-20", "valuation")
+
+2. TECHNICAL_TERMS: Domain-specific technical terms and synonyms (e.g., "stochastic reserve", "deterministic reserve", "net premium reserve")
+
+3. RELATED_STANDARDS: Relevant standards, regulations, or frameworks (e.g., "ASC 944", "GAAP", "VM-20", "IFRS 17")
+
+4. CALCULATION_METHODS: Specific methodologies or calculation approaches (e.g., "present value", "discount rate", "mortality assumptions")
+
+5. ALTERNATE_PHRASES: Alternative ways to express the same concept (e.g., "life insurance reserves" vs "life insurance liabilities")
+
+Provide your response in this exact format:
+KEY_CONCEPTS: concept1, concept2, concept3
+TECHNICAL_TERMS: term1, term2, term3
+RELATED_STANDARDS: standard1, standard2, standard3
+CALCULATION_METHODS: method1, method2, method3
+ALTERNATE_PHRASES: phrase1, phrase2, phrase3
+
+Focus on insurance, accounting, actuarial, and financial concepts. Be comprehensive but relevant."""
+
+        try:
+            response = self.llm.complete(enhancement_prompt)
+            enhancement_text = response.text.strip()
+
+            logger.debug(f"🔍 Raw LLM enhancement response: {enhancement_text}")
+
+            # Parse the structured response
+            enhancements = {
+                'key_concepts': [],
+                'technical_terms': [],
+                'related_standards': [],
+                'calculation_methods': [],
+                'alternate_phrases': []
+            }
+
+            lines = enhancement_text.split('\n')
+            for line in lines:
+                line = line.strip()
+                if line.startswith('KEY_CONCEPTS:'):
+                    terms = line.replace('KEY_CONCEPTS:', '').strip()
+                    enhancements['key_concepts'] = [t.strip() for t in terms.split(',') if t.strip()]
+                elif line.startswith('TECHNICAL_TERMS:'):
+                    terms = line.replace('TECHNICAL_TERMS:', '').strip()
+                    enhancements['technical_terms'] = [t.strip() for t in terms.split(',') if t.strip()]
+                elif line.startswith('RELATED_STANDARDS:'):
+                    terms = line.replace('RELATED_STANDARDS:', '').strip()
+                    enhancements['related_standards'] = [t.strip() for t in terms.split(',') if t.strip()]
+                elif line.startswith('CALCULATION_METHODS:'):
+                    terms = line.replace('CALCULATION_METHODS:', '').strip()
+                    enhancements['calculation_methods'] = [t.strip() for t in terms.split(',') if t.strip()]
+                elif line.startswith('ALTERNATE_PHRASES:'):
+                    terms = line.replace('ALTERNATE_PHRASES:', '').strip()
+                    enhancements['alternate_phrases'] = [t.strip() for t in terms.split(',') if t.strip()]
+
+            # Build comprehensive search terms
+            all_enhancements = []
+            for category, terms in enhancements.items():
+                all_enhancements.extend(terms)
+
+            # Create enhanced query
+            enhanced_query = query
+            if all_enhancements:
+                # Add the most relevant enhancement terms (limit to avoid over-expansion)
+                top_enhancements = all_enhancements[:15]  # Limit to top 15 terms
+                enhanced_query = f"{query} {' '.join(top_enhancements)}"
+
+            logger.info("✨ Query semantically enhanced",
+                       original_query=query,
+                       key_concepts=len(enhancements['key_concepts']),
+                       technical_terms=len(enhancements['technical_terms']),
+                       related_standards=len(enhancements['related_standards']),
+                       calculation_methods=len(enhancements['calculation_methods']),
+                       alternate_phrases=len(enhancements['alternate_phrases']),
+                       total_enhancements=len(all_enhancements))
+
+            return {
+                'original_query': query,
+                'enhanced_query': enhanced_query,
+                'enhancements': enhancements,
+                'enhancement_count': len(all_enhancements)
+            }
+
+        except Exception as e:
+            logger.error(f"❌ Semantic query enhancement failed: {e}")
+            # Fallback to basic enhancement
+            basic_enhancement = self.expand_query_basic(query)
+            return {
+                'original_query': query,
+                'enhanced_query': basic_enhancement,
+                'enhancements': {'fallback': True},
+                'enhancement_count': 0
+            }
+
+    def expand_query_basic(self, query: str) -> str:
+        """
+        Basic query expansion as fallback when semantic enhancement fails.
+        This is the original expand_query method.
 
         Args:
             query: The original query to expand
@@ -334,6 +448,18 @@ Answer:"""
 
         # Domain-specific term mappings for insurance and accounting
         expansion_mappings = {
+            # Reserve calculation terms
+            'reserves': 'reserves liability valuation actuarial present value discount rate mortality',
+            'reserve calculation': 'reserve calculation NPR deterministic stochastic VM-20 valuation methodology',
+            'universal life': 'universal life policy reserves liability valuation actuarial methodology',
+            'life insurance': 'life insurance policy reserves liability valuation actuarial VM-20',
+
+            # VM-20 and valuation terms
+            'vm-20': 'VM-20 valuation manual stochastic deterministic reserve NPR methodology',
+            'valuation': 'valuation reserves liability actuarial present value discount methodology VM-20',
+            'stochastic': 'stochastic reserve SR methodology VM-20 valuation actuarial modeling',
+            'deterministic': 'deterministic reserve DR methodology VM-20 valuation actuarial calculation',
+
             # Capital and financial health terms
             'capital health': 'capital health LICAT ratio core ratio total ratio capital adequacy',
             'company capital': 'company capital LICAT ratio core ratio total ratio regulatory capital',
@@ -342,17 +468,17 @@ Answer:"""
             'capital adequacy': 'capital adequacy LICAT ratio core ratio total ratio regulatory capital',
 
             # Insurance specific expansions
-            'insurance': 'insurance LICAT OSFI regulatory capital solvency',
-            'regulatory': 'regulatory OSFI LICAT compliance capital requirements',
+            'insurance': 'insurance LICAT OSFI regulatory capital solvency policy reserves',
+            'regulatory': 'regulatory OSFI LICAT compliance capital requirements VM-20',
             'solvency': 'solvency LICAT ratio capital adequacy regulatory capital',
 
             # Accounting standard expansions
-            'accounting': 'accounting GAAP IFRS standards disclosure requirements',
-            'financial reporting': 'financial reporting GAAP IFRS disclosure standards',
-            'compliance': 'compliance regulatory requirements OSFI GAAP IFRS',
+            'accounting': 'accounting GAAP IFRS ASC standards disclosure requirements valuation',
+            'financial reporting': 'financial reporting GAAP IFRS ASC disclosure standards',
+            'compliance': 'compliance regulatory requirements OSFI GAAP IFRS ASC',
 
             # Risk management expansions
-            'risk': 'risk management capital risk regulatory risk operational risk',
+            'risk': 'risk management capital risk regulatory risk operational risk actuarial',
             'management': 'management risk management capital management regulatory management'
         }
 
@@ -368,11 +494,24 @@ Answer:"""
 
         # Log expansion for debugging
         if expanded_query != query:
-            logger.info("Query expanded",
+            logger.info("Basic query expanded",
                        original=query,
                        expanded=expanded_query)
 
         return expanded_query
+
+    def expand_query(self, query: str) -> str:
+        """
+        Backward compatibility method - calls basic expansion.
+        Use enhance_query_semantically() for advanced enhancement.
+
+        Args:
+            query: The original query to expand
+
+        Returns:
+            str: Expanded query with domain-specific terms
+        """
+        return self.expand_query_basic(query)
 
     def is_general_knowledge_query(self, query: str) -> bool:
         """

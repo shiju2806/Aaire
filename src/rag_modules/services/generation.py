@@ -95,18 +95,13 @@ Response:"""
         return response.text.strip()
 
     async def process_with_chunked_enhancement(self, query: str, retrieved_docs: List[Dict], conversation_context: str) -> str:
-        """Process documents with enhanced chunked approach"""
-        logger.info(f"📄 Processing {len(retrieved_docs)} documents with enhanced chunked approach")
+        """Process documents with streamlined approach that respects BM25 rankings"""
+        logger.info(f"📄 Processing {len(retrieved_docs)} documents with streamlined single-pass approach")
 
-        # Determine processing approach based on document count
-        if len(retrieved_docs) <= 8:
-            # Enhanced single-pass for smaller document sets
-            logger.info("📋 Using enhanced single-pass approach")
-            return self.generate_enhanced_single_pass(query, retrieved_docs, conversation_context)
-        else:
-            # Chunked processing for larger document sets
-            logger.info("📋 Using chunked processing approach")
-            return await self.generate_chunked_response(query, retrieved_docs, conversation_context)
+        # Always use the enhanced single-pass approach to respect BM25 rankings
+        # This eliminates semantic grouping that fights against relevance scores
+        logger.info("📋 Using optimized single-pass approach (respects BM25/vector rankings)")
+        return self.generate_enhanced_single_pass(query, retrieved_docs, conversation_context)
 
     def generate_organizational_response(self, query: str, documents: List[Dict], conversation_context: str) -> str:
         """Generate response for organizational structure queries"""

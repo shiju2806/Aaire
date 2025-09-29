@@ -1,16 +1,17 @@
 """
 Semantic Similarity Service
 
-Replaces the broken entropy disambiguation with proper embedding-based semantic similarity.
-This service can distinguish between semantically similar but distinct concepts
-(e.g., whole life vs universal life) using vector embeddings.
+Two-stage retrieval system:
+1. Bi-encoder (fast) for initial retrieval
+2. Cross-encoder (accurate) for reranking to distinguish similar concepts
+   like "whole life" vs "universal life"
 """
 
 import asyncio
 import structlog
 import re
 from typing import List, Dict, Any, Optional, Tuple
-from sentence_transformers import SentenceTransformer
+from sentence_transformers import SentenceTransformer, CrossEncoder
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 
@@ -19,60 +20,155 @@ logger = structlog.get_logger()
 
 class SemanticSimilarityService:
     """
-    Query-agnostic semantic similarity service using embeddings.
-    Distinguishes between similar concepts without hardcoded rules.
+    Two-stage semantic similarity service:
+    - Stage 1: Fast bi-encoder for initial retrieval (semantic search)
+    - Stage 2: Accurate cross-encoder for reranking (distinguishes nuances)
+
+    This approach distinguishes similar-but-different concepts without hardcoding.
     """
 
-    def __init__(self, model_name: str = "all-MiniLM-L6-v2"):
-        """Initialize with a lightweight, fast embedding model"""
-        self.model_name = model_name
-        self.model = None
-        self.is_loaded = False
-        logger.info(f"Initializing SemanticSimilarityService with model: {model_name}")
+    def __init__(self,
+                 bi_encoder_model: str = "all-MiniLM-L6-v2",
+                 cross_encoder_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2",
+                 use_cross_encoder: bool = True):
+        """
+        Initialize with bi-encoder (fast) and cross-encoder (accurate)
 
-    def _load_model(self):
-        """Lazy load the embedding model"""
+        Args:
+            bi_encoder_model: Fast model for initial retrieval
+            cross_encoder_model: Accurate model for reranking
+            use_cross_encoder: Enable cross-encoder reranking (recommended)
+        """
+        self.bi_encoder_model_name = bi_encoder_model
+        self.cross_encoder_model_name = cross_encoder_model
+        self.use_cross_encoder = use_cross_encoder
+
+        self.bi_encoder = None
+        self.cross_encoder = None
+        self.is_loaded = False
+
+        logger.info(f"Initializing SemanticSimilarityService",
+                   bi_encoder=bi_encoder_model,
+                   cross_encoder=cross_encoder_model if use_cross_encoder else "disabled")
+
+    def _load_models(self):
+        """Lazy load both bi-encoder and cross-encoder models"""
         if not self.is_loaded:
             try:
-                self.model = SentenceTransformer(self.model_name)
+                # Load bi-encoder (fast, for initial retrieval)
+                logger.info(f"Loading bi-encoder: {self.bi_encoder_model_name}")
+                self.bi_encoder = SentenceTransformer(self.bi_encoder_model_name)
+                logger.info(f"✅ Bi-encoder loaded: {self.bi_encoder_model_name}")
+
+                # Load cross-encoder (accurate, for reranking)
+                if self.use_cross_encoder:
+                    logger.info(f"Loading cross-encoder: {self.cross_encoder_model_name}")
+                    self.cross_encoder = CrossEncoder(self.cross_encoder_model_name)
+                    logger.info(f"✅ Cross-encoder loaded: {self.cross_encoder_model_name}")
+
                 self.is_loaded = True
-                logger.info(f"Loaded embedding model: {self.model_name}")
+                logger.info("✅ All models loaded successfully")
+
             except Exception as e:
-                logger.error(f"Failed to load embedding model: {e}")
+                logger.error(f"Failed to load models: {e}")
                 raise
 
     def get_query_embedding(self, query: str) -> np.ndarray:
-        """Get embedding for query text"""
+        """Get embedding for query text using bi-encoder"""
         if not self.is_loaded:
-            self._load_model()
+            self._load_models()
 
         try:
-            embedding = self.model.encode([query])
+            embedding = self.bi_encoder.encode([query])
             return embedding[0]
         except Exception as e:
             logger.error(f"Failed to encode query: {e}")
             return np.array([])
 
     def get_document_embeddings(self, documents: List[str]) -> List[np.ndarray]:
-        """Get embeddings for multiple documents"""
+        """Get embeddings for multiple documents using bi-encoder"""
         if not self.is_loaded:
-            self._load_model()
+            self._load_models()
 
         try:
-            embeddings = self.model.encode(documents)
+            embeddings = self.bi_encoder.encode(documents)
             return embeddings
         except Exception as e:
             logger.error(f"Failed to encode documents: {e}")
             return []
 
+    def rerank_with_cross_encoder(self, query: str, retrieved_docs: List[Dict], top_k: int = None) -> List[Tuple[Dict, float]]:
+        """
+        Rerank documents using cross-encoder for precise similarity scoring.
+
+        Cross-encoders process query and document together, allowing them to
+        distinguish nuanced differences like "whole life" vs "universal life".
+
+        Args:
+            query: Search query
+            retrieved_docs: Documents from initial retrieval
+            top_k: Number of top results to return (None = return all)
+
+        Returns:
+            List of (document, cross_encoder_score) tuples, sorted by score
+        """
+        if not self.use_cross_encoder or not retrieved_docs:
+            logger.warning("Cross-encoder disabled or no documents, skipping reranking")
+            return [(doc, 0.0) for doc in retrieved_docs]
+
+        if not self.is_loaded:
+            self._load_models()
+
+        try:
+            # Prepare query-document pairs for cross-encoder
+            doc_contents = []
+            for doc in retrieved_docs:
+                content = self._extract_document_content(doc)
+                # Limit content length for performance (cross-encoder is slower)
+                doc_contents.append(content[:512])
+
+            # Create pairs: [(query, doc1), (query, doc2), ...]
+            query_doc_pairs = [[query, content] for content in doc_contents]
+
+            # Get cross-encoder scores
+            logger.info(f"🔄 Reranking {len(query_doc_pairs)} documents with cross-encoder")
+            cross_scores = self.cross_encoder.predict(query_doc_pairs)
+
+            # Combine documents with their cross-encoder scores
+            reranked = list(zip(retrieved_docs, cross_scores))
+
+            # Sort by cross-encoder score (descending)
+            reranked.sort(key=lambda x: x[1], reverse=True)
+
+            # Log top scores for debugging
+            if reranked:
+                top_3_scores = [float(score) for _, score in reranked[:3]]
+                logger.info(f"✅ Cross-encoder reranking complete. Top 3 scores: {top_3_scores}")
+
+            # Return top_k results if specified
+            if top_k:
+                reranked = reranked[:top_k]
+
+            return reranked
+
+        except Exception as e:
+            logger.error(f"Cross-encoder reranking failed: {e}")
+            # Fallback to original order
+            return [(doc, 0.0) for doc in retrieved_docs]
+
     def calculate_semantic_scores(self, query: str, retrieved_docs: List[Dict]) -> List[Tuple[Dict, float]]:
         """
-        Calculate semantic similarity scores with fine-grained disambiguation.
-        Combines cosine similarity with term-specific boosting for precise differentiation.
+        Two-stage scoring:
+        1. Fast bi-encoder for initial similarity (if not already done)
+        2. Accurate cross-encoder for reranking (distinguishes nuances)
+
         Returns list of (document, similarity_score) tuples.
         """
         if not retrieved_docs:
             return []
+
+        # Stage 1: Bi-encoder scoring (fast, semantic similarity)
+        logger.info(f"Stage 1: Bi-encoder semantic similarity for {len(retrieved_docs)} documents")
 
         # Extract document content
         doc_contents = []
@@ -98,32 +194,24 @@ class SemanticSimilarityService:
         try:
             similarities = cosine_similarity([query_embedding], doc_embeddings)[0]
 
-            # Apply query-agnostic fine-grained disambiguation boosting
-            enhanced_scores = []
-            for i, (doc, base_score) in enumerate(zip(retrieved_docs, similarities)):
-                content = doc_contents[i]
+            # Combine documents with bi-encoder scores
+            bi_encoder_results = list(zip(retrieved_docs, similarities))
 
-                # Calculate dynamic disambiguation boost
-                disambiguation_boost = self._calculate_disambiguation_boost(query, content, doc_contents)
+            logger.info(f"✅ Stage 1 complete. Bi-encoder scores calculated.")
 
-                # Combine semantic similarity with disambiguation boost
-                # Base score (0.0-1.0) + disambiguation boost (-0.3 to +0.3)
-                enhanced_score = float(base_score) + disambiguation_boost
+            # Stage 2: Cross-encoder reranking (accurate, distinguishes nuances)
+            if self.use_cross_encoder:
+                logger.info(f"Stage 2: Cross-encoder reranking for precise disambiguation")
 
-                # Ensure score stays within reasonable bounds
-                enhanced_score = max(0.0, min(1.0, enhanced_score))
+                # Rerank ALL results with cross-encoder for maximum accuracy
+                reranked_results = self.rerank_with_cross_encoder(query, retrieved_docs)
 
-                enhanced_scores.append((doc, enhanced_score))
-
-                logger.debug(f"Doc {i+1}: base={base_score:.3f}, boost={disambiguation_boost:.3f}, final={enhanced_score:.3f}")
-
-            # Sort by enhanced score (descending)
-            enhanced_scores.sort(key=lambda x: x[1], reverse=True)
-
-            logger.info(f"Calculated enhanced semantic scores for {len(enhanced_scores)} documents")
-            logger.debug(f"Top 3 enhanced scores: {[score for _, score in enhanced_scores[:3]]}")
-
-            return enhanced_scores
+                logger.info(f"✅ Stage 2 complete. Cross-encoder reranking applied.")
+                return reranked_results
+            else:
+                # Cross-encoder disabled, return bi-encoder results
+                bi_encoder_results.sort(key=lambda x: x[1], reverse=True)
+                return bi_encoder_results
 
         except Exception as e:
             logger.error(f"Failed to calculate similarities: {e}")
@@ -423,6 +511,24 @@ class SemanticSimilarityService:
                 return 0.1
 
 
-def create_semantic_similarity_service(model_name: str = "all-MiniLM-L6-v2") -> SemanticSimilarityService:
-    """Factory function to create semantic similarity service"""
-    return SemanticSimilarityService(model_name=model_name)
+def create_semantic_similarity_service(
+    bi_encoder_model: str = "all-MiniLM-L6-v2",
+    cross_encoder_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2",
+    use_cross_encoder: bool = True
+) -> SemanticSimilarityService:
+    """
+    Factory function to create semantic similarity service with cross-encoder reranking.
+
+    Args:
+        bi_encoder_model: Fast model for initial retrieval
+        cross_encoder_model: Accurate model for reranking (distinguishes nuances)
+        use_cross_encoder: Enable cross-encoder reranking (recommended for production)
+
+    Returns:
+        Configured SemanticSimilarityService instance
+    """
+    return SemanticSimilarityService(
+        bi_encoder_model=bi_encoder_model,
+        cross_encoder_model=cross_encoder_model,
+        use_cross_encoder=use_cross_encoder
+    )
