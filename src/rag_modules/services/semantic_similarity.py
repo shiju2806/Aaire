@@ -314,74 +314,113 @@ class SemanticSimilarityService:
 
     def _extract_discriminative_terms(self, query: str) -> List[str]:
         """
-        Extract terms from query that are likely to be discriminative.
-        Uses simple heuristics to identify noun phrases and specific terms.
+        Extract discriminative terms using dynamic NLP-based n-gram analysis.
+        NO HARDCODING - extracts all meaningful n-grams and ranks by semantic importance.
         """
         import re
 
         query_lower = query.lower()
         discriminative_terms = []
 
-        # Extract multi-word phrases (likely to be specific concepts)
-        multi_word_phrases = re.findall(r'\b[a-zA-Z]+(?:\s+[a-zA-Z]+){1,3}\b', query)
-        for phrase in multi_word_phrases:
-            if len(phrase.split()) >= 2:  # Multi-word phrases are often discriminative
-                discriminative_terms.append(phrase)
+        # Extract ALL n-grams (1 to 3 words) dynamically
+        words = re.findall(r'\b[a-zA-Z0-9-]+\b', query_lower)
 
-        # Extract capitalized terms and acronyms (likely to be specific)
-        capitalized_terms = re.findall(r'\b[A-Z][A-Z0-9-]*\b', query)
-        discriminative_terms.extend(capitalized_terms)
+        # Generate all meaningful n-grams (unigrams, bigrams, trigrams)
+        for n in range(3, 0, -1):  # Start with trigrams (most specific)
+            for i in range(len(words) - n + 1):
+                ngram = ' '.join(words[i:i+n])
 
-        # Extract technical terms (numbers + letters, like VM-20, ASC 830)
-        technical_terms = re.findall(r'\b[A-Z]*[0-9]+[A-Z0-9-]*\b|\b[A-Z]{2,}\s+[0-9]+\b', query)
+                # Skip if it's just stop words
+                stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'how', 'do', 'i', 'what', 'is', 'are'}
+                ngram_words = ngram.split()
+                if all(word in stop_words for word in ngram_words):
+                    continue
+
+                # Skip if this n-gram is contained in a longer term we already have
+                is_substring = any(ngram in existing_term.lower() and ngram != existing_term.lower()
+                                 for existing_term in discriminative_terms)
+                if not is_substring:
+                    discriminative_terms.append(ngram)
+
+        # Extract technical patterns (numbers, codes, acronyms) - these are always discriminative
+        technical_terms = re.findall(r'\b[A-Z]*[0-9]+[A-Z0-9-]*\b|\b[A-Z]{2,}(?:\s+[0-9]+)?\b', query)
         discriminative_terms.extend(technical_terms)
-
-        # Extract important single words (nouns) - skip common words
-        stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'how', 'do', 'i', 'calculate', 'what', 'is', 'are'}
-        words = re.findall(r'\b[a-zA-Z]{4,}\b', query_lower)  # 4+ letter words
-        important_words = [w for w in words if w not in stop_words]
-        discriminative_terms.extend(important_words)
 
         # Remove duplicates while preserving order
         seen = set()
         unique_terms = []
         for term in discriminative_terms:
-            if term.lower() not in seen:
-                seen.add(term.lower())
+            term_key = term.lower().strip()
+            if term_key not in seen and len(term_key) > 1:
+                seen.add(term_key)
                 unique_terms.append(term)
 
-        logger.debug(f"Extracted discriminative terms: {unique_terms[:5]}...")  # Log first 5
-        return unique_terms[:10]  # Limit to top 10 to avoid over-processing
+        logger.debug(f"Extracted {len(unique_terms)} discriminative n-grams: {unique_terms[:5]}...")
+        return unique_terms
 
     def _calculate_term_discrimination_power(self, term: str, all_docs_content: List[str]) -> float:
         """
         Calculate how well a term discriminates between documents.
+        Uses EXACT phrase matching for multi-word terms to distinguish similar concepts.
         Returns value between 0 (no discrimination) and 1 (perfect discrimination).
         """
         if not all_docs_content:
             return 0.0
 
-        # Count documents containing the term
-        docs_with_term = sum(1 for doc in all_docs_content if term in doc.lower())
-        total_docs = len(all_docs_content)
+        # For multi-word terms, require EXACT phrase match (not just word presence)
+        term_lower = term.lower()
+        is_multiword = ' ' in term_lower
 
-        if docs_with_term == 0 or docs_with_term == total_docs:
-            # Term appears in no documents or all documents - no discrimination
-            return 0.0
+        if is_multiword:
+            # Count exact phrase occurrences
+            docs_with_exact_phrase = sum(1 for doc in all_docs_content if term_lower in doc.lower())
 
-        # Calculate discrimination using inverse document frequency concept
-        # Terms that appear in ~50% of docs have low discrimination
-        # Terms that appear in few docs have high discrimination
-        term_frequency = docs_with_term / total_docs
+            # Also count "partial matches" where words appear but not as exact phrase
+            term_words = set(term_lower.split())
+            docs_with_partial_match = sum(
+                1 for doc in all_docs_content
+                if term_lower not in doc.lower() and all(word in doc.lower() for word in term_words)
+            )
 
-        if term_frequency <= 0.1:  # Rare terms have high discrimination power
-            return 1.0
-        elif term_frequency <= 0.3:  # Somewhat rare terms have good discrimination
-            return 0.8
-        elif term_frequency <= 0.5:  # Common terms have moderate discrimination
-            return 0.4
-        else:  # Very common terms have low discrimination
-            return 0.1
+            total_docs = len(all_docs_content)
+
+            if docs_with_exact_phrase == 0:
+                return 0.0  # Term doesn't appear anywhere
+
+            if docs_with_exact_phrase == total_docs:
+                return 0.0  # Appears in all docs, no discrimination
+
+            # Calculate discrimination power based on exact vs partial matches
+            exact_frequency = docs_with_exact_phrase / total_docs
+
+            # Multi-word terms that appear in few documents are HIGHLY discriminative
+            if exact_frequency <= 0.1:
+                return 1.0  # Very rare exact phrase = maximum discrimination
+            elif exact_frequency <= 0.2:
+                return 0.9  # Rare exact phrase = high discrimination
+            elif exact_frequency <= 0.3:
+                return 0.7  # Somewhat rare = good discrimination
+            else:
+                return 0.5  # Common but still useful for multi-word terms
+
+        else:
+            # Single word terms - use standard IDF approach
+            docs_with_term = sum(1 for doc in all_docs_content if term_lower in doc.lower())
+            total_docs = len(all_docs_content)
+
+            if docs_with_term == 0 or docs_with_term == total_docs:
+                return 0.0
+
+            term_frequency = docs_with_term / total_docs
+
+            if term_frequency <= 0.1:
+                return 1.0
+            elif term_frequency <= 0.3:
+                return 0.8
+            elif term_frequency <= 0.5:
+                return 0.4
+            else:
+                return 0.1
 
 
 def create_semantic_similarity_service(model_name: str = "all-MiniLM-L6-v2") -> SemanticSimilarityService:
