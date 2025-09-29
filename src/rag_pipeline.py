@@ -64,6 +64,8 @@ from .rag_modules.query import QueryAnalyzer, create_query_analyzer
 from .rag_modules.quality import QualityMetricsManager, create_quality_metrics_manager
 from .rag_modules.services import DocumentRetriever, create_document_retriever
 from .rag_modules.services import ResponseGenerator, create_response_generator
+from .rag_modules.services import EntropyDisambiguationService, create_entropy_disambiguation_service
+from .rag_modules.search import create_bm25_search_engine
 from .rag_modules.storage import DocumentManager, create_document_manager
 
 logger = structlog.get_logger()
@@ -191,7 +193,7 @@ class RAGPipeline:
         # Initialize Phase 3 services modules (index will be set later)
         self.document_retriever = create_document_retriever(
             vector_index=None,  # Will be set after index creation
-            whoosh_engine=self.whoosh_engine,
+            bm25_engine=self.bm25_engine,
             relevance_engine=self.relevance_engine,
             metadata_analyzer=self.metadata_analyzer,
             quality_metrics_manager=self.quality_metrics_manager,
@@ -207,12 +209,15 @@ class RAGPipeline:
             config=self.config
         )
 
+        # Initialize entropy disambiguation service
+        self.entropy_service = create_entropy_disambiguation_service(self.config.get('entropy_config', {}))
+
         # Initialize document manager (will create the index)
         self.document_manager = create_document_manager(
             index=None,  # Will be created by document manager
             node_parser=self.node_parser,
             metadata_analyzer=self.metadata_analyzer,
-            whoosh_engine=self.whoosh_engine,
+            bm25_engine=self.bm25_engine,
             cache=self.cache,
             vector_store_type=self.vector_store_type,
             qdrant_client=self.qdrant_client if hasattr(self, 'qdrant_client') else None,
@@ -226,7 +231,7 @@ class RAGPipeline:
             self.index = self.document_manager._init_local_index()
 
         # Update document retriever with the created index
-        self.document_retriever.vector_index = self.index
+        self.document_retriever.index = self.index
 
         logger.info("RAG Pipeline initialized",
                    model=self.config['llm_config']['model'],
@@ -295,41 +300,37 @@ class RAGPipeline:
             self.cache = None
     
     def _init_hybrid_search(self):
-        """Initialize Whoosh keyword search for hybrid retrieval"""
+        """Initialize BM25 keyword search for hybrid retrieval"""
         try:
-            # Initialize Whoosh search engine
-            self.whoosh_engine = WhooshSearchEngine(
-                index_dir="search_index",
-                analyzer_type="stemming",
-                max_memory_mb=256
-            )
+            # Initialize BM25 search engine
+            self.bm25_engine = create_bm25_search_engine()
             self.keyword_search_ready = False
-            logger.info("✅ Whoosh search engine initialized")
+            logger.info("✅ BM25 search engine initialized")
 
-            # Start Whoosh backfill in background thread to avoid startup delays
+            # Start BM25 backfill in background thread to avoid startup delays
             import threading
             self.backfill_thread = threading.Thread(
-                target=self._populate_whoosh_from_existing_documents,
+                target=self._populate_bm25_from_existing_documents,
                 daemon=True
             )
             self.backfill_thread.start()
-            logger.info("🚀 Whoosh backfill started in background")
+            logger.info("🚀 BM25 backfill started in background")
 
         except Exception as e:
-            logger.error("Failed to initialize Whoosh search", error=str(e))
+            logger.error("Failed to initialize BM25 search", error=str(e))
             # Set fallback values
-            self.whoosh_engine = None
+            self.bm25_engine = None
             self.keyword_search_ready = False
 
-    def _populate_whoosh_from_existing_documents(self):
-        """Populate Whoosh index with existing documents from Qdrant on startup (optimized)"""
+    def _populate_bm25_from_existing_documents(self):
+        """Populate BM25 index with existing documents from Qdrant on startup (optimized)"""
         try:
-            # Only proceed if we have Qdrant and Whoosh available
-            if not hasattr(self, 'qdrant_client') or not self.qdrant_client or not self.whoosh_engine:
-                logger.info("🔄 Qdrant or Whoosh not available, skipping Whoosh backfill")
+            # Only proceed if we have Qdrant and BM25 available
+            if not hasattr(self, 'qdrant_client') or not self.qdrant_client or not self.bm25_engine:
+                logger.info("🔄 Qdrant or BM25 not available, skipping BM25 backfill")
                 return
 
-            logger.info("🔄 Starting Whoosh backfill from existing Qdrant documents...")
+            logger.info("🔄 Starting BM25 backfill from existing Qdrant documents...")
 
             # Use smaller batches for better performance
             batch_size = 50
@@ -352,7 +353,7 @@ class RAGPipeline:
                     if not points:
                         break
 
-                    # Prepare documents for Whoosh indexing
+                    # Prepare documents for BM25 indexing
                     batch_docs = []
 
                     for point in points:
@@ -367,8 +368,8 @@ class RAGPipeline:
                         )
 
                         if text_content and len(text_content.strip()) > 10:  # Only meaningful content
-                            # Convert to Whoosh document format
-                            whoosh_doc = {
+                            # Convert to BM25 document format
+                            bm25_doc = {
                                 'doc_id': str(point.id),
                                 'content': text_content,
                                 'title': payload.get('filename', 'Unknown'),
@@ -387,13 +388,13 @@ class RAGPipeline:
                                     **payload
                                 }
                             }
-                            batch_docs.append(whoosh_doc)
+                            batch_docs.append(bm25_doc)
 
-                    # Index batch in Whoosh
+                    # Index batch in BM25
                     if batch_docs:
-                        indexed_count = self.whoosh_engine.add_documents(batch_docs, batch_processing=True)
-                        documents_processed += indexed_count
-                        logger.info(f"📄 Indexed {documents_processed} documents in Whoosh...")
+                        self.bm25_engine.add_documents(batch_docs)
+                        documents_processed += len(batch_docs)
+                        logger.info(f"📄 Indexed {documents_processed} documents in BM25...")
 
                     # Update offset for next batch
                     offset = response[1]
@@ -402,15 +403,15 @@ class RAGPipeline:
                         break
 
                 except Exception as batch_error:
-                    logger.error(f"Error processing Whoosh batch: {str(batch_error)}")
+                    logger.error(f"Error processing BM25 batch: {str(batch_error)}")
                     break
 
-            logger.info(f"📚 Whoosh backfill completed: {documents_processed} documents indexed")
+            logger.info(f"📚 BM25 backfill completed: {documents_processed} documents indexed")
             logger.info("🎯 Hybrid search (vector + keyword) now available for ALL documents")
             self.keyword_search_ready = True
 
         except Exception as e:
-            logger.error(f"❌ Whoosh backfill failed: {str(e)}")
+            logger.error(f"❌ BM25 backfill failed: {str(e)}")
             # Don't crash the system, just log the error
             import traceback
             logger.error(f"Full error trace: {traceback.format_exc()}")
@@ -478,8 +479,14 @@ class RAGPipeline:
             # Store current query for citation filtering
             self._current_query = query
             
-            # ALWAYS search uploaded documents first
-            retrieved_docs = await self.document_retriever.retrieve_documents(expanded_query, doc_type_filter, similarity_threshold, filters)
+            # ALWAYS search uploaded documents first, enhanced with entropy disambiguation
+            async def base_retrieval_func():
+                return await self.document_retriever.retrieve_documents(expanded_query, doc_type_filter, similarity_threshold, filters)
+
+            retrieved_docs = await self.entropy_service.enhance_retrieval(
+                original_query=query,
+                base_retrieval_func=base_retrieval_func
+            )
             
             # Check if we found relevant documents in uploaded content
             if retrieved_docs and len(retrieved_docs) > 0:

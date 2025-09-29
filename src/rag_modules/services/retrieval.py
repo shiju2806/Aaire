@@ -19,18 +19,18 @@ logger = structlog.get_logger()
 class DocumentRetriever:
     """Handles document retrieval operations with hybrid search capabilities"""
 
-    def __init__(self, vector_index=None, whoosh_engine=None, relevance_engine=None,
+    def __init__(self, vector_index=None, bm25_engine=None, relevance_engine=None,
                  metadata_analyzer=None, quality_metrics_manager=None, config=None):
         """Initialize retriever with required components"""
         self.index = vector_index
-        self.whoosh_engine = whoosh_engine
+        self.bm25_engine = bm25_engine
         self.relevance_engine = relevance_engine
         self.metadata_analyzer = metadata_analyzer
         self.quality_metrics_manager = quality_metrics_manager
         self.config = config or {}
 
         # Derived attributes
-        self.keyword_search_ready = whoosh_engine is not None
+        self.keyword_search_ready = bm25_engine is not None
 
     async def retrieve_documents(self, query: str, doc_type_filter: Optional[List[str]],
                                similarity_threshold: Optional[float] = None,
@@ -219,12 +219,12 @@ class DocumentRetriever:
     async def keyword_search(self, query: str, doc_type_filter: Optional[List[str]],
                            filters: Optional[Dict[str, Any]] = None,
                            buffer_limit: Optional[int] = None) -> List[Dict]:
-        """Whoosh-based keyword search"""
+        """BM25-based keyword search"""
         results = []
 
         try:
-            if not self.whoosh_engine or not self.keyword_search_ready:
-                logger.info("Whoosh search engine not available, skipping keyword search")
+            if not self.bm25_engine or not self.keyword_search_ready:
+                logger.info("BM25 search engine not available, skipping keyword search")
                 return results
 
             # Use buffer limit if provided (for combined ranking), otherwise use dynamic calculation
@@ -236,21 +236,18 @@ class DocumentRetriever:
                 # For standalone search, allocate 30% to keyword search
                 keyword_limit = int(doc_limit * 0.3)
 
-            # Convert filters to Whoosh format
-            whoosh_filters = self.convert_filters_for_whoosh(filters, doc_type_filter)
+            # Convert filters to BM25 format
+            bm25_filters = self.convert_filters_for_bm25(filters, doc_type_filter)
 
-            # Use original query - let Whoosh handle parsing intelligently
-            search_query = query
-
-            # Perform Whoosh search
-            search_results = self.whoosh_engine.search(
-                query=search_query,
-                filters=whoosh_filters,
+            # Perform BM25 search
+            search_results = self.bm25_engine.search(
+                query=query,
+                filters=bm25_filters,
                 limit=keyword_limit,
                 highlight=False
             )
 
-            # Convert Whoosh SearchResults to our format
+            # Convert BM25 SearchResults to our format
             for search_result in search_results:
                 results.append({
                     'content': search_result.content,
@@ -261,21 +258,53 @@ class DocumentRetriever:
                     'search_type': 'keyword'
                 })
 
-            logger.info(f"Whoosh keyword search found {len(results)} results")
+            logger.info(f"BM25 keyword search found {len(results)} results")
 
             # Debug: Show first 5 results to understand what's being matched
             for i, result in enumerate(results[:5]):
                 content_preview = result['content'][:100].replace('\n', ' ')
-                logger.info(f"🔍 DEBUG result {i+1}: doc_id={result['node_id']}, score={result['score']:.3f}, preview='{content_preview}...'")
+                logger.info(f"🔍 BM25 result {i+1}: doc_id={result['node_id']}, score={result['score']:.3f}, preview='{content_preview}...'")
 
         except Exception as e:
-            logger.error("Failed to perform Whoosh keyword search", error=str(e))
+            logger.error("Failed to perform BM25 keyword search", error=str(e))
 
         return results
 
+    def convert_filters_for_bm25(self, filters: Optional[Dict[str, Any]],
+                               doc_type_filter: Optional[List[str]]) -> Optional[Dict[str, Any]]:
+        """Convert RAG pipeline filters to BM25 filter format"""
+        if not filters and not doc_type_filter:
+            return None
+
+        bm25_filters = {}
+
+        if filters:
+            # Handle primary_framework filter (most important for smart metadata)
+            if 'primary_framework' in filters:
+                bm25_filters['primary_framework'] = filters['primary_framework']
+
+            # Handle content_domains filter
+            if 'content_domains' in filters:
+                bm25_filters['content_domains'] = filters['content_domains']
+
+            # Handle document_type filter
+            if 'document_type' in filters:
+                bm25_filters['document_type'] = filters['document_type']
+
+            # Handle job_id filter (highest priority)
+            if 'job_id' in filters:
+                bm25_filters['job_id'] = filters['job_id']
+
+        # Convert doc_type_filter to BM25 format
+        if doc_type_filter:
+            # BM25 engine expects doc_type in the doc_type field
+            bm25_filters['doc_type'] = doc_type_filter
+
+        return bm25_filters if bm25_filters else None
+
     def convert_filters_for_whoosh(self, filters: Optional[Dict[str, Any]],
                                  doc_type_filter: Optional[List[str]]) -> Optional[Dict[str, Any]]:
-        """Convert RAG pipeline filters to Whoosh filter format"""
+        """Convert RAG pipeline filters to Whoosh filter format (deprecated)"""
         if not filters and not doc_type_filter:
             return None
 
@@ -399,12 +428,12 @@ class DocumentRetriever:
         return documents
 
 
-def create_document_retriever(vector_index=None, whoosh_engine=None, relevance_engine=None,
+def create_document_retriever(vector_index=None, bm25_engine=None, relevance_engine=None,
                             metadata_analyzer=None, quality_metrics_manager=None, config=None):
     """Factory function to create a DocumentRetriever instance"""
     return DocumentRetriever(
         vector_index=vector_index,
-        whoosh_engine=whoosh_engine,
+        bm25_engine=bm25_engine,
         relevance_engine=relevance_engine,
         metadata_analyzer=metadata_analyzer,
         quality_metrics_manager=quality_metrics_manager,

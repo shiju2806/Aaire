@@ -46,7 +46,7 @@ class DocumentManager:
         index: VectorStoreIndex,
         node_parser: SimpleNodeParser,
         metadata_analyzer,
-        whoosh_engine,
+        bm25_engine,
         cache=None,
         vector_store_type: str = "qdrant",
         qdrant_client=None,
@@ -68,7 +68,7 @@ class DocumentManager:
         self.index = index
         self.node_parser = node_parser
         self.metadata_analyzer = metadata_analyzer
-        self.whoosh_engine = whoosh_engine
+        self.bm25_engine = bm25_engine
         self.cache = cache
         self.vector_store_type = vector_store_type
         self.qdrant_client = qdrant_client
@@ -721,6 +721,27 @@ class DocumentManager:
                 logger.info(f"Created Qdrant collection: {self.collection_name}")
             else:
                 logger.info(f"Using existing Qdrant collection: {self.collection_name}")
+
+            # Create Qdrant vector store
+            from llama_index.vector_stores.qdrant import QdrantVectorStore
+            vector_store = QdrantVectorStore(
+                client=self.qdrant_client,
+                collection_name=self.collection_name
+            )
+
+            # Create storage context with Qdrant vector store
+            from llama_index.core import StorageContext
+            storage_context = StorageContext.from_defaults(vector_store=vector_store)
+
+            # Create VectorStoreIndex with storage context
+            self.index = VectorStoreIndex(
+                nodes=[],
+                storage_context=storage_context
+            )
+
+            logger.info(f"Initialized Qdrant VectorStoreIndex with collection: {self.collection_name}")
+            return self.index
+
         except Exception as e:
             logger.error(f"Failed to initialize Qdrant indexes: {str(e)}")
             raise
@@ -732,13 +753,14 @@ class DocumentManager:
             nodes=[]
         )
         logger.info("Initialized local vector store")
+        return self.index
 
 
 def create_document_manager(
     index: VectorStoreIndex,
     node_parser: SimpleNodeParser,
     metadata_analyzer,
-    whoosh_engine,
+    bm25_engine,
     cache=None,
     vector_store_type: str = "qdrant",
     qdrant_client=None,
@@ -767,7 +789,7 @@ def create_document_manager(
         index=index,
         node_parser=node_parser,
         metadata_analyzer=metadata_analyzer,
-        whoosh_engine=whoosh_engine,
+        bm25_engine=bm25_engine,
         cache=cache,
         vector_store_type=vector_store_type,
         qdrant_client=qdrant_client,
