@@ -495,11 +495,12 @@ class RAGPipeline:
 
             # Apply semantic similarity enhancement to improve document ranking
             if retrieved_docs and len(retrieved_docs) > 0:
-                logger.info(f"Applying semantic similarity enhancement to {len(retrieved_docs)} retrieved documents")
+                logger.info(f"Applying cross-encoder reranking to {len(retrieved_docs)} retrieved documents")
+                # Rerank ALL documents (no filtering) - cross-encoder scores can be negative!
                 retrieved_docs = self.semantic_similarity_service.enhance_retrieval_with_semantic_similarity(
-                    query, retrieved_docs, similarity_threshold=0.3
+                    query, retrieved_docs, top_k=None  # Keep all documents, just reranked
                 )
-                logger.info(f"Semantic enhancement completed, {len(retrieved_docs)} documents remain after filtering")
+                logger.info(f"Cross-encoder reranking completed, {len(retrieved_docs)} documents reranked")
             
             # Check if we found relevant documents in uploaded content
             if retrieved_docs and len(retrieved_docs) > 0:

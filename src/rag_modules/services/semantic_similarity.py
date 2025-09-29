@@ -254,17 +254,20 @@ class SemanticSimilarityService:
     def enhance_retrieval_with_semantic_similarity(self,
                                                   query: str,
                                                   retrieved_docs: List[Dict],
-                                                  similarity_threshold: float = 0.3) -> List[Dict]:
+                                                  top_k: int = None) -> List[Dict]:
         """
-        Main method to enhance retrieval results using semantic similarity.
+        Main method to enhance retrieval results using cross-encoder reranking.
 
         Args:
             query: Original search query
             retrieved_docs: Documents from initial retrieval
-            similarity_threshold: Minimum similarity score to include document
+            top_k: Number of top documents to return (None = return all, reranked)
 
         Returns:
-            Reordered and filtered documents based on semantic similarity
+            Reordered documents based on cross-encoder scores (no filtering by threshold)
+
+        Note: Cross-encoder scores are NOT normalized to [0,1] and can be negative.
+              We rerank ALL documents and optionally keep top_k.
         """
         if not retrieved_docs:
             return retrieved_docs
@@ -272,31 +275,34 @@ class SemanticSimilarityService:
         start_time = asyncio.get_event_loop().time()
 
         try:
-            # Calculate semantic scores
+            # Calculate semantic scores (includes cross-encoder reranking)
             doc_scores = self.calculate_semantic_scores(query, retrieved_docs)
 
-            # Filter by similarity threshold and preserve metadata
+            # Rerank and preserve metadata (NO threshold filtering!)
             enhanced_docs = []
             for doc, score in doc_scores:
-                if score >= similarity_threshold:
-                    # Add semantic score to document metadata
-                    enhanced_doc = doc.copy() if isinstance(doc, dict) else doc
-                    if isinstance(enhanced_doc, dict):
-                        if 'metadata' not in enhanced_doc:
-                            enhanced_doc['metadata'] = {}
-                        enhanced_doc['metadata']['semantic_similarity_score'] = score
-                        enhanced_doc['semantic_score'] = score  # Also add at root level
+                # Add semantic score to document metadata
+                enhanced_doc = doc.copy() if isinstance(doc, dict) else doc
+                if isinstance(enhanced_doc, dict):
+                    if 'metadata' not in enhanced_doc:
+                        enhanced_doc['metadata'] = {}
+                    enhanced_doc['metadata']['semantic_similarity_score'] = float(score)
+                    enhanced_doc['semantic_score'] = float(score)  # Also add at root level
 
-                    enhanced_docs.append(enhanced_doc)
+                enhanced_docs.append(enhanced_doc)
+
+            # Optionally limit to top_k documents
+            if top_k and top_k < len(enhanced_docs):
+                enhanced_docs = enhanced_docs[:top_k]
 
             end_time = asyncio.get_event_loop().time()
             processing_time = (end_time - start_time) * 1000  # Convert to milliseconds
 
-            logger.info(f"Semantic similarity enhancement completed",
+            logger.info(f"Cross-encoder reranking completed",
                        original_count=len(retrieved_docs),
-                       enhanced_count=len(enhanced_docs),
+                       reranked_count=len(enhanced_docs),
                        processing_time_ms=round(processing_time, 2),
-                       threshold=similarity_threshold)
+                       top_k=top_k if top_k else "all")
 
             return enhanced_docs
 
