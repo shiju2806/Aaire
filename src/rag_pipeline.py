@@ -491,7 +491,7 @@ class RAGPipeline:
             async def base_retrieval_func():
                 return await self.document_retriever.retrieve_documents(expanded_query, doc_type_filter, similarity_threshold, filters)
 
-            retrieved_docs = await base_retrieval_func(query)
+            retrieved_docs = await base_retrieval_func()
 
             # Apply semantic similarity enhancement to improve document ranking
             if retrieved_docs and len(retrieved_docs) > 0:
