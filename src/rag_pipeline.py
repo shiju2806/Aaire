@@ -431,23 +431,44 @@ class RAGPipeline:
             logger.error(f"Full error trace: {traceback.format_exc()}")
             self.keyword_search_ready = True  # Mark as ready even if failed
 
+    def _calculate_document_hash(self, documents: List[Dict]) -> str:
+        """
+        Calculate a hash of the document set for taxonomy cache invalidation.
+
+        Args:
+            documents: List of document dicts with metadata
+
+        Returns:
+            MD5 hash of sorted filenames and doc IDs
+        """
+        import hashlib
+
+        # Create a stable representation of the document set
+        doc_identifiers = []
+        for doc in documents:
+            # Use filename and doc_id as unique identifiers
+            filename = doc.get('metadata', {}).get('filename', 'unknown')
+            doc_id = doc.get('metadata', {}).get('doc_id', '')
+            doc_identifiers.append(f"{filename}:{doc_id}")
+
+        # Sort for consistent hashing
+        doc_identifiers.sort()
+
+        # Create hash
+        content = '|'.join(doc_identifiers).encode('utf-8')
+        return hashlib.md5(content).hexdigest()
+
     def _build_taxonomy_from_documents(self):
-        """Build taxonomy from existing documents for query enhancement."""
+        """Build taxonomy from existing documents for query enhancement with cache invalidation."""
         try:
             logger.info("🔍 Building domain taxonomy from documents...")
 
-            # Try to load existing taxonomy first
-            taxonomy_path = "data/taxonomy.json"
-            if self.taxonomy_extractor.load_taxonomy(taxonomy_path):
-                logger.info(f"✅ Loaded existing taxonomy from {taxonomy_path}")
-                return
-
-            # If no existing taxonomy, extract from documents
+            # If no Qdrant client, can't extract from documents
             if not hasattr(self, 'qdrant_client') or not self.qdrant_client:
                 logger.warning("Qdrant client not available, skipping taxonomy extraction")
                 return
 
-            # Fetch all documents from Qdrant
+            # Fetch all documents from Qdrant to calculate current hash
             documents = []
             offset = None
             batch_size = 100
@@ -492,23 +513,63 @@ class RAGPipeline:
                     logger.error(f"Error fetching documents for taxonomy: {e}")
                     break
 
-            if documents:
-                logger.info(f"📄 Extracting taxonomy from {len(documents)} documents...")
-
-                # Build taxonomy using pattern extraction
-                self.taxonomy = self.taxonomy_extractor.build_taxonomy(documents)
-
-                # Save taxonomy for future use
-                self.taxonomy_extractor.save_taxonomy(taxonomy_path)
-
-                logger.info(
-                    f"✅ Taxonomy built: "
-                    f"{len(self.taxonomy.get('acronyms', {}))} acronyms, "
-                    f"{len(self.taxonomy.get('hierarchies', {}))} hierarchies, "
-                    f"{len(self.taxonomy.get('synonyms', {}))} synonym groups"
-                )
-            else:
+            if not documents:
                 logger.warning("No documents found for taxonomy extraction")
+                return
+
+            # Calculate hash of current document set
+            current_doc_hash = self._calculate_document_hash(documents)
+
+            # Try to load existing taxonomy and check if it's still valid
+            taxonomy_path = "data/taxonomy.json"
+            taxonomy_valid = False
+
+            if self.taxonomy_extractor.load_taxonomy(taxonomy_path):
+                # Check if taxonomy has metadata with document hash
+                cached_taxonomy = self.taxonomy_extractor.acronyms  # Access loaded data
+
+                # Load the raw taxonomy file to check metadata
+                try:
+                    import json
+                    with open(taxonomy_path, 'r') as f:
+                        taxonomy_data = json.load(f)
+
+                    cached_doc_hash = taxonomy_data.get('metadata', {}).get('document_hash', '')
+
+                    if cached_doc_hash == current_doc_hash:
+                        logger.info(f"✅ Loaded existing taxonomy from {taxonomy_path} (hash match: {current_doc_hash[:8]})")
+                        taxonomy_valid = True
+                    else:
+                        logger.info(f"🔄 Document set changed (old: {cached_doc_hash[:8]}, new: {current_doc_hash[:8]}), rebuilding taxonomy...")
+                        taxonomy_valid = False
+                except Exception as e:
+                    logger.warning(f"Could not verify taxonomy hash: {e}, rebuilding...")
+                    taxonomy_valid = False
+
+            # If taxonomy is valid, we're done
+            if taxonomy_valid:
+                return
+
+            # Build new taxonomy
+            logger.info(f"📄 Extracting taxonomy from {len(documents)} documents...")
+
+            # Build taxonomy using pattern extraction
+            self.taxonomy = self.taxonomy_extractor.build_taxonomy(documents)
+
+            # Add document hash to taxonomy metadata
+            if 'metadata' not in self.taxonomy:
+                self.taxonomy['metadata'] = {}
+            self.taxonomy['metadata']['document_hash'] = current_doc_hash
+
+            # Save taxonomy for future use (pass the taxonomy dict to preserve metadata)
+            self.taxonomy_extractor.save_taxonomy(taxonomy_path, self.taxonomy)
+
+            logger.info(
+                f"✅ Taxonomy built and cached (hash: {current_doc_hash[:8]}): "
+                f"{len(self.taxonomy.get('acronyms', {}))} acronyms, "
+                f"{len(self.taxonomy.get('hierarchies', {}))} hierarchies, "
+                f"{len(self.taxonomy.get('synonyms', {}))} synonym groups"
+            )
 
         except Exception as e:
             logger.error(f"Failed to build taxonomy: {e}")
@@ -569,9 +630,16 @@ class RAGPipeline:
             doc_type_filter = self._get_doc_type_filter(filters)
             
             # Intelligent semantic query enhancement for better concept retrieval
+            taxonomy_terms = []
             try:
                 enhancement_result = await self.query_analyzer.enhance_query_semantically(query)
                 expanded_query = enhancement_result['enhanced_query']
+                # Extract taxonomy terms for LLM guidance
+                if 'enhancements' in enhancement_result and 'taxonomy_expansion' in enhancement_result['enhancements']:
+                    taxonomy_terms = enhancement_result['enhancements']['taxonomy_expansion']
+                    logger.info(f"🎯 Extracted {len(taxonomy_terms)} taxonomy terms for LLM guidance: {taxonomy_terms}")
+                else:
+                    logger.warning(f"⚠️ No taxonomy terms found in enhancement_result")
                 logger.info(f"🚀 Query semantically enhanced: {enhancement_result['enhancement_count']} concepts added")
             except Exception as e:
                 logger.warning(f"Semantic enhancement failed, using basic expansion: {e}")
@@ -604,17 +672,34 @@ class RAGPipeline:
                 logger.info(f"Found {len(retrieved_docs)} relevant documents for query: '{query[:50]}...'")
                 
                 # Log document sources for transparency
-                doc_sources = [(doc['metadata'].get('filename', 'Unknown'), 
-                              doc.get('relevance_score', doc.get('score', 0))) 
+                doc_sources = [(doc['metadata'].get('filename', 'Unknown'),
+                              doc.get('relevance_score', doc.get('score', 0)))
                              for doc in retrieved_docs[:5]]
                 logger.info(f"Top document sources with scores: {doc_sources}")
+
+                # Log detailed chunk content for SR/DR/NPR analysis
+                logger.info("=" * 80)
+                logger.info("📄 DETAILED CHUNK ANALYSIS FOR RETRIEVED DOCUMENTS")
+                logger.info("=" * 80)
+                for idx, doc in enumerate(retrieved_docs[:10], 1):
+                    content_preview = doc['content'][:300].replace('\n', ' ')
+                    contains_sr = 'stochastic' in doc['content'].lower() or 'cte' in doc['content'].lower()
+                    contains_dr = 'deterministic' in doc['content'].lower()
+                    contains_npr = 'net premium' in doc['content'].lower()
+
+                    logger.info(f"\n📑 Chunk #{idx}")
+                    logger.info(f"   Score: {doc.get('relevance_score', doc.get('score', 0)):.4f}")
+                    logger.info(f"   Length: {len(doc['content'])} chars")
+                    logger.info(f"   Contains: SR={contains_sr}, DR={contains_dr}, NPR={contains_npr}")
+                    logger.info(f"   Preview: {content_preview}...")
+                logger.info("=" * 80)
                 
                 # Check for potential document confusion issues
                 unique_sources = set([source[0] for source in doc_sources])
                 if len(unique_sources) > 1:
                     logger.info(f"Multiple document sources found for query, applying strict citation filters")
                 
-                response = await self.response_generator.generate_response(query, retrieved_docs, user_context, conversation_history, session_id)
+                response = await self.response_generator.generate_response(query, retrieved_docs, user_context, conversation_history, session_id, taxonomy_terms)
 
 
                 # Pass 2: Format the response using LLM-based formatting

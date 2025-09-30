@@ -778,17 +778,24 @@ Only include relationships explicitly stated in the text."""
             'other': other_matches
         }
 
-    def save_taxonomy(self, filepath: str):
-        """Save complete taxonomy to JSON."""
-        taxonomy = {
-            'acronyms': self.acronyms,
-            'synonyms': {k: list(v) for k, v in self.synonyms.items()},
-            'hierarchies': {k: v for k, v in self.hierarchies.items()},
-            'relationships': {k: v for k, v in self.relationships.items()},
-            'definitions': self.definitions,
-            'term_counts': dict(self.term_counts),
-            'sources': {k: list(v) for k, v in self.source_tracking.items()},
-        }
+    def save_taxonomy(self, filepath: str, taxonomy: Dict = None):
+        """
+        Save complete taxonomy to JSON.
+
+        Args:
+            filepath: Path to save taxonomy
+            taxonomy: Optional taxonomy dict to save. If None, builds from internal state.
+        """
+        if taxonomy is None:
+            taxonomy = {
+                'acronyms': self.acronyms,
+                'synonyms': {k: list(v) for k, v in self.synonyms.items()},
+                'hierarchies': {k: v for k, v in self.hierarchies.items()},
+                'relationships': {k: v for k, v in self.relationships.items()},
+                'definitions': self.definitions,
+                'term_counts': dict(self.term_counts),
+                'sources': {k: list(v) for k, v in self.source_tracking.items()},
+            }
 
         Path(filepath).parent.mkdir(parents=True, exist_ok=True)
         with open(filepath, 'w') as f:
