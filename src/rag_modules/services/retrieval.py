@@ -48,7 +48,8 @@ class DocumentRetriever:
                        tags=query_intent.context_tags[:3])  # First 3 tags for brevity
 
             # Apply smart filtering if confidence is high enough
-            if query_intent.confidence > 0.6 and self.metadata_analyzer.smart_filtering_enabled:
+            # DISABLED: Smart filtering was blocking all documents
+            if False and query_intent.confidence > 0.6 and self.metadata_analyzer.smart_filtering_enabled:
                 # Merge intent-based filters with existing filters
                 smart_filters = filters.copy() if filters else {}
 

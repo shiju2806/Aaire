@@ -398,6 +398,7 @@ Be comprehensive but focus ONLY on terms explicitly relevant to this specific qu
                 if taxonomy_terms:
                     enhancements['taxonomy_expansion'] = taxonomy_terms
                     logger.info(f"✅ Added {len(taxonomy_terms)} terms from taxonomy")
+                    logger.info(f"📚 Taxonomy terms: {taxonomy_terms[:10]}")  # Show first 10
 
             # Build comprehensive search terms
             all_enhancements = []
