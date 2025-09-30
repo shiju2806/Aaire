@@ -61,6 +61,7 @@ from .rag_modules.analysis.citations import CitationAnalyzer
 from .rag_modules.cache.manager import CacheManager
 from .rag_modules.formatting import FormattingManager, create_formatting_manager
 from .rag_modules.query import QueryAnalyzer, create_query_analyzer
+from .rag_modules.query.insurance_taxonomy_extractor import InsuranceTaxonomyExtractor
 from .rag_modules.quality import QualityMetricsManager, create_quality_metrics_manager
 from .rag_modules.services import DocumentRetriever, create_document_retriever
 from .rag_modules.services import ResponseGenerator, create_response_generator
@@ -185,9 +186,17 @@ class RAGPipeline:
         self.citation_analyzer = CitationAnalyzer()
         self.cache_manager = CacheManager(self.cache)
 
+        # Initialize complete insurance taxonomy extractor with XBRL + ACORD + document extraction
+        self.taxonomy_extractor = InsuranceTaxonomyExtractor(
+            llm_client=self.async_client,
+            min_term_frequency=2
+        )
+        self.taxonomy = {}  # Will be populated after documents are loaded
+        logger.info("✅ Complete taxonomy extractor initialized (XBRL + ACORD + document extraction)")
+
         # Initialize new extracted modules
         self.formatting_manager = create_formatting_manager(llm_client=self.llm)
-        self.query_analyzer = create_query_analyzer(llm=self.llm)
+        self.query_analyzer = create_query_analyzer(llm=self.llm, taxonomy_extractor=self.taxonomy_extractor)
         self.quality_metrics_manager = create_quality_metrics_manager(self.config.get('retrieval_config', {}))
 
         # Initialize semantic similarity service for enhanced retrieval
@@ -412,13 +421,100 @@ class RAGPipeline:
             logger.info("🎯 Hybrid search (vector + keyword) now available for ALL documents")
             self.keyword_search_ready = True
 
+            # Now build taxonomy from documents for query enhancement
+            self._build_taxonomy_from_documents()
+
         except Exception as e:
             logger.error(f"❌ BM25 backfill failed: {str(e)}")
             # Don't crash the system, just log the error
             import traceback
             logger.error(f"Full error trace: {traceback.format_exc()}")
             self.keyword_search_ready = True  # Mark as ready even if failed
-    
+
+    def _build_taxonomy_from_documents(self):
+        """Build taxonomy from existing documents for query enhancement."""
+        try:
+            logger.info("🔍 Building domain taxonomy from documents...")
+
+            # Try to load existing taxonomy first
+            taxonomy_path = "data/taxonomy.json"
+            if self.taxonomy_extractor.load_taxonomy(taxonomy_path):
+                logger.info(f"✅ Loaded existing taxonomy from {taxonomy_path}")
+                return
+
+            # If no existing taxonomy, extract from documents
+            if not hasattr(self, 'qdrant_client') or not self.qdrant_client:
+                logger.warning("Qdrant client not available, skipping taxonomy extraction")
+                return
+
+            # Fetch all documents from Qdrant
+            documents = []
+            offset = None
+            batch_size = 100
+
+            while len(documents) < 200:  # Limit to first 200 docs for taxonomy extraction
+                try:
+                    response = self.qdrant_client.scroll(
+                        collection_name=self.collection_name,
+                        limit=batch_size,
+                        offset=offset,
+                        with_payload=True,
+                        with_vectors=False
+                    )
+
+                    points = response[0]
+                    if not points:
+                        break
+
+                    for point in points:
+                        payload = point.payload
+                        text_content = (
+                            payload.get('text') or
+                            payload.get('content') or
+                            payload.get('_node_content') or
+                            ''
+                        )
+
+                        if text_content and len(text_content.strip()) > 50:
+                            documents.append({
+                                'content': text_content,
+                                'metadata': {
+                                    'filename': payload.get('filename', 'Unknown'),
+                                    'doc_id': str(point.id)
+                                }
+                            })
+
+                    offset = response[1]
+                    if len(points) < batch_size:
+                        break
+
+                except Exception as e:
+                    logger.error(f"Error fetching documents for taxonomy: {e}")
+                    break
+
+            if documents:
+                logger.info(f"📄 Extracting taxonomy from {len(documents)} documents...")
+
+                # Build taxonomy using pattern extraction
+                self.taxonomy = self.taxonomy_extractor.build_taxonomy(documents)
+
+                # Save taxonomy for future use
+                self.taxonomy_extractor.save_taxonomy(taxonomy_path)
+
+                logger.info(
+                    f"✅ Taxonomy built: "
+                    f"{len(self.taxonomy.get('acronyms', {}))} acronyms, "
+                    f"{len(self.taxonomy.get('hierarchies', {}))} hierarchies, "
+                    f"{len(self.taxonomy.get('synonyms', {}))} synonym groups"
+                )
+            else:
+                logger.warning("No documents found for taxonomy extraction")
+
+        except Exception as e:
+            logger.error(f"Failed to build taxonomy: {e}")
+            import traceback
+            logger.error(f"Taxonomy error trace: {traceback.format_exc()}")
+
     async def add_documents(self, documents: List[Document], doc_type: str = "company"):
         """Add documents using the document manager"""
         return await self.document_manager.add_documents(documents, doc_type)

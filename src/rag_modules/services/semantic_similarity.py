@@ -130,9 +130,13 @@ class SemanticSimilarityService:
             # Create pairs: [(query, doc1), (query, doc2), ...]
             query_doc_pairs = [[query, content] for content in doc_contents]
 
-            # Get cross-encoder scores
+            # Get cross-encoder scores with explicit batching for performance
             logger.info(f"🔄 Reranking {len(query_doc_pairs)} documents with cross-encoder")
-            cross_scores = self.cross_encoder.predict(query_doc_pairs)
+            cross_scores = self.cross_encoder.predict(
+                query_doc_pairs,
+                batch_size=32,  # Process 32 pairs at once for optimal performance
+                show_progress_bar=False
+            )
 
             # Combine documents with their cross-encoder scores
             reranked = list(zip(retrieved_docs, cross_scores))

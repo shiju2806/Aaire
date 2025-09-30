@@ -26,14 +26,16 @@ class QueryAnalyzer:
     - Identify general knowledge vs document-specific queries
     """
 
-    def __init__(self, llm: OpenAI):
+    def __init__(self, llm: OpenAI, taxonomy_extractor=None):
         """
         Initialize the QueryAnalyzer.
 
         Args:
             llm: OpenAI LLM instance for query classification and response generation
+            taxonomy_extractor: Optional TaxonomyExtractor for domain-adaptive enhancement
         """
         self.llm = llm
+        self.taxonomy_extractor = taxonomy_extractor
 
     def is_organizational_query(self, query: str, documents: List[Dict]) -> bool:
         """
@@ -333,32 +335,27 @@ Answer:"""
         """
         logger.info(f"🧠 Starting semantic query enhancement for: '{query[:50]}...'")
 
-        enhancement_prompt = f"""You are AAIRE, an expert in insurance, actuarial, and accounting domains.
-
-Analyze this query and provide semantic enhancements to improve document retrieval:
+        # Generic prompt with NO hardcoded domain logic
+        enhancement_prompt = f"""Analyze this query and provide semantic enhancements to improve document retrieval.
 
 Query: "{query}"
 
 For this query, identify:
 
-1. KEY_CONCEPTS: Core concepts and topics (e.g., for "universal life reserves" → "reserve calculation", "VM-20", "valuation")
-
-2. TECHNICAL_TERMS: Domain-specific technical terms and synonyms (e.g., "stochastic reserve", "deterministic reserve", "net premium reserve")
-
-3. RELATED_STANDARDS: Relevant standards, regulations, or frameworks (e.g., "ASC 944", "GAAP", "VM-20", "IFRS 17")
-
-4. CALCULATION_METHODS: Specific methodologies or calculation approaches (e.g., "present value", "discount rate", "mortality assumptions")
-
-5. ALTERNATE_PHRASES: Alternative ways to express the same concept (e.g., "life insurance reserves" vs "life insurance liabilities")
+1. KEY_CONCEPTS: Core concepts and topics
+2. TECHNICAL_TERMS: Domain-specific technical terms, acronyms, and synonyms
+3. RELATED_STANDARDS: Relevant standards, regulations, or frameworks
+4. CALCULATION_METHODS: Specific methodologies or calculation approaches mentioned
+5. ALTERNATE_PHRASES: Alternative ways to express the same concept
 
 Provide your response in this exact format:
 KEY_CONCEPTS: concept1, concept2, concept3
 TECHNICAL_TERMS: term1, term2, term3
-RELATED_STANDARDS: standard1, standard2, standard3
-CALCULATION_METHODS: method1, method2, method3
-ALTERNATE_PHRASES: phrase1, phrase2, phrase3
+RELATED_STANDARDS: standard1, standard2
+CALCULATION_METHODS: method1, method2
+ALTERNATE_PHRASES: phrase1, phrase2
 
-Focus on insurance, accounting, actuarial, and financial concepts. Be comprehensive but relevant."""
+Be comprehensive but focus ONLY on terms explicitly relevant to this specific query."""
 
         try:
             response = self.llm.complete(enhancement_prompt)
@@ -394,6 +391,14 @@ Focus on insurance, accounting, actuarial, and financial concepts. Be comprehens
                     terms = line.replace('ALTERNATE_PHRASES:', '').strip()
                     enhancements['alternate_phrases'] = [t.strip() for t in terms.split(',') if t.strip()]
 
+            # Add taxonomy-based expansion (NO hardcoding!)
+            if self.taxonomy_extractor:
+                logger.info("🔍 Enhancing with extracted domain taxonomy...")
+                taxonomy_terms = self._expand_with_taxonomy(query, enhancements)
+                if taxonomy_terms:
+                    enhancements['taxonomy_expansion'] = taxonomy_terms
+                    logger.info(f"✅ Added {len(taxonomy_terms)} terms from taxonomy")
+
             # Build comprehensive search terms
             all_enhancements = []
             for category, terms in enhancements.items():
@@ -403,7 +408,7 @@ Focus on insurance, accounting, actuarial, and financial concepts. Be comprehens
             enhanced_query = query
             if all_enhancements:
                 # Add the most relevant enhancement terms (limit to avoid over-expansion)
-                top_enhancements = all_enhancements[:15]  # Limit to top 15 terms
+                top_enhancements = all_enhancements[:20]  # Increased from 15 to 20
                 enhanced_query = f"{query} {' '.join(top_enhancements)}"
 
             logger.info("✨ Query semantically enhanced",
@@ -414,6 +419,12 @@ Focus on insurance, accounting, actuarial, and financial concepts. Be comprehens
                        calculation_methods=len(enhancements['calculation_methods']),
                        alternate_phrases=len(enhancements['alternate_phrases']),
                        total_enhancements=len(all_enhancements))
+
+            # DEBUG: Log actual enhanced terms for troubleshooting
+            logger.info("📝 Enhanced query terms:",
+                       key_concepts=enhancements['key_concepts'][:5],
+                       technical_terms=enhancements['technical_terms'][:5],
+                       calculation_methods=enhancements['calculation_methods'][:5])
 
             return {
                 'original_query': query,
@@ -566,15 +577,73 @@ Focus on insurance, accounting, actuarial, and financial concepts. Be comprehens
 
         return False
 
+    def _expand_with_taxonomy(self, query: str, existing_enhancements: Dict) -> List[str]:
+        """
+        Expand query using extracted taxonomy (NO hardcoded domain logic).
 
-def create_query_analyzer(llm: OpenAI) -> QueryAnalyzer:
+        Args:
+            query: Original query
+            existing_enhancements: Enhancements from LLM
+
+        Returns:
+            List of additional terms from taxonomy
+        """
+        if not self.taxonomy_extractor:
+            return []
+
+        taxonomy_terms = []
+
+        # Extract potential terms from query (simple word tokenization)
+        query_words = query.lower().split()
+
+        # Also check LLM-identified terms
+        all_identified_terms = []
+        for category, terms in existing_enhancements.items():
+            all_identified_terms.extend([t.lower() for t in terms])
+
+        # Combine query words and LLM terms
+        terms_to_lookup = set(query_words + all_identified_terms)
+
+        # Also check multi-word phrases in query
+        query_lower = query.lower()
+
+        # Look up each term in taxonomy
+        for term in terms_to_lookup:
+            related = self.taxonomy_extractor.get_related_terms(term, max_depth=1)
+            if related:
+                taxonomy_terms.extend(related)
+                logger.debug(f"📚 Taxonomy: '{term}' → {related[:3]}...")
+
+        # Check for common multi-word terms (2-3 words)
+        words = query.lower().split()
+        for i in range(len(words) - 1):
+            bigram = f"{words[i]} {words[i+1]}"
+            related = self.taxonomy_extractor.get_related_terms(bigram, max_depth=1)
+            if related:
+                taxonomy_terms.extend(related)
+                logger.debug(f"📚 Taxonomy: '{bigram}' → {related[:3]}...")
+
+            if i < len(words) - 2:
+                trigram = f"{words[i]} {words[i+1]} {words[i+2]}"
+                related = self.taxonomy_extractor.get_related_terms(trigram, max_depth=1)
+                if related:
+                    taxonomy_terms.extend(related)
+                    logger.debug(f"📚 Taxonomy: '{trigram}' → {related[:3]}...")
+
+        # Remove duplicates and return
+        unique_terms = list(set(taxonomy_terms))
+        return unique_terms[:10]  # Limit to top 10 taxonomy terms
+
+
+def create_query_analyzer(llm: OpenAI, taxonomy_extractor=None) -> QueryAnalyzer:
     """
     Factory function to create a QueryAnalyzer instance.
 
     Args:
         llm: OpenAI LLM instance for query classification
+        taxonomy_extractor: Optional TaxonomyExtractor for domain-adaptive query enhancement
 
     Returns:
         QueryAnalyzer: Configured QueryAnalyzer instance
     """
-    return QueryAnalyzer(llm)
+    return QueryAnalyzer(llm, taxonomy_extractor=taxonomy_extractor)
