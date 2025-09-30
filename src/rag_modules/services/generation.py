@@ -40,7 +40,8 @@ class ResponseGenerator:
         retrieved_docs: List[Dict],
         user_context: Optional[Dict[str, Any]] = None,
         conversation_history: Optional[List[Dict]] = None,
-        session_id: Optional[str] = None
+        session_id: Optional[str] = None,
+        taxonomy_terms: Optional[List[str]] = None
     ) -> str:
         """Generate response using retrieved documents and conversation context"""
 
@@ -88,20 +89,20 @@ Instructions:
 Response:"""
         else:
             # Use dynamic chunked processing for all non-general queries
-            return await self.process_with_chunked_enhancement(query, retrieved_docs, conversation_context)
+            return await self.process_with_chunked_enhancement(query, retrieved_docs, conversation_context, taxonomy_terms)
 
         # General knowledge response
         response = self.llm.complete(prompt)
         return response.text.strip()
 
-    async def process_with_chunked_enhancement(self, query: str, retrieved_docs: List[Dict], conversation_context: str) -> str:
+    async def process_with_chunked_enhancement(self, query: str, retrieved_docs: List[Dict], conversation_context: str, taxonomy_terms: Optional[List[str]] = None) -> str:
         """Process documents with streamlined approach that respects BM25 rankings"""
         logger.info(f"📄 Processing {len(retrieved_docs)} documents with streamlined single-pass approach")
 
         # Always use the enhanced single-pass approach to respect BM25 rankings
         # This eliminates semantic grouping that fights against relevance scores
         logger.info("📋 Using optimized single-pass approach (respects BM25/vector rankings)")
-        return self.generate_enhanced_single_pass(query, retrieved_docs, conversation_context)
+        return self.generate_enhanced_single_pass(query, retrieved_docs, conversation_context, taxonomy_terms)
 
     def generate_organizational_response(self, query: str, documents: List[Dict], conversation_context: str) -> str:
         """Generate response for organizational structure queries"""
@@ -120,39 +121,150 @@ Use appropriate headings and structure the information clearly."""
         response = self.llm.complete(prompt)
         return response.text.strip()
 
-    def generate_enhanced_single_pass(self, query: str, documents: List[Dict], conversation_context: str) -> str:
-        """Enhanced single-pass response for smaller document sets"""
-        context = "\n\n".join([doc['content'] for doc in documents])
+    def generate_enhanced_single_pass(self, query: str, documents: List[Dict], conversation_context: str, taxonomy_terms: Optional[List[str]] = None) -> str:
+        """Two-stage response generation: Extract technical content, then synthesize structured response"""
+        logger.info(f"🔬 Starting two-stage response generation for query: '{query[:60]}...'")
 
-        prompt = f"""You are AAIRE, an expert in insurance accounting.
+        # Stage 1: Extract and resolve technical content
+        extracted_content = self._extract_technical_content(query, documents, taxonomy_terms)
+        logger.info(f"✅ Stage 1 complete: Extracted {len(extracted_content)} characters of technical content")
+
+        # Stage 2: Synthesize structured response from extracted facts
+        final_response = self._synthesize_structured_response(query, extracted_content, conversation_context)
+        logger.info(f"✅ Stage 2 complete: Generated {len(final_response)} character response")
+
+        return final_response
+
+    def _extract_technical_content(self, query: str, documents: List[Dict], taxonomy_terms: Optional[List[str]] = None) -> str:
+        """Stage 1: Extract technical content and resolve references dynamically"""
+        # Format all document chunks with clear boundaries
+        chunks_formatted = "\n\n---CHUNK BOUNDARY---\n\n".join([
+            f"CHUNK {i+1}:\n{doc['content']}"
+            for i, doc in enumerate(documents)
+        ])
+
+        # Build dynamic taxonomy context if available
+        taxonomy_context = ""
+        if taxonomy_terms:
+            taxonomy_context = f"\n\nDomain concepts identified: {', '.join(taxonomy_terms)}"
+
+        extraction_prompt = f"""You are a technical content extractor for domain-specific documentation.
+
+USER QUERY: {query}{taxonomy_context}
+
+YOUR TASK: Extract ONLY technical content directly relevant to answering this query.
+
+WHAT TO EXTRACT:
+1. Mathematical formulas with ALL variables defined
+   - If a formula uses undefined variables (A, B, X, Y, etc.), search ALL chunks for their definitions
+   - Assemble complete formulas by combining fragments from different chunks
+
+2. Step-by-step calculation procedures
+   - Numbered steps with specific instructions
+   - Methodologies and algorithms
+
+3. Specific numerical thresholds, parameters, and constants
+   - Exact values, percentages, multipliers
+
+4. Regulatory references and citations
+   - Standards, sections, articles (any pattern: "Section X.Y.Z", "VM-XX", "IFRS XX", etc.)
+
+5. Technical requirements and conditions
+   - "When X, then Y" rules
+   - Conditional logic and decision criteria
+
+WHAT TO EXCLUDE:
+1. Introductory/background paragraphs
+   - Content that starts with "is defined as", "refers to", "can be classified as"
+   - Historical context or general explanations
+
+2. Content unrelated to the query
+   - Information about different topics/domains
+   - Tangential background information
+
+REFERENCE RESOLUTION:
+When you encounter references like:
+- "Reserve Amount from Section 3.B.5.c"
+- "As defined in Table X"
+- "See Appendix Y for methodology"
+- "Per VM-XX Section Z"
+
+SEARCH all provided chunks for that referenced content and REPLACE the reference with the actual data/formula.
+
+Example:
+- Input: "NPR = max(Amount from Section 3.B.5.c, Amount from Section 3.B.5.d)"
+- If Chunk 15 contains "Section 3.B.5.c: Amount = PV Future Benefits - PV Future Premiums"
+- Output: "NPR = max(PV Future Benefits - PV Future Premiums, [Amount from Section 3.B.5.d])"
+- Continue searching for Section 3.B.5.d definition...
+
+FORMAT YOUR OUTPUT AS STRUCTURED BULLETS:
+- One extracted fact per bullet
+- Keep formulas intact with all components
+- Preserve exact regulatory citations
+- No prose or explanations - just the technical facts
+
+---
+
+DOCUMENT CHUNKS TO ANALYZE:
+{chunks_formatted}
+
+---
+
+EXTRACTED TECHNICAL CONTENT:"""
+
+        response = self.llm.complete(extraction_prompt)
+        return response.text.strip()
+
+    def _synthesize_structured_response(self, query: str, extracted_content: str, conversation_context: str) -> str:
+        """Stage 2: Synthesize concise, structured response from extracted facts"""
+
+        synthesis_prompt = f"""You are a technical documentation compiler for expert users.
+
 {conversation_context}
-Question: {query}
 
-Documents:
-{context}
+USER QUERY: {query}
 
-Create a comprehensive response that addresses ALL aspects covered in the retrieved documents.
+EXTRACTED TECHNICAL FACTS:
+{extracted_content}
 
-FORMATTING REQUIREMENTS:
-- Use proper markdown formatting with headers: # for main sections, ## for subsections
-- Use numbered lists (1., 2., 3.) with proper line breaks
-- Use bullet points (-) for sub-items
-- Keep mathematical formulas and expressions clear and readable
-- Use **bold** only for emphasis within text, not for headers
-- Ensure proper spacing between sections and lists
+YOUR TASK: Using ONLY the extracted facts above, create a concise, highly technical response.
 
-CONTENT REQUIREMENTS:
-- Include ALL relevant regulatory sections, formulas, and calculations
-- Address ALL distinct concepts and methodologies mentioned
-- Preserve ALL technical details and specific requirements
-- Convert complex mathematical notation to readable text format (e.g., 𝐸𝑥+𝑡 = 𝑉𝑁𝑃𝑅⦁𝑎̈𝑥+𝑡:𝑣−𝑡| becomes E(x+t) = VNPR × annuity(x+t):v-t)
-- Replace complex Unicode symbols with readable text
-- Convert actuarial notation to plain English equivalents
-- Maintain mathematical accuracy while ensuring accessibility
+CONTENT RULES:
+1. Be maximally concise - assume expert audience
+2. No introductory paragraphs or background context
+3. No basic definitions unless specifically asked
+4. Focus on actionable technical content: formulas, procedures, parameters
+5. If facts reference multiple approaches/methods, present all of them clearly
 
-Structure your response to systematically cover every major topic found in the source material using clear markdown formatting."""
+STRUCTURE RULES:
+Organize the response using this pattern (adapt based on content):
 
-        response = self.llm.complete(prompt)
+## [Primary Topic]
+- Key technical points as bullets
+- Formulas with variables defined inline
+- Specific numerical values
+
+## [Methodology/Calculation]
+- Core equation or process
+- Step-by-step if procedural content exists
+
+## [Steps/Requirements] (if applicable)
+1. First step with specifics
+2. Second step with specifics
+...
+
+FORMATTING:
+- Use ## for main sections (not # or **bold**)
+- Use bullets (-) or numbering (1., 2., 3.) for lists
+- Write formulas clearly: Variable = Expression
+- Define variables inline: "where X = definition, Y = definition"
+- Keep paragraphs short (2-3 sentences max)
+
+CRITICAL: Do not add information beyond what's in the extracted facts. If formulas are incomplete in the extraction, present them as-is rather than inventing completions.
+
+RESPONSE:"""
+
+        response = self.llm.complete(synthesis_prompt)
         return response.text.strip()
 
     async def generate_chunked_response(self, query: str, documents: List[Dict], conversation_context: str) -> str:
