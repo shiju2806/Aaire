@@ -679,9 +679,24 @@ Only include relationships explicitly stated in the text."""
             if variant in self.relationships:
                 related.update(self.relationships[variant])
 
-        # If no exact matches, try partial matching (word boundary matching)
+        # If no exact matches, try partial matching with ALL variations
+        # Collect matches with prioritization
         if not related:
-            related.update(self._partial_match_terms(term_lower))
+            priority_matches = set()
+            category_matches = set()
+            other_matches = set()
+
+            for variant in term_variations:
+                matches_dict = self._partial_match_terms_categorized(variant)
+                priority_matches.update(matches_dict.get('priority', []))
+                category_matches.update(matches_dict.get('category', []))
+                other_matches.update(matches_dict.get('other', []))
+
+            # Apply prioritization: prefer calculation methods over categories
+            if priority_matches:
+                related.update(priority_matches)
+            else:
+                related.update(other_matches.union(category_matches))
 
         # Remove original term and variations
         for variant in term_variations:
@@ -711,31 +726,57 @@ Only include relationships explicitly stated in the text."""
 
         return variations
 
-    def _partial_match_terms(self, term: str) -> Set[str]:
+    def _partial_match_terms_categorized(self, term: str) -> Dict[str, Set[str]]:
         """
         Find terms using partial/substring matching with word boundaries.
+        Returns categorized matches for prioritization.
 
-        Example: "reserve" matches "reserve methods", "insurance reserves"
+        Example: "reserve" matches both:
+        - "reserve methods" (priority) → NPR, SR, DR
+        - "insurance reserves" (category) → generic terms
+
+        Returns:
+            Dict with keys: 'priority', 'category', 'other'
         """
-        matches = set()
+        # Keywords that indicate calculation/methodology hierarchies (high priority)
+        priority_keywords = {'method', 'calculation', 'valuation', 'approach', 'technique', 'model'}
+
+        # Keywords that indicate general category hierarchies (low priority)
+        category_keywords = {'insurance', 'type', 'category', 'kind'}
+
+        priority_matches = set()
+        category_matches = set()
+        other_matches = set()
 
         # Search in hierarchies (most important for NPR/SR/DR discovery)
         for parent_term, children in self.hierarchies.items():
             # Word boundary matching: term must be a complete word in the parent
             if re.search(rf'\b{re.escape(term)}\b', parent_term):
-                matches.update(children)
+                parent_lower = parent_term.lower()
 
-        # Search in relationships
+                # Check if this is a priority hierarchy
+                if any(kw in parent_lower for kw in priority_keywords):
+                    priority_matches.update(children)
+                # Check if this is a category hierarchy
+                elif any(kw in parent_lower for kw in category_keywords):
+                    category_matches.update(children)
+                else:
+                    other_matches.update(children)
+
+        # Search in relationships and synonyms (add to 'other')
         for parent_term, related_terms in self.relationships.items():
             if re.search(rf'\b{re.escape(term)}\b', parent_term):
-                matches.update(related_terms)
+                other_matches.update(related_terms)
 
-        # Search in synonyms
         for key_term, synonym_set in self.synonyms.items():
             if re.search(rf'\b{re.escape(term)}\b', key_term):
-                matches.update(synonym_set)
+                other_matches.update(synonym_set)
 
-        return matches
+        return {
+            'priority': priority_matches,
+            'category': category_matches,
+            'other': other_matches
+        }
 
     def save_taxonomy(self, filepath: str):
         """Save complete taxonomy to JSON."""
