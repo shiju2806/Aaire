@@ -86,7 +86,15 @@ class CitationAnalyzer:
             top_doc = retrieved_docs[0]
             # Enhanced filename extraction with better fallback handling
             metadata = top_doc.get('metadata', {})
-            filename = (metadata.get('title') or
+
+            # Get title but skip if it's "unknown" or empty
+            title = metadata.get('title', '')
+            if title and title.lower() != 'unknown':
+                title_to_use = title
+            else:
+                title_to_use = None  # Will fall through to filename
+
+            filename = (title_to_use or
                        metadata.get('filename') or
                        metadata.get('source_document') or
                        metadata.get('file_name') or
@@ -247,7 +255,15 @@ class CitationAnalyzer:
 
             # Enhanced filename extraction with logging
             metadata = doc.get('metadata', {})
-            filename = (metadata.get('title') or
+
+            # Get title but skip if it's "unknown" or empty
+            title = metadata.get('title', '')
+            if title and title.lower() != 'unknown':
+                title_to_use = title
+            else:
+                title_to_use = None  # Will fall through to filename
+
+            filename = (title_to_use or
                        metadata.get('filename') or
                        metadata.get('source_document') or
                        metadata.get('file_name') or

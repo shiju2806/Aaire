@@ -30,8 +30,8 @@ compliance_rules:
 chunking_strategies:
   default:
     type: "hierarchical"
-    chunk_size: 1024
-    overlap: 150
+    chunk_size: 1800  # tokens (~7200 characters)
+    overlap: 250      # tokens (~1000 characters)
     preserve: ["headers", "lists", "tables"]
     
   table_aware:

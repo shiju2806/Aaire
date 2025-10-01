@@ -122,18 +122,47 @@ Use appropriate headings and structure the information clearly."""
         return response.text.strip()
 
     def generate_enhanced_single_pass(self, query: str, documents: List[Dict], conversation_context: str, taxonomy_terms: Optional[List[str]] = None) -> str:
-        """Two-stage response generation: Extract technical content, then synthesize structured response"""
-        logger.info(f"🔬 Starting two-stage response generation for query: '{query[:60]}...'")
+        """Direct single-pass response generation"""
+        logger.info(f"📝 Starting direct response generation for query: '{query[:60]}...'")
 
-        # Stage 1: Extract and resolve technical content
-        extracted_content = self._extract_technical_content(query, documents, taxonomy_terms)
-        logger.info(f"✅ Stage 1 complete: Extracted {len(extracted_content)} characters of technical content")
+        # Format documents for context
+        context = "\n\n".join([doc['content'] for doc in documents])
 
-        # Stage 2: Synthesize structured response from extracted facts
-        final_response = self._synthesize_structured_response(query, extracted_content, conversation_context)
-        logger.info(f"✅ Stage 2 complete: Generated {len(final_response)} character response")
+        # Build taxonomy context if available
+        taxonomy_context = ""
+        if taxonomy_terms:
+            taxonomy_context = f"\n\nKey domain concepts identified: {', '.join(taxonomy_terms)}"
 
-        return final_response
+        # Get calculation instructions from config
+        calc_config = self.config.get('calculation_config', {})
+        calc_enhancement = ""
+        if calc_config.get('enable_structured_calculations'):
+            calc_enhancement = f"\n\n{calc_config.get('calculation_instructions', '')}"
+
+        prompt = f"""You are AAIRE, an expert in insurance accounting and actuarial matters.
+{conversation_context}
+
+USER QUERY: {query}{taxonomy_context}
+
+RELEVANT DOCUMENTATION:
+{context}
+
+INSTRUCTIONS:
+- Define and explain ALL key domain concepts identified above that appear in the documentation
+- Focus on calculation methodologies, formulas, and step-by-step procedures
+- Provide definitions and explanations WITHOUT numerical examples unless specifically requested
+- Show complete formulas with all variables defined
+- Use parameters and specifications from the documentation
+- Format with clear sections using ## headers
+- NEVER reference section numbers without expanding the actual content{calc_enhancement}
+
+RESPONSE:"""
+
+        response = self.llm.complete(prompt)
+        result = response.text.strip()
+        logger.info(f"✅ Generated {len(result)} character response")
+
+        return result
 
     def _extract_technical_content(self, query: str, documents: List[Dict], taxonomy_terms: Optional[List[str]] = None) -> str:
         """Stage 1: Extract technical content and resolve references dynamically"""
@@ -155,32 +184,48 @@ USER QUERY: {query}{taxonomy_context}
 YOUR TASK: Extract ONLY technical content directly relevant to answering this query.
 
 WHAT TO EXTRACT:
-1. Mathematical formulas with ALL variables defined
+1. Reserve components and calculation methodologies
+   - ALWAYS include: NPR (Net Premium Reserve), DR (Deterministic Reserve), SR (Stochastic Reserve)
+   - ANY reserve-related formulas, definitions, or methodologies
+   - All calculation components for reserves
+
+2. Mathematical formulas with ALL variables defined
    - If a formula uses undefined variables (A, B, X, Y, etc.), search ALL chunks for their definitions
    - Assemble complete formulas by combining fragments from different chunks
+   - NEVER reference sections - expand formulas with actual content
 
-2. Step-by-step calculation procedures
+3. Step-by-step calculation procedures
    - Numbered steps with specific instructions
    - Methodologies and algorithms
 
-3. Specific numerical thresholds, parameters, and constants
+4. Specific numerical thresholds, parameters, and constants
    - Exact values, percentages, multipliers
 
-4. Regulatory references and citations
+5. Regulatory references and citations
    - Standards, sections, articles (any pattern: "Section X.Y.Z", "VM-XX", "IFRS XX", etc.)
 
-5. Technical requirements and conditions
+6. Technical requirements and conditions
    - "When X, then Y" rules
    - Conditional logic and decision criteria
 
-WHAT TO EXCLUDE:
-1. Introductory/background paragraphs
-   - Content that starts with "is defined as", "refers to", "can be classified as"
-   - Historical context or general explanations
+CONTEXT-AWARE FILTERING:
+1. If query asks about reserves/calculations/accounting:
+   - INCLUDE: All reserve components (NPR, DR, SR, etc.)
+   - EXCLUDE: Definitions of insurance product types (term life, whole life, universal life, etc.) UNLESS explicitly asked
 
-2. Content unrelated to the query
-   - Information about different topics/domains
-   - Tangential background information
+2. If query explicitly asks for a product definition (e.g., "define term life", "what is whole life"):
+   - INCLUDE: That specific product definition
+
+WHAT TO ALWAYS EXCLUDE:
+1. Section references without actual content
+   - "See Section 3.4.2" → Replace with actual formula/content from that section
+   - "Refer to Appendix Y" → Find and include the actual content
+
+2. Definitions of insurance product types UNLESS:
+   - Query directly asks for them (e.g., "define term life")
+   - They are essential to understanding the reserve calculation
+
+3. Historical context or general background information
 
 REFERENCE RESOLUTION:
 When you encounter references like:
@@ -232,9 +277,18 @@ YOUR TASK: Using ONLY the extracted facts above, create a concise, highly techni
 CONTENT RULES:
 1. Be maximally concise - assume expert audience
 2. No introductory paragraphs or background context
-3. No basic definitions unless specifically asked
-4. Focus on actionable technical content: formulas, procedures, parameters
-5. If facts reference multiple approaches/methods, present all of them clearly
+3. Focus on actionable technical content: formulas, procedures, parameters
+4. If facts reference multiple approaches/methods, present all of them clearly
+
+CRITICAL - Reserve Components:
+- ALWAYS include ALL reserve types mentioned in extracted facts (NPR, DR, SR, etc.)
+- These are NOT "basic definitions" - they are essential calculation components
+- If the query asks about reserves, include complete methodology covering all reserve types
+
+CONTEXT-AWARE FILTERING:
+- If query asks about reserves/calculations: Include all reserve components, skip insurance product definitions
+- If query explicitly asks for a product definition: Include that specific definition
+- Always expand formulas completely - never reference section numbers
 
 STRUCTURE RULES:
 Organize the response using this pattern (adapt based on content):
