@@ -121,6 +121,109 @@ Use appropriate headings and structure the information clearly."""
         response = self.llm.complete(prompt)
         return response.text.strip()
 
+    def _get_term_variations(self, term: str) -> List[str]:
+        """
+        Generate search variants for a term (full form + acronym).
+        Query-agnostic: works for any domain term.
+        """
+        words = term.split()
+
+        # Filter out common words
+        common_words = ['the', 'of', 'for', 'and', 'in', 'a', 'an', 'on', 'at', 'to', 'from', 'with']
+        significant_words = [w for w in words if w.lower() not in common_words]
+
+        variants = [term.lower()]  # Always include original term
+
+        # Generate acronym if 2+ significant words
+        if len(significant_words) >= 2:
+            acronym = ''.join([w[0] for w in significant_words]).lower()
+            variants.append(acronym)
+
+        return variants
+
+    def _assess_content_coverage(self, query: str, taxonomy_terms: List[str], retrieved_docs: List[Dict]) -> tuple:
+        """
+        Assess if retrieved content covers the specific query terms.
+        Returns (coverage_score, matched_chunks, content_qualifier)
+        """
+        if not taxonomy_terms or not retrieved_docs:
+            return (1.0, len(retrieved_docs), "")
+
+        # Identify product/entity-specific terms from taxonomy
+        # These are the terms we need to check coverage for
+        product_keywords = [
+            'whole life', 'universal life', 'term life', 'variable life', 'indexed universal',
+            'ifrs 17', 'ifrs 9', 'asc 944', 'ldti', 'licat', 'rbc',
+            'gaap', 'statutory', 'usstat'
+        ]
+
+        product_terms = []
+        for term in taxonomy_terms:
+            term_lower = term.lower()
+            # Check if this taxonomy term is a product/framework-specific term
+            if any(keyword in term_lower for keyword in product_keywords):
+                product_terms.append(term)
+
+        # If no specific product terms identified, assume high coverage (general query)
+        if not product_terms:
+            logger.info("ℹ️ No product-specific terms identified - treating as general query")
+            return (1.0, len(retrieved_docs), "")
+
+        # Check how many chunks mention the specific product terms (with acronym support)
+        total_chunks = len(retrieved_docs)
+        chunks_with_product_mention = 0
+
+        for doc in retrieved_docs:
+            chunk_text = doc.get('content', '').lower()
+            # Check if ANY of the product terms (or their acronyms) appear in this chunk
+            for term in product_terms:
+                variants = self._get_term_variations(term)  # Get full form + acronym
+                if any(variant in chunk_text for variant in variants):
+                    chunks_with_product_mention += 1
+                    break  # Count each chunk only once
+
+        coverage_score = chunks_with_product_mention / total_chunks if total_chunks > 0 else 0.0
+
+        logger.info(f"📊 Content coverage: {coverage_score:.1%} ({chunks_with_product_mention}/{total_chunks} chunks mention {product_terms})")
+
+        # Generate content qualifier based on coverage
+        content_qualifier = ""
+        if coverage_score >= 0.3:
+            # High confidence - no qualifier needed
+            pass
+        elif coverage_score >= 0.1:
+            # Medium confidence - soft qualification
+            terms_str = ', '.join(product_terms)
+            content_qualifier = f"\n\nIMPORTANT: Add this note at the START of your response: 'Note: The available documentation has limited specific content on {terms_str}. The following response is based on general principles that may apply.'\n"
+        else:
+            # Low confidence - clear disclaimer
+            terms_str = ', '.join(product_terms)
+            content_qualifier = f"\n\nIMPORTANT: Add this disclaimer at the START of your response: 'The available documentation does not contain specific guidance on {terms_str}. However, here is the general approach for similar products/standards:'\n"
+
+        return (coverage_score, chunks_with_product_mention, content_qualifier)
+
+    def _extract_taxonomy_from_chunks(self, documents: List[Dict]) -> List[str]:
+        """
+        Extract acronyms/terms from retrieved chunks for taxonomy reference.
+        This is done POST-retrieval to avoid biasing retrieval toward wrong documents.
+        """
+        if not self.query_analyzer or not hasattr(self.query_analyzer, 'taxonomy_extractor'):
+            return []
+
+        taxonomy_extractor = self.query_analyzer.taxonomy_extractor
+        all_text = " ".join([doc.get('content', '') for doc in documents])
+        found_terms = []
+
+        # Find acronyms that exist in taxonomy AND appear in retrieved chunks
+        import re
+        for acronym, full_form in taxonomy_extractor.acronyms.items():
+            # Look for acronym as standalone word (case-insensitive)
+            if re.search(r'\b' + re.escape(acronym) + r'\b', all_text, re.IGNORECASE):
+                found_terms.append(acronym.upper())
+
+        logger.info(f"📚 Extracted {len(found_terms)} taxonomy terms from retrieved chunks: {found_terms[:10]}")
+        return found_terms[:15]  # Limit to prevent prompt bloat
+
     def generate_enhanced_single_pass(self, query: str, documents: List[Dict], conversation_context: str, taxonomy_terms: Optional[List[str]] = None) -> str:
         """Direct single-pass response generation"""
         logger.info(f"📝 Starting direct response generation for query: '{query[:60]}...'")
@@ -128,10 +231,38 @@ Use appropriate headings and structure the information clearly."""
         # Format documents for context
         context = "\n\n".join([doc['content'] for doc in documents])
 
+        # Extract taxonomy from retrieved chunks (post-retrieval, no retrieval bias)
+        extracted_taxonomy = self._extract_taxonomy_from_chunks(documents)
+
+        # Use extracted taxonomy instead of query-based taxonomy
+        # This ensures we only reference terms that actually appear in the retrieved content
+        taxonomy_terms = extracted_taxonomy
+
+        # Assess content coverage if taxonomy terms available
+        content_qualifier = ""
+        if taxonomy_terms:
+            coverage_score, matched_chunks, content_qualifier = self._assess_content_coverage(
+                query, taxonomy_terms, documents
+            )
+
         # Build taxonomy context if available
         taxonomy_context = ""
         if taxonomy_terms:
-            taxonomy_context = f"\n\nKey domain concepts identified: {', '.join(taxonomy_terms)}"
+            # Format taxonomy terms with full expansions where available
+            formatted_terms = []
+            taxonomy_extractor = None
+            if self.query_analyzer and hasattr(self.query_analyzer, 'taxonomy_extractor'):
+                taxonomy_extractor = self.query_analyzer.taxonomy_extractor
+
+            for term in taxonomy_terms:
+                term_lower = term.lower()
+                # If it's an acronym and we have the taxonomy extractor, include the full form
+                if taxonomy_extractor and term_lower in taxonomy_extractor.acronyms:
+                    full_form = taxonomy_extractor.acronyms[term_lower]
+                    formatted_terms.append(f"{term.upper()} ({full_form})")
+                else:
+                    formatted_terms.append(term)
+            taxonomy_context = f"\n\nAcronyms found in retrieved documents: {', '.join(formatted_terms)}"
 
         # Get calculation instructions from config
         calc_config = self.config.get('calculation_config', {})
@@ -148,13 +279,21 @@ RELEVANT DOCUMENTATION:
 {context}
 
 INSTRUCTIONS:
-- Define and explain ALL key domain concepts identified above that appear in the documentation
-- Focus on calculation methodologies, formulas, and step-by-step procedures
-- Provide definitions and explanations WITHOUT numerical examples unless specifically requested
-- Show complete formulas with all variables defined
-- Use parameters and specifications from the documentation
-- Format with clear sections using ## headers
-- NEVER reference section numbers without expanding the actual content{calc_enhancement}
+1. Answer the user's query comprehensively based on ALL relevant content in the retrieved documentation
+2. The domain terms provided are context for understanding technical terminology
+3. BE COMPREHENSIVE: If multiple components, methods, or approaches are discussed in the retrieved documents, include ALL of them
+   - Example: If documents discuss NPR, DR, and SR for reserves - include ALL THREE in your response
+   - Example: If documents discuss multiple capital ratios - include ALL of them
+4. Include ALL relevant formulas, definitions, calculation methodologies, and step-by-step procedures from the documentation
+5. Provide definitions and explanations WITHOUT numerical examples unless specifically requested
+6. Format with clear sections using ## headers
+7. Organize related concepts together (e.g., group all reserve components under "Reserve Components")
+
+IMPORTANT COMPREHENSIVENESS RULES:
+1. DO NOT omit components or concepts that appear in the retrieved documentation just because they seem secondary
+2. If the documents discuss multiple approaches/methods/components, explain ALL of them
+3. DO NOT include duplicate sections
+4. DO NOT include unrelated topics (e.g., if query is about "reserves", don't discuss "underwriting"){calc_enhancement}{content_qualifier}
 
 RESPONSE:"""
 

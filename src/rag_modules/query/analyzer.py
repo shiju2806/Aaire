@@ -391,26 +391,31 @@ Be comprehensive but focus ONLY on terms explicitly relevant to this specific qu
                     terms = line.replace('ALTERNATE_PHRASES:', '').strip()
                     enhancements['alternate_phrases'] = [t.strip() for t in terms.split(',') if t.strip()]
 
-            # Add taxonomy-based expansion (NO hardcoding!)
-            if self.taxonomy_extractor:
-                logger.info("🔍 Enhancing with extracted domain taxonomy...")
-                taxonomy_terms = self._expand_with_taxonomy(query, enhancements)
-                if taxonomy_terms:
-                    enhancements['taxonomy_expansion'] = taxonomy_terms
-                    logger.info(f"✅ Added {len(taxonomy_terms)} terms from taxonomy")
-                    logger.info(f"📚 Taxonomy terms: {taxonomy_terms[:10]}")  # Show first 10
+            # Taxonomy extraction moved to post-retrieval in generation.py
+            # This prevents taxonomy from biasing retrieval toward wrong documents
+            # if self.taxonomy_extractor:
+            #     logger.info("🔍 Enhancing with extracted domain taxonomy...")
+            #     taxonomy_terms = self._expand_with_taxonomy(query, enhancements)
+            #     if taxonomy_terms:
+            #         enhancements['taxonomy_expansion'] = taxonomy_terms
+            #         logger.info(f"✅ Added {len(taxonomy_terms)} terms from taxonomy")
+            #         logger.info(f"📚 Taxonomy terms: {taxonomy_terms[:10]}")
 
-            # Build comprehensive search terms
+            # Build comprehensive search terms (excluding taxonomy to avoid retrieval bias)
             all_enhancements = []
             for category, terms in enhancements.items():
-                all_enhancements.extend(terms)
+                if category != 'taxonomy_expansion':  # Skip taxonomy for retrieval
+                    all_enhancements.extend(terms)
 
-            # Create enhanced query
+            # Create enhanced query with weighted original terms
             enhanced_query = query
             if all_enhancements:
                 # Add the most relevant enhancement terms (limit to avoid over-expansion)
                 top_enhancements = all_enhancements[:20]  # Increased from 15 to 20
-                enhanced_query = f"{query} {' '.join(top_enhancements)}"
+                # Weight original query terms higher by repeating 5x before taxonomy expansion
+                # Strong BM25 boosting to prioritize exact query matches (e.g., "whole life" over semantically similar "universal life")
+                # This prevents retrieving documents just because they are semantically similar
+                enhanced_query = f"{' '.join([query] * 5)} {' '.join(top_enhancements)}"
 
             logger.info("✨ Query semantically enhanced",
                        original_query=query,

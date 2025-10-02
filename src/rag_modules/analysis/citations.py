@@ -8,6 +8,8 @@ import re
 import json
 import structlog
 from difflib import SequenceMatcher
+import asyncio
+from llama_index.llms.openai import OpenAI
 
 logger = structlog.get_logger()
 
@@ -17,6 +19,128 @@ class CitationAnalyzer:
     Analyzes retrieved documents to determine citation information
     and assess document usage in generated responses.
     """
+
+    async def analyze_document_usage_with_llm(self, retrieved_docs: List[Dict], response: str, query: str) -> List[Dict]:
+        """
+        Use LLM to analyze which retrieved documents were actually used to generate the response.
+        Returns list of documents identified as actually used by the LLM.
+        """
+        if not retrieved_docs or not response:
+            return []
+
+        logger.info(f"🤖 LLM-BASED CITATION ANALYSIS: Analyzing {len(retrieved_docs)} documents against response")
+
+        # Prepare document summaries for LLM analysis
+        doc_summaries = []
+        for i, doc in enumerate(retrieved_docs[:10]):  # Limit to top 10 for LLM analysis
+            metadata = doc.get('metadata', {})
+
+            # Get title but skip if it's "unknown" or empty
+            title = metadata.get('title', '')
+            if title and title.lower() != 'unknown':
+                title_to_use = title
+            else:
+                title_to_use = None
+
+            filename = (
+                title_to_use or
+                metadata.get('filename') or
+                metadata.get('source_document') or
+                metadata.get('file_name') or
+                metadata.get('source') or
+                metadata.get('document_name') or
+                metadata.get('name') or
+                doc.get('filename') or
+                doc.get('title') or
+                doc.get('source') or
+                doc.get('document_name') or
+                f'Document_{i+1}'
+            )
+
+            content_preview = self.extract_document_content(doc)[:500]  # First 500 chars
+            doc_summaries.append({
+                'index': i + 1,
+                'filename': filename,
+                'content_preview': content_preview,
+                'full_doc': doc
+            })
+
+        # Create LLM prompt for usage analysis
+        prompt = f"""You are analyzing which documents were actually used to generate a response to a user query.
+
+USER QUERY: {query}
+
+GENERATED RESPONSE:
+{response}
+
+AVAILABLE DOCUMENTS:
+"""
+
+        for doc_summary in doc_summaries:
+            prompt += f"""
+Document {doc_summary['index']}: {doc_summary['filename']}
+Content preview: {doc_summary['content_preview']}
+
+"""
+
+        prompt += """
+ANALYSIS TASK:
+Please analyze the generated response and determine which documents were actually used to create the content. Look for:
+1. Direct content matches or paraphrases
+2. Specific information that could only come from certain documents
+3. Concepts, terms, or data points mentioned in the response
+
+IMPORTANT: Only identify documents that were clearly used. If the response contains general information that doesn't clearly come from the documents, or if the response states insufficient information, return fewer or no documents.
+
+RESPOND WITH ONLY THE DOCUMENT NUMBERS (comma-separated), or 'NONE' if no documents were clearly used.
+Example responses:
+- "1,3,5" (if documents 1, 3, and 5 were used)
+- "2" (if only document 2 was used)
+- "NONE" (if no documents were clearly used)
+
+Your response:"""
+
+        try:
+            # Use LLM to analyze document usage
+            llm = OpenAI(model="gpt-4o-mini", temperature=0)
+            llm_response = await llm.acomplete(prompt)
+            usage_analysis = llm_response.text.strip().upper()
+
+            logger.info(f"🤖 LLM Usage Analysis Result: '{usage_analysis}'")
+
+            # Parse LLM response
+            used_docs = []
+            if usage_analysis != 'NONE' and usage_analysis:
+                try:
+                    # Extract document indices
+                    if ',' in usage_analysis:
+                        doc_indices = [int(idx.strip()) for idx in usage_analysis.split(',') if idx.strip().isdigit()]
+                    else:
+                        doc_indices = [int(usage_analysis)] if usage_analysis.isdigit() else []
+
+                    # Get corresponding documents
+                    for idx in doc_indices:
+                        if 1 <= idx <= len(doc_summaries):
+                            used_docs.append(doc_summaries[idx - 1]['full_doc'])
+                            logger.info(f"✅ LLM identified document {idx} ({doc_summaries[idx - 1]['filename']}) as used")
+
+                except (ValueError, IndexError) as e:
+                    logger.warning(f"⚠️ Error parsing LLM response '{usage_analysis}': {e}")
+
+            if not used_docs:
+                logger.info(f"🤖 LLM Analysis: No documents identified as clearly used")
+            else:
+                logger.info(f"🤖 LLM Analysis: {len(used_docs)} documents identified as used")
+
+            return used_docs
+
+        except Exception as e:
+            logger.error(f"❌ Error in LLM usage analysis: {e}")
+            # Fallback to top document if LLM analysis fails
+            if retrieved_docs:
+                logger.info(f"🔄 Falling back to top retrieved document")
+                return [retrieved_docs[0]]
+            return []
 
     def extract_document_content(self, doc: Dict[str, Any]) -> str:
         """
@@ -127,14 +251,40 @@ class CitationAnalyzer:
             })
             return citations
 
-        logger.info(f"🎯 INTELLIGENT CITATION ANALYSIS: Analyzing response against {len(retrieved_docs)} documents")
+        logger.info(f"🎯 LLM CITATION ANALYSIS: Analyzing response against {len(retrieved_docs)} documents")
 
-        # Analyze which documents were actually used in the response
-        used_docs = self.analyze_document_usage_in_response(retrieved_docs, response, query)
+        # Use LLM to analyze which documents were actually used in the response
+        # Run async method in sync context
+        used_docs = []
+        try:
+            # Try to get or create event loop
+            try:
+                loop = asyncio.get_running_loop()
+                # If we're in an async context, we can't use run_until_complete
+                # We need to create a new loop in a thread
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(
+                        lambda: asyncio.run(self.analyze_document_usage_with_llm(retrieved_docs, response, query))
+                    )
+                    used_docs = future.result(timeout=30)
+            except RuntimeError:
+                # No running loop, we can create one
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                used_docs = loop.run_until_complete(
+                    self.analyze_document_usage_with_llm(retrieved_docs, response, query)
+                )
+                loop.close()
+        except Exception as e:
+            logger.error(f"❌ Error in LLM citation analysis: {e}")
+            # Fallback: use top 3 documents
+            logger.info("🔄 Falling back to top 3 retrieved documents")
+            used_docs = retrieved_docs[:3]
 
-        logger.info(f"📋 Analysis result: {len(used_docs)} documents determined to be used in response")
+        logger.info(f"📋 LLM Analysis result: {len(used_docs)} documents determined to be used in response")
 
-        for i, (doc, usage_score) in enumerate(used_docs):
+        for i, doc in enumerate(used_docs):
             relevance_score = doc.get('relevance_score', doc.get('score', 0.0))
 
             # Enhanced filename extraction with better fallback handling
