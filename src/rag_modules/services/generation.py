@@ -17,6 +17,43 @@ from openai import AsyncOpenAI
 
 logger = structlog.get_logger()
 
+# Centralized system prompt with scope boundaries
+AAIRE_SYSTEM_PROMPT = """You are AAIRE (Accounting & Actuarial Insurance Resource Expert), a specialized AI assistant.
+
+YOUR EXPERTISE:
+- Insurance accounting, policies, regulations, and operations
+- Actuarial science, calculations, and risk assessment
+- Financial reporting (GAAP, IFRS, SAP, and insurance-specific standards)
+- Legal and regulatory compliance for insurance and financial services
+- Investment strategies and portfolio management (especially for insurance companies)
+- General accounting, finance, and business topics
+- Risk management and financial analysis
+- Economics, tax, and corporate finance
+
+SCOPE BOUNDARIES - IMPORTANT:
+Before answering any question, assess if it relates to business/finance/professional topics:
+- ✓ ANSWER: Questions about business, finance, accounting, insurance, law, investments, economics, taxes, regulations, or other professional topics
+- ✗ DECLINE: Questions about personal lifestyle (food, entertainment, travel, sports, health, relationships, hobbies, etc.)
+
+For off-topic questions, respond politely:
+"I'm AAIRE, your insurance and finance expert. I focus on business, accounting, legal, financial, and professional topics. I can't help with [topic]. Please ask about insurance, finance, accounting, or related business matters instead."
+
+DOCUMENT HIERARCHY RULES - CRITICAL:
+When the retrieved documents contain conflicting information, apply these rules to determine which source is authoritative:
+
+1. **Regulatory Updates/Notices/Amendments** always supersede base guidelines and earlier versions
+2. **Newer effective dates** supersede older dates (e.g., 2025 edition supersedes 2024)
+3. **Explicitly stated changes** (e.g., "removes the 5% limit", "updates section 10.2") are authoritative
+4. **Specific amendments** override the original text they reference
+
+When you detect conflicting information:
+- Clearly state: "Note: The retrieved documents contain conflicting information about [topic]"
+- Explain which source is authoritative based on the hierarchy rules above
+- Provide the current/correct answer from the most authoritative source
+- Cite BOTH sources, noting which is superseded (e.g., "Regulatory Notice 2025 supersedes the 2024 LICAT Guideline on this point")
+
+When answering in-scope questions, provide accurate, thorough, and well-structured responses based on established standards and best practices."""
+
 
 class ResponseGenerator:
     """Handles response generation with various processing modes"""
@@ -41,9 +78,14 @@ class ResponseGenerator:
         user_context: Optional[Dict[str, Any]] = None,
         conversation_history: Optional[List[Dict]] = None,
         session_id: Optional[str] = None,
-        taxonomy_terms: Optional[List[str]] = None
-    ) -> str:
-        """Generate response using retrieved documents and conversation context"""
+        taxonomy_terms: Optional[List[str]] = None,
+        stream: bool = False
+    ):
+        """Generate response using retrieved documents and conversation context
+
+        Args:
+            stream: If True, returns an async generator that yields response chunks
+        """
 
         # Build conversation context using memory manager
         conversation_context = ""
@@ -58,7 +100,12 @@ class ResponseGenerator:
             topic_check = await self.query_analyzer.classify_query_topic(query)
             if not topic_check['is_relevant']:
                 logger.info(f"❌ General knowledge request rejected as off-topic: '{query[:50]}...'")
-                return topic_check['polite_response']
+                if stream:
+                    async def single_yield():
+                        yield topic_check['polite_response']
+                    return single_yield()
+                else:
+                    return topic_check['polite_response']
 
             # Query is relevant, provide general knowledge response
             # Check if this is a calculation request
@@ -67,8 +114,7 @@ class ResponseGenerator:
             if calc_config.get('enable_structured_calculations') and any(kw in query.lower() for kw in ['calculate', 'amortization', 'schedule', 'table', 'payment', 'journal']):
                 calc_enhancement = f"\n\nCalculation Instructions:\n{calc_config.get('calculation_instructions', '')}"
 
-            prompt = f"""You are AAIRE, an expert in insurance accounting and actuarial matters.
-You provide accurate information based on US GAAP, IFRS, and general accounting principles.
+            prompt = f"""{AAIRE_SYSTEM_PROMPT}
 {conversation_context}
 Current User Question: {query}
 
@@ -87,28 +133,47 @@ Instructions:
 - Make it clear this is general knowledge, not company-specific information
 
 Response:"""
+
+            if stream:
+                # Stream general knowledge response
+                async def stream_general():
+                    stream_obj = await self.async_client.chat.completions.create(
+                        model=self.actual_model,
+                        messages=[{"role": "user", "content": prompt}],
+                        temperature=0.1,
+                        max_tokens=8000,
+                        stream=True
+                    )
+                    async for chunk in stream_obj:
+                        if chunk.choices[0].delta.content:
+                            yield chunk.choices[0].delta.content
+                return stream_general()
+            else:
+                response = self.llm.complete(prompt)
+                return response.text.strip()
         else:
             # Use dynamic chunked processing for all non-general queries
-            return await self.process_with_chunked_enhancement(query, retrieved_docs, conversation_context, taxonomy_terms)
+            return await self.process_with_chunked_enhancement(query, retrieved_docs, conversation_context, taxonomy_terms, stream=stream)
 
-        # General knowledge response
-        response = self.llm.complete(prompt)
-        return response.text.strip()
-
-    async def process_with_chunked_enhancement(self, query: str, retrieved_docs: List[Dict], conversation_context: str, taxonomy_terms: Optional[List[str]] = None) -> str:
+    async def process_with_chunked_enhancement(self, query: str, retrieved_docs: List[Dict], conversation_context: str, taxonomy_terms: Optional[List[str]] = None, stream: bool = False):
         """Process documents with streamlined approach that respects BM25 rankings"""
         logger.info(f"📄 Processing {len(retrieved_docs)} documents with streamlined single-pass approach")
 
         # Always use the enhanced single-pass approach to respect BM25 rankings
         # This eliminates semantic grouping that fights against relevance scores
         logger.info("📋 Using optimized single-pass approach (respects BM25/vector rankings)")
-        return self.generate_enhanced_single_pass(query, retrieved_docs, conversation_context, taxonomy_terms)
+
+        if stream:
+            # Return async generator for streaming
+            return self.generate_enhanced_single_pass_streaming(query, retrieved_docs, conversation_context, taxonomy_terms)
+        else:
+            return self.generate_enhanced_single_pass(query, retrieved_docs, conversation_context, taxonomy_terms)
 
     def generate_organizational_response(self, query: str, documents: List[Dict], conversation_context: str) -> str:
         """Generate response for organizational structure queries"""
         context = "\n\n".join([doc['content'] for doc in documents])
 
-        prompt = f"""You are AAIRE, an expert in insurance accounting and actuarial matters.
+        prompt = f"""{AAIRE_SYSTEM_PROMPT}
 {conversation_context}
 Question: {query}
 
@@ -228,8 +293,22 @@ Use appropriate headings and structure the information clearly."""
         """Direct single-pass response generation"""
         logger.info(f"📝 Starting direct response generation for query: '{query[:60]}...'")
 
-        # Format documents for context
-        context = "\n\n".join([doc['content'] for doc in documents])
+        # Format documents for context with metadata headers for temporal hierarchy
+        context_parts = []
+        for i, doc in enumerate(documents):
+            metadata = doc.get('metadata', {})
+
+            # Extract document title
+            title = metadata.get('title', f'Document {i+1}')
+
+            # Extract upload date if available
+            upload_date = metadata.get('upload_date', metadata.get('uploaded_at', 'Unknown date'))
+
+            # Format header with document metadata
+            header = f"--- Document {i+1}: {title} (Uploaded: {upload_date}) ---"
+            context_parts.append(f"{header}\n{doc['content']}")
+
+        context = "\n\n".join(context_parts)
 
         # Extract taxonomy from retrieved chunks (post-retrieval, no retrieval bias)
         extracted_taxonomy = self._extract_taxonomy_from_chunks(documents)
@@ -270,7 +349,7 @@ Use appropriate headings and structure the information clearly."""
         if calc_config.get('enable_structured_calculations'):
             calc_enhancement = f"\n\n{calc_config.get('calculation_instructions', '')}"
 
-        prompt = f"""You are AAIRE, an expert in insurance accounting and actuarial matters.
+        prompt = f"""{AAIRE_SYSTEM_PROMPT}
 {conversation_context}
 
 USER QUERY: {query}{taxonomy_context}
@@ -302,6 +381,106 @@ RESPONSE:"""
         logger.info(f"✅ Generated {len(result)} character response")
 
         return result
+
+    async def generate_enhanced_single_pass_streaming(self, query: str, documents: List[Dict], conversation_context: str, taxonomy_terms: Optional[List[str]] = None):
+        """Direct single-pass response generation with streaming support"""
+        logger.info(f"📝 Starting streaming response generation for query: '{query[:60]}...'")
+
+        # Format documents for context with metadata headers for temporal hierarchy
+        context_parts = []
+        for i, doc in enumerate(documents):
+            metadata = doc.get('metadata', {})
+
+            # Extract document title
+            title = metadata.get('title', f'Document {i+1}')
+
+            # Extract upload date if available
+            upload_date = metadata.get('upload_date', metadata.get('uploaded_at', 'Unknown date'))
+
+            # Format header with document metadata
+            header = f"--- Document {i+1}: {title} (Uploaded: {upload_date}) ---"
+            context_parts.append(f"{header}\n{doc['content']}")
+
+        context = "\n\n".join(context_parts)
+
+        # Extract taxonomy from retrieved chunks
+        extracted_taxonomy = self._extract_taxonomy_from_chunks(documents)
+        taxonomy_terms = extracted_taxonomy
+
+        # Assess content coverage if taxonomy terms available
+        content_qualifier = ""
+        if taxonomy_terms:
+            coverage_score, matched_chunks, content_qualifier = self._assess_content_coverage(
+                query, taxonomy_terms, documents
+            )
+
+        # Build taxonomy context if available
+        taxonomy_context = ""
+        if taxonomy_terms:
+            formatted_terms = []
+            taxonomy_extractor = None
+            if self.query_analyzer and hasattr(self.query_analyzer, 'taxonomy_extractor'):
+                taxonomy_extractor = self.query_analyzer.taxonomy_extractor
+
+            for term in taxonomy_terms:
+                term_lower = term.lower()
+                if taxonomy_extractor and term_lower in taxonomy_extractor.acronyms:
+                    full_form = taxonomy_extractor.acronyms[term_lower]
+                    formatted_terms.append(f"{term.upper()} ({full_form})")
+                else:
+                    formatted_terms.append(term)
+            taxonomy_context = f"\n\nAcronyms found in retrieved documents: {', '.join(formatted_terms)}"
+
+        # Get calculation instructions from config
+        calc_config = self.config.get('calculation_config', {})
+        calc_enhancement = ""
+        if calc_config.get('enable_structured_calculations'):
+            calc_enhancement = f"\n\n{calc_config.get('calculation_instructions', '')}"
+
+        prompt = f"""{AAIRE_SYSTEM_PROMPT}
+{conversation_context}
+
+USER QUERY: {query}{taxonomy_context}
+
+RELEVANT DOCUMENTATION:
+{context}
+
+INSTRUCTIONS:
+1. Answer the user's query comprehensively based on ALL relevant content in the retrieved documentation
+2. The domain terms provided are context for understanding technical terminology
+3. BE COMPREHENSIVE: If multiple components, methods, or approaches are discussed in the retrieved documents, include ALL of them
+   - Example: If documents discuss NPR, DR, and SR for reserves - include ALL THREE in your response
+   - Example: If documents discuss multiple capital ratios - include ALL of them
+4. Include ALL relevant formulas, definitions, calculation methodologies, and step-by-step procedures from the documentation
+5. Provide definitions and explanations WITHOUT numerical examples unless specifically requested
+6. Format with clear sections using ## headers
+7. Organize related concepts together (e.g., group all reserve components under "Reserve Components")
+
+IMPORTANT COMPREHENSIVENESS RULES:
+1. DO NOT omit components or concepts that appear in the retrieved documentation just because they seem secondary
+2. If the documents discuss multiple approaches/methods/components, explain ALL of them
+3. DO NOT include duplicate sections
+4. DO NOT include unrelated topics (e.g., if query is about "reserves", don't discuss "underwriting"){calc_enhancement}{content_qualifier}
+
+RESPONSE:"""
+
+        # Stream response using AsyncOpenAI
+        stream = await self.async_client.chat.completions.create(
+            model=self.actual_model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0,
+            max_tokens=8000,
+            stream=True
+        )
+
+        full_response = ""
+        async for chunk in stream:
+            if chunk.choices[0].delta.content:
+                content = chunk.choices[0].delta.content
+                full_response += content
+                yield content
+
+        logger.info(f"✅ Streamed {len(full_response)} character response")
 
     def _extract_technical_content(self, query: str, documents: List[Dict], taxonomy_terms: Optional[List[str]] = None) -> str:
         """Stage 1: Extract technical content and resolve references dynamically"""

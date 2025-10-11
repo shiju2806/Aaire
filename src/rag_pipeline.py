@@ -786,10 +786,131 @@ class RAGPipeline:
                 await self.memory_manager.add_message(session_id, 'assistant', response)
             
             return rag_response
-            
+
         except Exception as e:
             logger.error("Failed to process query", error=str(e), query=query[:100])
             raise
+
+    async def process_query_streaming(
+        self,
+        query: str,
+        filters: Optional[Dict[str, Any]] = None,
+        user_context: Optional[Dict[str, Any]] = None,
+        session_id: Optional[str] = None,
+        conversation_history: Optional[List[Dict]] = None
+    ):
+        """
+        Process a user query with streaming response generation
+        Yields: response chunks, then final metadata
+        """
+        if not session_id:
+            session_id = str(uuid.uuid4())
+
+        # Record user message
+        if self.memory_manager:
+            await self.memory_manager.add_message(session_id, 'user', query)
+
+        try:
+            # Step 1: Retrieve documents (this happens before streaming starts)
+            logger.info("Enhanced query processing started", query=query, session_id=session_id)
+
+            # Topic classification
+            topic_result = await self.query_analyzer.classify_query_topic(query)
+            if not topic_result['is_relevant']:
+                # Yield off-topic response and return
+                yield {"type": "content", "content": topic_result['polite_response']}
+                yield {"type": "done", "session_id": session_id, "citations": [], "confidence": 1.0, "follow_up_questions": []}
+                return
+
+            # Semantic enhancement
+            logger.info("🧠 Starting semantic query enhancement for: '{query[:50]}...'")
+            enhancement_result = await self.query_analyzer.enhance_query_semantically(query)
+            taxonomy_terms = enhancement_result.get('taxonomy_terms', [])
+
+            # Retrieval
+            logger.info("🚀 Query semantically enhanced: {len(enhancement_result.get('key_concepts', []))} concepts added")
+            retrieved_docs = await self.document_retriever.retrieve_documents(query, None, None, filters)
+
+            # Reranking if we have docs
+            if retrieved_docs and self.semantic_similarity_service:
+                logger.info(f"Applying cross-encoder reranking to {len(retrieved_docs)} retrieved documents")
+                retrieved_docs = self.semantic_similarity_service.enhance_retrieval_with_semantic_similarity(
+                    query, retrieved_docs, top_k=None
+                )
+                logger.info(f"Cross-encoder reranking completed, {len(retrieved_docs)} documents reranked")
+
+            logger.info("Found {len(retrieved_docs)} relevant documents for query: '{query[:50]}...'")
+
+            # Step 2: Stream response generation
+            if retrieved_docs:
+                response_stream = await self.response_generator.generate_response(
+                    query, retrieved_docs, user_context, conversation_history, session_id, taxonomy_terms, stream=True
+                )
+
+                full_response = ""
+                async for chunk in response_stream:
+                    full_response += chunk
+                    yield {"type": "content", "content": chunk}
+
+                # Format response
+                response = self.formatting_manager.format_response(full_response)
+
+                # Generate citations and follow-ups
+                citations = self.citation_analyzer.extract_citations(retrieved_docs, query, response)
+                confidence = self.quality_metrics_manager.calculate_confidence(retrieved_docs, response)
+                follow_up_questions = await self.response_generator.generate_follow_up_questions(query, response, retrieved_docs)
+                quality_metrics = self.quality_metrics_manager.calculate_quality_metrics(query, response, retrieved_docs, citations)
+
+                # Record assistant response
+                if self.memory_manager:
+                    await self.memory_manager.add_message(session_id, 'assistant', response)
+
+                # Yield final metadata
+                yield {
+                    "type": "done",
+                    "session_id": session_id,
+                    "citations": citations,  # Pass full citation objects with all metadata
+                    "confidence": confidence,
+                    "follow_up_questions": follow_up_questions,
+                    "quality_metrics": quality_metrics
+                }
+            else:
+                # No documents - use general knowledge
+                is_general_query = self.query_analyzer.is_general_knowledge_query(query)
+                if is_general_query:
+                    response_stream = await self.response_generator.generate_response(
+                        query, [], user_context, conversation_history, session_id, stream=True
+                    )
+
+                    full_response = ""
+                    async for chunk in response_stream:
+                        full_response += chunk
+                        yield {"type": "content", "content": chunk}
+
+                    response = self.formatting_manager.format_response(full_response)
+                    response = self.citation_analyzer.remove_citations_from_response(response)
+
+                    if self.memory_manager:
+                        await self.memory_manager.add_message(session_id, 'assistant', response)
+
+                    yield {
+                        "type": "done",
+                        "session_id": session_id,
+                        "citations": [],
+                        "confidence": 0.3,
+                        "follow_up_questions": [],
+                        "quality_metrics": {}
+                    }
+                else:
+                    error_msg = f"I couldn't find specific information about '{query}' in the uploaded documents."
+                    yield {"type": "content", "content": error_msg}
+                    yield {"type": "done", "session_id": session_id, "citations": [], "confidence": 0.1, "follow_up_questions": []}
+
+        except Exception as e:
+            logger.error("Failed to process streaming query", error=str(e), query=query[:100])
+            yield {"type": "error", "message": "I apologize, but I encountered an error processing your request."}
+            raise
+
     async def _generate_extraction_follow_ups(self, query: str, extraction_result) -> List[str]:
         """Generate relevant follow-up questions for extraction results"""
         try:

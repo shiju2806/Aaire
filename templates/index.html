@@ -1397,6 +1397,10 @@
                     <i class="fas fa-upload"></i>
                     <span>Upload Documents</span>
                 </div>
+                <div class="nav-item" data-section="sec">
+                    <i class="fas fa-building"></i>
+                    <span>SEC Filings</span>
+                </div>
                 <div class="nav-item" data-section="workflows" style="display: none;">
                     <i class="fas fa-route"></i>
                     <span>Workflows</span>
@@ -1561,6 +1565,42 @@
                 </div>
             </div>
 
+            <!-- SEC Filings Section -->
+            <div id="sec-section" class="upload-section" style="display: none;">
+                <div style="max-width: 1200px; margin: 0 auto;">
+                    <h2><i class="fas fa-building"></i> SEC EDGAR Filings</h2>
+                    <p style="color: #666; margin-bottom: 30px;">Search and ingest public company filings into AAIRE's knowledge base</p>
+
+                    <!-- Search Box -->
+                    <div style="background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 20px;">
+                        <div style="display: flex; gap: 10px;">
+                            <input type="text" id="sec-search-input" placeholder="Search company name or ticker (e.g., 'Progressive' or 'PGR')"
+                                   style="flex: 1; padding: 12px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px;">
+                            <button class="btn" onclick="searchSECCompanies()" style="padding: 12px 24px;">
+                                <i class="fas fa-search"></i> Search
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Search Results -->
+                    <div id="sec-search-results" style="display: none; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 20px;">
+                        <h3>Companies Found</h3>
+                        <div id="sec-companies-list"></div>
+                    </div>
+
+                    <!-- Filings List Modal -->
+                    <div id="sec-filings-list" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 10000; padding: 40px; overflow-y: auto;">
+                        <div style="background: white; padding: 30px; border-radius: 12px; max-width: 900px; margin: 0 auto; box-shadow: 0 8px 32px rgba(0,0,0,0.3); position: relative;">
+                            <button onclick="document.getElementById('sec-filings-list').style.display='none'"
+                                    style="position: absolute; top: 20px; right: 20px; background: #e74c3c; color: white; border: none; border-radius: 50%; width: 32px; height: 32px; cursor: pointer; font-size: 18px; display: flex; align-items: center; justify-content: center;">
+                                ×
+                            </button>
+                            <h3 id="sec-filings-title" style="margin-top: 0;">Recent Filings</h3>
+                            <div id="sec-filings-container" style="max-height: 500px; overflow-y: auto; margin-top: 20px;"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
 
             <!-- Workflows Section -->
             <div id="workflows-section" class="workflow-section" style="display: none;">
@@ -1669,6 +1709,6 @@
         </div>
     </div>
 
-    <script src="/static/js/app.js?v=37&t=20250911-consistent-numbering"></script>
+    <script src="/static/js/app.js?v=39&t=20251009-citation-debug"></script>
 </body>
 </html>

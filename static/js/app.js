@@ -268,6 +268,7 @@ class AAIREApp {
         document.getElementById('upload-section').style.display = 'none';
         document.getElementById('workflows-section').style.display = 'none';
         document.getElementById('dashboard-section').style.display = 'none';
+        document.getElementById('sec-section').style.display = 'none';
 
         // Show selected section
         document.getElementById(`${section}-section`).style.display = 
@@ -276,7 +277,8 @@ class AAIREApp {
         // Update header title
         const titles = {
             'chat': 'Welcome to AAIRE',
-            'upload': 'Document Upload'
+            'upload': 'Document Upload',
+            'sec': 'SEC Filings'
         };
         document.getElementById('section-title').textContent = titles[section];
 
@@ -328,11 +330,32 @@ class AAIREApp {
     }
 
     handleWebSocketMessage(data) {
-        if (data.type === 'response') {
+        if (data.type === 'thinking') {
+            // Show thinking indicator
+            this.showTypingIndicator();
+        } else if (data.type === 'stream') {
+            // Handle streaming content chunks
             this.hideTypingIndicator();
-            this.addMessage('assistant', data.message, data.sources, data.followUpQuestions);
+            if (!this.currentStreamingMessage) {
+                // Create new streaming message container
+                this.currentStreamingMessage = this.addStreamingMessage('assistant');
+            }
+            // Append chunk to current message
+            this.appendToStreamingMessage(data.content);
+        } else if (data.type === 'response') {
+            // Final metadata after streaming completes
+            this.hideTypingIndicator();
+            if (this.currentStreamingMessage) {
+                // Finalize the streaming message with citations and follow-ups
+                this.finalizeStreamingMessage(data.sources, data.followUpQuestions);
+                this.currentStreamingMessage = null;
+            } else {
+                // Fallback for non-streaming responses
+                this.addMessage('assistant', data.message, data.sources, data.followUpQuestions);
+            }
         } else if (data.type === 'error') {
             this.hideTypingIndicator();
+            this.currentStreamingMessage = null;
             this.addMessage('error', `Error: ${data.message}`);
         } else if (data.type === 'status') {
             console.log('Status update:', data);
@@ -542,6 +565,92 @@ class AAIREApp {
         return formatted;
     }
     
+    addStreamingMessage(sender) {
+        const messagesContainer = document.getElementById('chat-messages');
+        const messageDiv = document.createElement('div');
+        messageDiv.className = `message ${sender}`;
+        messageDiv.setAttribute('data-streaming', 'true');
+
+        const contentDiv = document.createElement('div');
+        contentDiv.className = 'message-content streaming-content';
+        messageDiv.appendChild(contentDiv);
+
+        messagesContainer.appendChild(messageDiv);
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+
+        return {messageDiv, contentDiv};
+    }
+
+    appendToStreamingMessage(chunk) {
+        if (!this.currentStreamingMessage) return;
+
+        const {contentDiv} = this.currentStreamingMessage;
+        contentDiv.innerHTML += chunk;
+
+        // Auto-scroll to bottom
+        const messagesContainer = document.getElementById('chat-messages');
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    }
+
+    finalizeStreamingMessage(sources, followUpQuestions) {
+        if (!this.currentStreamingMessage) return;
+
+        const {messageDiv, contentDiv} = this.currentStreamingMessage;
+        messageDiv.removeAttribute('data-streaming');
+
+        // Format the final content
+        const rawContent = contentDiv.textContent || contentDiv.innerText;
+        contentDiv.innerHTML = this.formatMessageContent(rawContent);
+
+        // Debug logging for citations
+        console.log('📚 Citation Debug - sources received:', sources);
+        console.log('📚 Citation Debug - sources type:', typeof sources);
+        console.log('📚 Citation Debug - sources length:', sources ? sources.length : 'null/undefined');
+
+        // Add sources if available
+        if (sources && sources.length > 0) {
+            const sourceList = sources.map(source => {
+                if (typeof source === 'string') {
+                    return source.trim();
+                } else if (source && source.source) {
+                    // Backend sends source.source, not source.title
+                    return source.source.trim();
+                } else if (source && source.title) {
+                    return source.title.trim();
+                }
+                return '';
+            }).filter(source => source && source !== '' && source !== 'Unknown Source');
+
+            if (sourceList.length > 0) {
+                const uniqueSources = [...new Set(sourceList)];
+                contentDiv.innerHTML += '<br><br><small><strong>Source:</strong><br>';
+                uniqueSources.forEach(source => {
+                    contentDiv.innerHTML += `• ${source}<br>`;
+                });
+                contentDiv.innerHTML += '</small>';
+            }
+        }
+
+        // Add follow-up questions inside contentDiv instead of messageDiv
+        if (followUpQuestions && followUpQuestions.length > 0) {
+            const followUpDiv = document.createElement('div');
+            followUpDiv.className = 'follow-up-questions';
+            followUpDiv.innerHTML = '<div class="follow-up-title">💡 Suggested follow-up questions:</div>';
+            followUpQuestions.forEach((question) => {
+                followUpDiv.innerHTML += `
+                    <button class="follow-up-btn" onclick="askFollowUpQuestion('${question.replace(/'/g, "\\'")}')">
+                        ${question}
+                    </button>
+                `;
+            });
+            contentDiv.appendChild(followUpDiv);
+        }
+
+        // Final scroll
+        const messagesContainer = document.getElementById('chat-messages');
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    }
+
     addMessage(sender, content, sources = null, followUpQuestions = null) {
         const messagesContainer = document.getElementById('chat-messages');
         const messageDiv = document.createElement('div');
@@ -2483,6 +2592,175 @@ function reportIssue(messageId) {
     }
 
 }
+
+// SEC Filings Functions
+async function searchSECCompanies() {
+    const query = document.getElementById('sec-search-input').value.trim();
+    if (!query) {
+        alert('Please enter a company name or ticker symbol');
+        return;
+    }
+
+    const resultsDiv = document.getElementById('sec-search-results');
+    const companiesList = document.getElementById('sec-companies-list');
+
+    companiesList.innerHTML = '<p style="color: #666;">Searching...</p>';
+    resultsDiv.style.display = 'block';
+
+    try {
+        const response = await fetch(`/api/v1/sec/companies/search?q=${encodeURIComponent(query)}`);
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(data.detail || 'Search failed');
+        }
+
+        if (data.companies && data.companies.length > 0) {
+            companiesList.innerHTML = data.companies.map(company => `
+                <div style="padding: 15px; border: 1px solid #ddd; border-radius: 4px; margin-bottom: 10px; cursor: pointer; transition: background-color 0.2s;"
+                     onmouseover="this.style.backgroundColor='#f5f5f5'"
+                     onmouseout="this.style.backgroundColor='white'"
+                     onclick="loadSECFilings('${company.cik}', '${company.name.replace(/'/g, "\\'")}')">
+                    <div style="display: flex; justify-content: space-between; align-items: start;">
+                        <div>
+                            <strong style="font-size: 16px;">${company.name}</strong>
+                            <div style="color: #666; margin-top: 5px;">
+                                <span>CIK: ${company.cik}</span>
+                                ${company.ticker ? ` | <span>Ticker: ${company.ticker}</span>` : ''}
+                            </div>
+                        </div>
+                        <button class="btn" style="padding: 8px 16px; font-size: 13px;"
+                                onclick="event.stopPropagation(); loadSECFilings('${company.cik}', '${company.name.replace(/'/g, "\\'")}')">
+                            <i class="fas fa-file-alt"></i> View Filings
+                        </button>
+                    </div>
+                </div>
+            `).join('');
+        } else {
+            companiesList.innerHTML = '<p style="color: #666;">No companies found. Try a different search term.</p>';
+        }
+    } catch (error) {
+        console.error('Search error:', error);
+        companiesList.innerHTML = `<p style="color: #e74c3c;">Error: ${error.message}</p>`;
+    }
+}
+
+window.loadSECFilings = async function(cik, companyName) {
+    console.log('loadSECFilings called with:', cik, companyName);
+    const filingsDiv = document.getElementById('sec-filings-list');
+    const filingsTitle = document.getElementById('sec-filings-title');
+    const filingsContainer = document.getElementById('sec-filings-container');
+
+    console.log('Elements found:', {filingsDiv, filingsTitle, filingsContainer});
+
+    filingsTitle.textContent = `Recent Filings - ${companyName}`;
+    filingsContainer.innerHTML = '<p style="color: #666;">Loading filings...</p>';
+    filingsDiv.style.display = 'block';
+
+    // Scroll the filings section into view
+    filingsDiv.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+    try {
+        const response = await fetch(`/api/v1/sec/filings?cik=${cik}&forms=10-K,10-Q,8-K`);
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(data.detail || 'Failed to load filings');
+        }
+
+        if (data.filings && data.filings.length > 0) {
+            filingsContainer.innerHTML = data.filings.map(filing => `
+                <div style="padding: 15px; border: 1px solid #ddd; border-radius: 4px; margin-bottom: 10px; background: white;">
+                    <div style="display: flex; justify-content: space-between; align-items: start;">
+                        <div style="flex: 1;">
+                            <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 8px;">
+                                <span style="background: #3498db; color: white; padding: 4px 8px; border-radius: 3px; font-size: 12px; font-weight: bold;">
+                                    ${filing.form_type}
+                                </span>
+                                <span style="color: #666; font-size: 14px;">
+                                    Filed: ${new Date(filing.filing_date).toLocaleDateString()}
+                                </span>
+                            </div>
+                            <div style="color: #333; margin-bottom: 8px;">
+                                <strong>${filing.description || filing.form_type + ' Filing'}</strong>
+                            </div>
+                            ${filing.primary_document ? `
+                                <div style="color: #666; font-size: 13px;">
+                                    Document: ${filing.primary_document}
+                                </div>
+                            ` : ''}
+                        </div>
+                        <div style="display: flex; gap: 10px;">
+                            ${filing.html_url ? `
+                                <a href="${filing.html_url}" target="_blank" class="btn" style="padding: 8px 16px; font-size: 13px; text-decoration: none;">
+                                    <i class="fas fa-external-link-alt"></i> View
+                                </a>
+                            ` : ''}
+                            ${filing.ingested
+                                ? `<button class="btn" style="padding: 8px 16px; font-size: 13px; background: #95a5a6; cursor: default;" disabled>
+                                    <i class="fas fa-check"></i> Ingested
+                                   </button>`
+                                : `<button class="btn" style="padding: 8px 16px; font-size: 13px; background: #27ae60;"
+                                           onclick='ingestSECFiling(${JSON.stringify({...filing, cik, company_name: companyName})})'>
+                                    <i class="fas fa-download"></i> Ingest
+                                   </button>`
+                            }
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+        } else {
+            filingsContainer.innerHTML = '<p style="color: #666;">No filings found for this company.</p>';
+        }
+    } catch (error) {
+        console.error('Filings error:', error);
+        filingsContainer.innerHTML = `<p style="color: #e74c3c;">Error: ${error.message}</p>`;
+    }
+}
+
+window.ingestSECFiling = async function(filingInfo) {
+    if (!confirm(`Ingest ${filingInfo.form_type} filing from ${filingInfo.company_name} into AAIRE's knowledge base?`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/v1/sec/ingest', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                filing_info: filingInfo
+            })
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(data.detail || 'Ingestion failed');
+        }
+
+        alert(`Successfully ingested ${filingInfo.form_type} filing from ${filingInfo.company_name}!\n\nChunks created: ${data.chunks_created || 'N/A'}\nYou can now query this filing in AAIRE.`);
+
+        // Reload filings to show ingested status
+        loadSECFilings(filingInfo.cik, filingInfo.company_name);
+    } catch (error) {
+        console.error('Ingestion error:', error);
+        alert(`Failed to ingest filing: ${error.message}`);
+    }
+}
+
+// Allow Enter key to trigger search
+document.addEventListener('DOMContentLoaded', () => {
+    const secSearchInput = document.getElementById('sec-search-input');
+    if (secSearchInput) {
+        secSearchInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                searchSECCompanies();
+            }
+        });
+    }
+});
 
 // Initialize app when DOM is loaded
 let app;

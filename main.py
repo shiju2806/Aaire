@@ -86,6 +86,33 @@ structlog.configure(
 
 logger = structlog.get_logger()
 
+# SEC Filing ingestion tracker
+INGESTED_FILINGS_FILE = Path("data/ingested_filings.json")
+ingested_filings = set()
+
+def load_ingested_filings():
+    """Load previously ingested filing accession numbers"""
+    global ingested_filings
+    if INGESTED_FILINGS_FILE.exists():
+        try:
+            with open(INGESTED_FILINGS_FILE, 'r') as f:
+                ingested_filings = set(json.load(f))
+                logger.info(f"Loaded {len(ingested_filings)} ingested filings from cache")
+        except Exception as e:
+            logger.error(f"Failed to load ingested filings: {e}")
+            ingested_filings = set()
+
+def save_ingested_filing(accession_number: str):
+    """Save an ingested filing accession number"""
+    global ingested_filings
+    ingested_filings.add(accession_number)
+    try:
+        INGESTED_FILINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(INGESTED_FILINGS_FILE, 'w') as f:
+            json.dump(list(ingested_filings), f)
+    except Exception as e:
+        logger.error(f"Failed to save ingested filing: {e}")
+
 app = FastAPI(
     title="AAIRE",
     description="Insurance Resource Expert - AI-powered assistant for accounting and actuarial guidance",
@@ -124,6 +151,11 @@ async def add_cache_control_header(request, call_next):
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
     return response
+
+# Startup event
+@app.on_event("startup")
+async def startup_event():
+    load_ingested_filings()
 
 # Mount static files
 if os.path.exists("static"):
@@ -732,7 +764,7 @@ async def websocket_chat(websocket: WebSocket):
                 
                 try:
                     if rag_pipeline:
-                        # Process with RAG pipeline
+                        # Process with RAG pipeline using streaming
                         logger.info(f"WebSocket using RAG pipeline for query: {query}")
                         # Log WebSocket user context
                         if user_context:
@@ -740,23 +772,47 @@ async def websocket_chat(websocket: WebSocket):
                                        user=user_context.get('name', 'Unknown'),
                                        role=user_context.get('role', 'Unknown'),
                                        query=query[:50] + "..." if len(query) > 50 else query)
-                        
-                        rag_response = await rag_pipeline.process_query_with_intelligence(
+
+                        # Send thinking status
+                        await websocket.send_json({
+                            "type": "thinking",
+                            "message": "Analyzing your question..."
+                        })
+
+                        # Use streaming API
+                        response_stream = rag_pipeline.process_query_streaming(
                             query=query,
                             filters=None,
                             user_context=user_context,
                             session_id=session_id,
                             conversation_history=conversation_history
                         )
-                        logger.info(f"WebSocket RAG response citations: {rag_response.citations}")
-                        
-                        await websocket.send_json({
-                            "type": "response",
-                            "message": rag_response.answer,
-                            "sources": [cite.get("source", "") for cite in rag_response.citations],
-                            "confidence": rag_response.confidence,
-                            "followUpQuestions": rag_response.follow_up_questions
-                        })
+
+                        async for chunk_data in response_stream:
+                            if chunk_data["type"] == "content":
+                                # Stream content chunks
+                                await websocket.send_json({
+                                    "type": "stream",
+                                    "content": chunk_data["content"]
+                                })
+                            elif chunk_data["type"] == "done":
+                                # Send final metadata
+                                citations = chunk_data.get("citations", [])
+                                logger.info(f"🔍 DEBUG - Full citations structure: {citations}")
+                                sources = [cite.get("source", "") for cite in citations]
+                                logger.info(f"🔍 DEBUG - Citations in chunk_data: {len(citations)}, Sources extracted: {sources}")
+                                await websocket.send_json({
+                                    "type": "response",
+                                    "message": "",  # Already streamed
+                                    "sources": sources,
+                                    "confidence": chunk_data.get("confidence", 0.5),
+                                    "followUpQuestions": chunk_data.get("follow_up_questions", [])
+                                })
+                            elif chunk_data["type"] == "error":
+                                await websocket.send_json({
+                                    "type": "error",
+                                    "message": chunk_data.get("message", "An error occurred")
+                                })
                     else:
                         # Fallback response with document search
                         document_matches = await search_uploaded_documents(query)
@@ -1333,6 +1389,11 @@ async def get_sec_filings(cik: str, forms: str = "10-K,10-Q,8-K", years: str = N
         
         async with SECEdgarSource() as sec_client:
             filings = await sec_client.get_company_filings(cik, form_types, year_list)
+
+            # Mark which filings have been ingested
+            for filing in filings:
+                filing['ingested'] = filing['accession_number'] in ingested_filings
+
             return {
                 "cik": cik,
                 "filings": filings,
@@ -1355,14 +1416,17 @@ async def ingest_sec_filing(request: dict):
         filing_info = request.get('filing_info')
         if not filing_info:
             raise HTTPException(status_code=400, detail="filing_info required")
-        
+
         logger.info(f"SEC filing ingestion: {filing_info['form_type']} for {filing_info['company_name']}")
-        
+        logger.info(f"Filing info keys: {list(filing_info.keys())}")
+        logger.info(f"CIK: {filing_info.get('cik')}, Accession: {filing_info.get('accession_number')}")
+
         # Download SEC filing content
         async with SECEdgarSource() as sec_client:
             content = await sec_client.download_filing_content(filing_info)
-            
+
             if not content:
+                logger.error(f"download_filing_content returned empty for: {filing_info}")
                 raise HTTPException(status_code=400, detail="Failed to download filing content")
         
         # Create Document object
@@ -1382,9 +1446,12 @@ async def ingest_sec_filing(request: dict):
         
         document = Document(text=content, metadata=metadata)
         chunks_created = await rag_pipeline.add_documents([document], "sec_filing")
-        
+
+        # Mark filing as ingested
+        save_ingested_filing(filing_info['accession_number'])
+
         logger.info(f"SEC filing ingested: {chunks_created} chunks created")
-        
+
         return {
             "status": "success",
             "filing_info": filing_info,
