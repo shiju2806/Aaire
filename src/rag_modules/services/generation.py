@@ -368,6 +368,26 @@ INSTRUCTIONS:
 6. Format with clear sections using ## headers
 7. Organize related concepts together (e.g., group all reserve components under "Reserve Components")
 
+CRITICAL - NUMERICAL VALUES AND EXAMPLES:
+⚠️ NEVER make up, invent, or use placeholder numerical values (like $400, $1000, etc.)
+⚠️ If the documents contain training examples or hypothetical scenarios with specific dollar amounts, clearly label them as "Example:" or "Illustrative calculation:" - DO NOT present them as actual requirements
+⚠️ ONLY cite exact numerical values if they are:
+   - Explicit regulatory thresholds (e.g., "minimum 100% ratio required")
+   - Actual percentages or multipliers from the standard (e.g., "5% credit limit")
+   - Real statutory requirements clearly stated in the regulation
+⚠️ If the documents only provide example scenarios, clearly state: "The documents provide example calculations (e.g., using $400, $1000 for illustration), but these are not actual required amounts"
+⚠️ If asked about specific amounts/thresholds and the documents don't provide them, state: "The retrieved documents do not specify a numerical threshold for this requirement"
+
+CRITICAL - COMPREHENSIVENESS FOR "WHAT IS THE LIMIT" QUERIES:
+⚠️ If the user asks "what is THE limit" (singular), check if there are MULTIPLE limits in the retrieved documents
+⚠️ If section 10.2 (or any section) contains subsections 10.2.1, 10.2.2, 10.2.3, etc., list ALL relevant subsections and their requirements
+⚠️ When discussing changes (e.g., "limit was removed"), also state what OTHER limits still exist or apply
+⚠️ Format multi-part answers clearly:
+   Example: "Section 10.2 contains several limits:
+   1. Section 10.2.1: [description]
+   2. Section 10.2.2: [description]
+   3. Section 10.2.3: [description]"
+
 IMPORTANT COMPREHENSIVENESS RULES:
 1. DO NOT omit components or concepts that appear in the retrieved documentation just because they seem secondary
 2. If the documents discuss multiple approaches/methods/components, explain ALL of them
@@ -455,6 +475,26 @@ INSTRUCTIONS:
 5. Provide definitions and explanations WITHOUT numerical examples unless specifically requested
 6. Format with clear sections using ## headers
 7. Organize related concepts together (e.g., group all reserve components under "Reserve Components")
+
+CRITICAL - NUMERICAL VALUES AND EXAMPLES:
+⚠️ NEVER make up, invent, or use placeholder numerical values (like $400, $1000, etc.)
+⚠️ If the documents contain training examples or hypothetical scenarios with specific dollar amounts, clearly label them as "Example:" or "Illustrative calculation:" - DO NOT present them as actual requirements
+⚠️ ONLY cite exact numerical values if they are:
+   - Explicit regulatory thresholds (e.g., "minimum 100% ratio required")
+   - Actual percentages or multipliers from the standard (e.g., "5% credit limit")
+   - Real statutory requirements clearly stated in the regulation
+⚠️ If the documents only provide example scenarios, clearly state: "The documents provide example calculations (e.g., using $400, $1000 for illustration), but these are not actual required amounts"
+⚠️ If asked about specific amounts/thresholds and the documents don't provide them, state: "The retrieved documents do not specify a numerical threshold for this requirement"
+
+CRITICAL - COMPREHENSIVENESS FOR "WHAT IS THE LIMIT" QUERIES:
+⚠️ If the user asks "what is THE limit" (singular), check if there are MULTIPLE limits in the retrieved documents
+⚠️ If section 10.2 (or any section) contains subsections 10.2.1, 10.2.2, 10.2.3, etc., list ALL relevant subsections and their requirements
+⚠️ When discussing changes (e.g., "limit was removed"), also state what OTHER limits still exist or apply
+⚠️ Format multi-part answers clearly:
+   Example: "Section 10.2 contains several limits:
+   1. Section 10.2.1: [description]
+   2. Section 10.2.2: [description]
+   3. Section 10.2.3: [description]"
 
 IMPORTANT COMPREHENSIVENESS RULES:
 1. DO NOT omit components or concepts that appear in the retrieved documentation just because they seem secondary
