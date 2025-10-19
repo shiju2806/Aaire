@@ -31,6 +31,14 @@ try:
 except ImportError:
     SHAPE_AWARE_AVAILABLE = False
 
+# Import table extractor for structured data extraction
+try:
+    from .rag_modules.services.table_extractor import TableExtractor
+    TABLE_EXTRACTOR_AVAILABLE = True
+except ImportError:
+    TABLE_EXTRACTOR_AVAILABLE = False
+    logger.warning("TableExtractor not available - table extraction disabled")
+
 logger = structlog.get_logger()
 
 try:
@@ -92,6 +100,30 @@ class DocumentProcessor:
         else:
             self.shape_processor = None
             logger.warning("⚠️ Shape-aware processor not available")
+
+        # Initialize table extractor for structured data extraction
+        if TABLE_EXTRACTOR_AVAILABLE and rag_pipeline:
+            try:
+                # Get LLM clients from RAG pipeline
+                llm_client = getattr(rag_pipeline, 'llm_client', None)
+                async_client = getattr(rag_pipeline, 'async_client', None)
+
+                if llm_client and async_client:
+                    self.table_extractor = TableExtractor(
+                        llm_client=llm_client,
+                        async_client=async_client
+                    )
+                    logger.info("✅ Table extractor initialized (pdfplumber + GPT-4o-mini)")
+                else:
+                    self.table_extractor = None
+                    logger.warning("⚠️ LLM clients not available - table extraction disabled")
+            except Exception as e:
+                self.table_extractor = None
+                logger.warning(f"⚠️ Table extractor initialization failed: {str(e)}")
+        else:
+            self.table_extractor = None
+            if not TABLE_EXTRACTOR_AVAILABLE:
+                logger.warning("⚠️ Table extractor not available - install pdfplumber to enable")
 
         # Document processing status tracking
         self.processing_jobs = {}
@@ -356,8 +388,46 @@ class DocumentProcessor:
             if self.rag_pipeline:
                 doc_type = self._map_source_type(metadata['source_type'])
                 chunks_created = await self.rag_pipeline.add_documents([document], doc_type)
-                
+
                 self.processing_jobs[job_id]['chunks_created'] = chunks_created
+
+                # Add extracted tables as separate searchable documents
+                if hasattr(self, '_current_pdf_tables') and str(file_path) in self._current_pdf_tables:
+                    tables = self._current_pdf_tables[str(file_path)]
+
+                    if tables:
+                        logger.info(f"📊 Indexing {len(tables)} extracted tables")
+                        table_documents = []
+
+                        for table in tables:
+                            # Create searchable index entry for each table
+                            table_entry = self.table_extractor.create_table_index_entry(table)
+
+                            # Create llama-index Document for the table
+                            table_doc = Document(
+                                text=table_entry['content'],
+                                metadata={
+                                    **metadata,
+                                    'filename': job['filename'],
+                                    'job_id': job_id,
+                                    'processed_at': datetime.utcnow().isoformat(),
+                                    'user_id': job['user_id'],
+                                    'content_type': 'table',
+                                    'table_title': table_entry['title'],
+                                    'table_type': table_entry['table_type'],
+                                    'is_example': table_entry['is_example'],
+                                    'page': table_entry['page']
+                                }
+                            )
+                            table_documents.append(table_doc)
+
+                        # Index tables in RAG pipeline
+                        table_chunks = await self.rag_pipeline.add_documents(table_documents, doc_type)
+                        self.processing_jobs[job_id]['table_chunks_created'] = table_chunks
+                        logger.info(f"✅ Indexed {len(tables)} tables as {table_chunks} chunks")
+
+                    # Clean up temporary storage
+                    del self._current_pdf_tables[str(file_path)]
                 
                 # Generate intelligent document summary
                 try:
@@ -433,7 +503,24 @@ class DocumentProcessor:
     
     async def _extract_from_pdf(self, file_path: Path) -> str:
         """Extract text from PDF file with shape-aware processing and OCR fallback"""
-        
+
+        # Extract tables first if table extractor is available
+        extracted_tables = []
+        if self.table_extractor:
+            try:
+                logger.info(f"📊 Extracting tables from PDF: {file_path.name}")
+                extracted_tables = await self.table_extractor.extract_tables_from_pdf(str(file_path))
+
+                if extracted_tables:
+                    logger.info(f"✅ Extracted {len(extracted_tables)} tables from {file_path.name}")
+                    # Store tables for later processing
+                    # We'll add them as separate documents after text extraction
+                    if not hasattr(self, '_current_pdf_tables'):
+                        self._current_pdf_tables = {}
+                    self._current_pdf_tables[str(file_path)] = extracted_tables
+            except Exception as e:
+                logger.error(f"Table extraction failed for {file_path.name}: {str(e)}")
+
         # DISABLED: Shape-aware processing causing chunking regression
         # Force basic PDF extraction to fix malformed chunks issue
         if False:  # Disabled shape-aware processing
@@ -452,11 +539,11 @@ class DocumentProcessor:
                     logger.warning("⚠️ Shape-aware extraction returned empty - falling back to basic extraction")
             except Exception as e:
                 logger.warning(f"⚠️ Shape-aware extraction failed: {str(e)} - falling back to basic extraction")
-        
+
         # Fallback to basic PyPDF2 extraction
         logger.info(f"📄 Using basic PDF extraction for: {file_path.name}")
         text_content = []
-        
+
         with open(file_path, 'rb') as file:
             pdf_reader = PyPDF2.PdfReader(file)
             
