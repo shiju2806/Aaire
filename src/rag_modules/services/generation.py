@@ -304,8 +304,19 @@ Use appropriate headings and structure the information clearly."""
             # Extract upload date if available
             upload_date = metadata.get('upload_date', metadata.get('uploaded_at', 'Unknown date'))
 
-            # Format header with document metadata
-            header = f"--- Document {i+1}: {title} (Uploaded: {upload_date}) ---"
+            # Extract content type and example flag for table extraction
+            content_type = metadata.get('content_type', 'text')
+            is_example = metadata.get('is_example', False)
+            table_type = metadata.get('table_type', None)
+
+            # Format header with document metadata including example flag
+            header_parts = [f"--- Document {i+1}: {title} (Uploaded: {upload_date})"]
+            if content_type == 'table':
+                header_parts.append(f"[TABLE: {table_type or 'unknown type'}]")
+            if is_example:
+                header_parts.append("[⚠️ ILLUSTRATIVE EXAMPLE - NOT ACTUAL REQUIREMENTS]")
+            header = " ".join(header_parts) + " ---"
+
             context_parts.append(f"{header}\n{doc['content']}")
 
         context = "\n\n".join(context_parts)
@@ -368,6 +379,13 @@ INSTRUCTIONS:
 6. Format with clear sections using ## headers
 7. Organize related concepts together (e.g., group all reserve components under "Reserve Components")
 
+CRITICAL - DOCUMENT METADATA FLAGS:
+⚠️ ALWAYS check document headers for metadata flags
+⚠️ If a document header contains "[⚠️ ILLUSTRATIVE EXAMPLE - NOT ACTUAL REQUIREMENTS]", that document contains worked examples only
+⚠️ Documents marked as examples should be presented as: "Example calculation: [values from document]"
+⚠️ NEVER present values from example documents as actual regulatory requirements
+⚠️ If a document is marked as "[TABLE: example]" or has the example flag, clearly state: "This is an illustrative example from the guidelines"
+
 CRITICAL - NUMERICAL VALUES AND EXAMPLES:
 ⚠️ NEVER make up, invent, or use placeholder numerical values (like $400, $1000, etc.)
 ⚠️ If the documents contain training examples or hypothetical scenarios with specific dollar amounts, clearly label them as "Example:" or "Illustrative calculation:" - DO NOT present them as actual requirements
@@ -382,6 +400,7 @@ CRITICAL - COMPREHENSIVENESS FOR "WHAT IS THE LIMIT" QUERIES:
 ⚠️ If the user asks "what is THE limit" (singular), check if there are MULTIPLE limits in the retrieved documents
 ⚠️ If section 10.2 (or any section) contains subsections 10.2.1, 10.2.2, 10.2.3, etc., list ALL relevant subsections and their requirements
 ⚠️ When discussing changes (e.g., "limit was removed"), also state what OTHER limits still exist or apply
+⚠️ IMPORTANT: Skip documents marked as "[⚠️ ILLUSTRATIVE EXAMPLE - NOT ACTUAL REQUIREMENTS]" when answering requirement queries
 ⚠️ Format multi-part answers clearly:
    Example: "Section 10.2 contains several limits:
    1. Section 10.2.1: [description]
@@ -417,8 +436,19 @@ RESPONSE:"""
             # Extract upload date if available
             upload_date = metadata.get('upload_date', metadata.get('uploaded_at', 'Unknown date'))
 
-            # Format header with document metadata
-            header = f"--- Document {i+1}: {title} (Uploaded: {upload_date}) ---"
+            # Extract content type and example flag for table extraction
+            content_type = metadata.get('content_type', 'text')
+            is_example = metadata.get('is_example', False)
+            table_type = metadata.get('table_type', None)
+
+            # Format header with document metadata including example flag
+            header_parts = [f"--- Document {i+1}: {title} (Uploaded: {upload_date})"]
+            if content_type == 'table':
+                header_parts.append(f"[TABLE: {table_type or 'unknown type'}]")
+            if is_example:
+                header_parts.append("[⚠️ ILLUSTRATIVE EXAMPLE - NOT ACTUAL REQUIREMENTS]")
+            header = " ".join(header_parts) + " ---"
+
             context_parts.append(f"{header}\n{doc['content']}")
 
         context = "\n\n".join(context_parts)
@@ -476,6 +506,13 @@ INSTRUCTIONS:
 6. Format with clear sections using ## headers
 7. Organize related concepts together (e.g., group all reserve components under "Reserve Components")
 
+CRITICAL - DOCUMENT METADATA FLAGS:
+⚠️ ALWAYS check document headers for metadata flags
+⚠️ If a document header contains "[⚠️ ILLUSTRATIVE EXAMPLE - NOT ACTUAL REQUIREMENTS]", that document contains worked examples only
+⚠️ Documents marked as examples should be presented as: "Example calculation: [values from document]"
+⚠️ NEVER present values from example documents as actual regulatory requirements
+⚠️ If a document is marked as "[TABLE: example]" or has the example flag, clearly state: "This is an illustrative example from the guidelines"
+
 CRITICAL - NUMERICAL VALUES AND EXAMPLES:
 ⚠️ NEVER make up, invent, or use placeholder numerical values (like $400, $1000, etc.)
 ⚠️ If the documents contain training examples or hypothetical scenarios with specific dollar amounts, clearly label them as "Example:" or "Illustrative calculation:" - DO NOT present them as actual requirements
@@ -490,6 +527,7 @@ CRITICAL - COMPREHENSIVENESS FOR "WHAT IS THE LIMIT" QUERIES:
 ⚠️ If the user asks "what is THE limit" (singular), check if there are MULTIPLE limits in the retrieved documents
 ⚠️ If section 10.2 (or any section) contains subsections 10.2.1, 10.2.2, 10.2.3, etc., list ALL relevant subsections and their requirements
 ⚠️ When discussing changes (e.g., "limit was removed"), also state what OTHER limits still exist or apply
+⚠️ IMPORTANT: Skip documents marked as "[⚠️ ILLUSTRATIVE EXAMPLE - NOT ACTUAL REQUIREMENTS]" when answering requirement queries
 ⚠️ Format multi-part answers clearly:
    Example: "Section 10.2 contains several limits:
    1. Section 10.2.1: [description]
