@@ -29,19 +29,39 @@ class TableExtractor:
     - Works for any regulatory framework
     """
 
-    def __init__(self, llm_client=None, async_client=None):
+    def __init__(self, llm_client=None, async_client=None, config=None):
         """
         Initialize table extractor
 
         Args:
             llm_client: Synchronous LLM client (llama-index)
             async_client: Async LLM client (OpenAI AsyncOpenAI)
+            config: Configuration dictionary (from mvp_config.yaml)
         """
         self.llm = llm_client
         self.async_client = async_client
+        self.config = config or {}
+
+        # Extract table extraction config
+        table_config = self.config.get('table_extraction', {})
+
+        # LLM settings from config (with fallbacks)
+        self.model = table_config.get('model', 'gpt-4o-mini')
+        self.temperature = table_config.get('temperature', 0)
+        self.max_tokens = table_config.get('max_tokens', 2000)
+
+        # Table types from config
+        self.table_types = table_config.get('table_types', [
+            'requirement', 'example', 'reference', 'comparison', 'calculation'
+        ])
+
+        # Min table size
+        self.min_table_rows = table_config.get('min_table_rows', 2)
 
         if not PDFPLUMBER_AVAILABLE:
             logger.warning("TableExtractor initialized without pdfplumber - table extraction will be disabled")
+        else:
+            logger.info(f"TableExtractor initialized: model={self.model}, types={self.table_types}")
 
     async def extract_tables_from_pdf(self, pdf_path: str) -> List[Dict[str, Any]]:
         """
@@ -71,8 +91,8 @@ class TableExtractor:
                         logger.info(f"Found {len(tables)} table(s) on page {page_num + 1}")
 
                     for table_idx, raw_table in enumerate(tables):
-                        # Skip empty or invalid tables
-                        if not raw_table or len(raw_table) < 2:
+                        # Skip empty or invalid tables (use config min_table_rows)
+                        if not raw_table or len(raw_table) < self.min_table_rows:
                             continue
 
                         # Use GPT-4o-mini to interpret and structure the table
@@ -113,6 +133,9 @@ class TableExtractor:
             # Convert raw table to text representation
             table_text = self._format_table_as_text(raw_table)
 
+            # Generate table type options from config (dynamic!)
+            table_type_options = "|".join(self.table_types)
+
             # Prompt GPT-4o-mini to interpret the table
             prompt = f"""Analyze this table extracted from a regulatory/insurance document.
 
@@ -126,12 +149,12 @@ Your task:
 2. Identify column headers and their meanings
 3. Extract key numeric values, thresholds, or requirements
 4. Identify any formulas or calculations shown
-5. Determine if this is a regulatory requirement, example calculation, or reference table
+5. Classify the table type based on available categories
 
 Return a JSON object with this structure:
 {{
     "title": "Inferred table title or purpose",
-    "type": "requirement|example|reference|comparison|calculation",
+    "type": "{table_type_options}",
     "headers": ["Column 1 name", "Column 2 name", ...],
     "key_values": {{
         "threshold_1": "value and unit",
@@ -147,14 +170,15 @@ IMPORTANT:
 - Extract ALL numeric values with their context
 - Identify if values are examples/illustrations vs. actual regulatory thresholds
 - Be specific about what each column represents
+- Choose the most appropriate type from: {table_type_options}
 """
 
-            # Call GPT-4o-mini (async)
+            # Call LLM with config settings (fully configurable!)
             response = await self.async_client.chat.completions.create(
-                model="gpt-4o-mini",
+                model=self.model,
                 messages=[{"role": "user", "content": prompt}],
-                temperature=0,
-                max_tokens=2000
+                temperature=self.temperature,
+                max_tokens=self.max_tokens
             )
 
             # Parse the response
@@ -275,6 +299,6 @@ IMPORTANT:
         return "\n".join(parts)
 
 
-def create_table_extractor(llm_client=None, async_client=None):
+def create_table_extractor(llm_client=None, async_client=None, config=None):
     """Factory function to create a TableExtractor instance"""
-    return TableExtractor(llm_client=llm_client, async_client=async_client)
+    return TableExtractor(llm_client=llm_client, async_client=async_client, config=config)

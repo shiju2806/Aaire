@@ -104,16 +104,18 @@ class DocumentProcessor:
         # Initialize table extractor for structured data extraction
         if TABLE_EXTRACTOR_AVAILABLE and rag_pipeline:
             try:
-                # Get LLM clients from RAG pipeline
+                # Get LLM clients and config from RAG pipeline
                 llm_client = getattr(rag_pipeline, 'llm_client', None)
                 async_client = getattr(rag_pipeline, 'async_client', None)
+                config = getattr(rag_pipeline, 'config', {})
 
                 if llm_client and async_client:
                     self.table_extractor = TableExtractor(
                         llm_client=llm_client,
-                        async_client=async_client
+                        async_client=async_client,
+                        config=config  # Pass config for configurable behavior
                     )
-                    logger.info("✅ Table extractor initialized (pdfplumber + GPT-4o-mini)")
+                    logger.info("✅ Table extractor initialized with config-driven settings")
                 else:
                     self.table_extractor = None
                     logger.warning("⚠️ LLM clients not available - table extraction disabled")

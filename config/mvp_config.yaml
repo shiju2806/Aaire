@@ -150,6 +150,29 @@ framework_detection:
   # Minimum content length for framework detection
   min_content_length: 100
 
+# Table Extraction Configuration
+table_extraction:
+  enabled: true  # Enable/disable table extraction
+
+  # LLM settings for table interpretation
+  model: "gpt-4o-mini"  # Model to use for table structuring
+  temperature: 0  # Low temperature for consistent extraction
+  max_tokens: 2000  # Max tokens for table analysis
+
+  # Table type categories (LLM assigns to closest match)
+  table_types:
+    - requirement  # Regulatory requirements or thresholds
+    - example  # Illustrative examples or scenarios
+    - reference  # Reference data or lookup tables
+    - comparison  # Side-by-side comparisons
+    - calculation  # Calculation worksheets or formulas
+
+  # Minimum table size to extract (rows)
+  min_table_rows: 2
+
+  # Index tables as separate documents for better searchability
+  index_separately: true
+
 # Performance Settings
 performance:
   query_timeout: 30
