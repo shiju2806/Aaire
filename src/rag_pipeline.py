@@ -1861,7 +1861,7 @@ Do NOT add unnecessary information - only reformat what's provided."""
                 self.document_manager._clear_bm25_index()
 
             # Clear cache
-            self.clear_cache()
+            await self.clear_all_cache()
 
             logger.info(f"🎯 Successfully cleared all documents from Qdrant database")
 
