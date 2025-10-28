@@ -1204,19 +1204,19 @@ Provide a detailed response covering all information that relates to the questio
                 # Reinitialize the index
                 self.document_manager._init_qdrant_indexes()
 
-                # Clear Whoosh index as well
-                self._clear_whoosh_index()
+                # Clear BM25 index as well
+                self.document_manager._clear_bm25_index()
 
-                logger.info("Successfully cleared all documents from Qdrant and Whoosh")
+                logger.info("Successfully cleared all documents from Qdrant and BM25")
                 return {"status": "success", "message": "All documents cleared", "method": "qdrant_recreate"}
             else:
                 # For local storage, recreate the index
                 self.document_manager._init_local_index()
 
-                # Clear Whoosh index as well
-                self._clear_whoosh_index()
+                # Clear BM25 index as well
+                self.document_manager._clear_bm25_index()
 
-                logger.info("Successfully cleared all documents from local storage and Whoosh")
+                logger.info("Successfully cleared all documents from local storage and BM25")
                 return {"status": "success", "message": "All documents cleared", "method": "local_recreate"}
                 
         except Exception as e:
@@ -1856,8 +1856,9 @@ Do NOT add unnecessary information - only reformat what's provided."""
             except Exception as e:
                 logger.warning(f"Could not recreate payload indexes: {e}")
 
-            # Clear Whoosh search index as well
-            self._clear_whoosh_index()
+            # Clear BM25 search index as well
+            if hasattr(self, 'document_manager') and self.document_manager:
+                self.document_manager._clear_bm25_index()
 
             # Clear cache
             self.clear_cache()
@@ -1869,7 +1870,7 @@ Do NOT add unnecessary information - only reformat what's provided."""
                 "message": f"Successfully cleared all documents from {self.collection_name}",
                 "documents_cleared": doc_count_before,
                 "collection_name": self.collection_name,
-                "whoosh_index_cleared": True,
+                "bm25_index_cleared": True,
                 "cache_cleared": True
             }
 
