@@ -9,7 +9,6 @@ import json
 import structlog
 from difflib import SequenceMatcher
 import asyncio
-from llama_index.llms.openai import OpenAI
 
 logger = structlog.get_logger()
 
@@ -101,10 +100,11 @@ Example responses:
 Your response:"""
 
         try:
-            # Use LLM to analyze document usage
-            llm = OpenAI(model="gpt-4o-mini", temperature=0)
-            llm_response = await llm.acomplete(prompt)
-            usage_analysis = llm_response.text.strip().upper()
+            # Use LLM provider to analyze document usage
+            from ...providers import get_llm_provider
+            llm = get_llm_provider()
+            result = await llm.generate(prompt, task="citation")
+            usage_analysis = result.upper()
 
             logger.info(f"🤖 LLM Usage Analysis Result: '{usage_analysis}'")
 

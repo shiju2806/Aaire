@@ -1,0 +1,56 @@
+# LLM Provider Configuration
+# All model names, temperatures, and token limits in one place.
+# Override any value with environment variables:
+#   OPENAI_MODEL_DEFAULT → overrides providers.openai.default_model
+#   OPENAI_API_KEY → required for OpenAI provider
+
+providers:
+  default: openai
+
+  openai:
+    default_model: gpt-4o-mini
+
+    # Model per task type — override specific tasks with different models
+    models:
+      classification: gpt-4o-mini     # domain detection, query type, intent
+      generation: gpt-4o-mini         # response generation, follow-ups
+      extraction: gpt-4o-mini         # metadata, table, formula extraction
+      citation: gpt-4o-mini           # citation analysis
+      scoring: gpt-4o-mini            # relevance scoring, methodology boost
+      taxonomy: gpt-4o-mini           # domain term relationship extraction
+      query_enhancement: gpt-4o-mini  # query rewriting and expansion
+      reasoning: gpt-4o               # chain-of-thought, complex analysis
+
+    # Default parameters per task type
+    params:
+      classification:
+        temperature: 0.1
+        max_tokens: 20
+
+      generation:
+        temperature: 0.3
+        max_tokens: 4000
+
+      extraction:
+        temperature: 0.0
+        max_tokens: 2000
+
+      citation:
+        temperature: 0.0
+        max_tokens: 1000
+
+      scoring:
+        temperature: 0.1
+        max_tokens: 10
+
+      taxonomy:
+        temperature: 0.3
+        max_tokens: 1000
+
+      query_enhancement:
+        temperature: 0.2
+        max_tokens: 200
+
+      reasoning:
+        temperature: 0.2
+        max_tokens: 8000

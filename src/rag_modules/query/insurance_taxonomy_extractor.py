@@ -510,14 +510,9 @@ Return JSON:
 Focus on actuarial, insurance, and accounting terminology.
 Only include relationships explicitly stated in the text."""
 
-                response = await self.llm_client.chat.completions.create(
-                    model="gpt-4o-mini",
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=0.3,
-                    response_format={"type": "json_object"}
-                )
-
-                result = json.loads(response.choices[0].message.content)
+                from ...providers import get_llm_provider
+                llm = get_llm_provider()
+                result = await llm.generate_json(prompt, task="taxonomy")
 
                 # Merge results
                 for concept, rels in result.items():

@@ -48,7 +48,8 @@ class BaseExtractor(ABC):
         self.config = extractor_config
         self.patterns = extractor_config.get('patterns', [])
         self.confidence_threshold = extractor_config.get('confidence_threshold', 0.7)
-        self.llm_model = extractor_config.get('llm_model', 'gpt-4o-mini')
+        # LLM model resolved via provider; config value kept for backward compat
+        self._llm_model_override = extractor_config.get('llm_model')
 
     async def extract(
         self,
@@ -332,36 +333,16 @@ class BaseExtractor(ABC):
         prompt: str,
         max_retries: int = 2
     ) -> Optional[str]:
-        """Query LLM with retry logic"""
-        if not llm_client:
-            logger.debug("No LLM client provided, skipping LLM query")
-            return None
-
-        # Validate LLM client has the expected interface
-        if not hasattr(llm_client, 'chat') or not hasattr(llm_client.chat, 'completions'):
-            logger.warning(
-                "Invalid LLM client provided",
-                client_type=type(llm_client).__name__,
-                has_chat=hasattr(llm_client, 'chat'),
-                extractor=self.__class__.__name__
-            )
-            return None
-
+        """Query LLM with retry logic using the provider abstraction."""
         for attempt in range(max_retries + 1):
             try:
-                response = await llm_client.chat.completions.create(
-                    model=self.llm_model,
-                    messages=[
-                        {
-                            "role": "system",
-                            "content": "You are a precise information extractor. Only extract explicitly stated information."
-                        },
-                        {"role": "user", "content": prompt}
-                    ],
-                    temperature=0.0,
-                    max_tokens=2000
+                from ..providers import get_llm_provider
+                llm = get_llm_provider()
+                return await llm.generate(
+                    prompt,
+                    task="extraction",
+                    system_prompt="You are a precise information extractor. Only extract explicitly stated information.",
                 )
-                return response.choices[0].message.content.strip()
 
             except Exception as e:
                 logger.warning(

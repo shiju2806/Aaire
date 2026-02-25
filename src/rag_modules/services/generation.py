@@ -68,8 +68,10 @@ class ResponseGenerator:
         self.query_analyzer = query_analyzer
         self.config = config or {}
 
-        # Extract model name from config
-        self.actual_model = self.config.get('llm_config', {}).get('model', 'gpt-4o-mini')
+        # Model resolved via provider
+        from ...providers import get_llm_provider
+        self._llm_provider = get_llm_provider()
+        self.actual_model = self._llm_provider.get_model_name("generation")
 
     async def generate_response(
         self,

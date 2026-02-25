@@ -69,7 +69,7 @@ class ExtractorRegistry:
                         'enabled': True,
                         'patterns': [],
                         'confidence_threshold': 0.5,
-                        'llm_model': 'gpt-4o-mini'
+                        'llm_model': None  # resolved by LLM provider
                     }
                 },
                 'routing': {
@@ -117,7 +117,7 @@ class ExtractorRegistry:
             general_config = {
                 'patterns': [],
                 'confidence_threshold': 0.5,
-                'llm_model': 'gpt-4o-mini',
+                'llm_model': None  # resolved by LLM provider,
                 'enabled': True
             }
             self.register_extractor('general', GeneralExtractor(general_config))

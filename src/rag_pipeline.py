@@ -928,17 +928,14 @@ class RAGPipeline:
     
     Return only the questions, one per line."""
             
-            response = await self.client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": "Generate relevant follow-up questions for organizational analysis."},
-                    {"role": "user", "content": follow_up_prompt}
-                ],
-                temperature=0.3,
-                max_tokens=200
+            from .providers import get_llm_provider
+            llm = get_llm_provider()
+            result = await llm.generate(
+                follow_up_prompt,
+                task="generation",
+                system_prompt="Generate relevant follow-up questions for organizational analysis.",
             )
-            
-            questions = [q.strip() for q in response.choices[0].message.content.strip().split("\n") if q.strip()]
+            questions = [q.strip() for q in result.split("\n") if q.strip()]
             return questions[:3]  # Limit to 3 questions
             
         except Exception as e:

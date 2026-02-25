@@ -48,20 +48,14 @@ class RelevanceEngine:
         self.domain_keywords = self._build_domain_knowledge()
         self.feedback_data = {}  # For learning
         
-        # Initialize OpenAI client for AI-powered domain classification
+        # Initialize LLM provider for AI-powered domain classification
         try:
-            import openai
-            import os
-            api_key = os.getenv('OPENAI_API_KEY')
-            if api_key:
-                self.openai_client = openai.OpenAI(api_key=api_key)
-                logger.info("🤖 AI-powered domain classification enabled")
-            else:
-                self.openai_client = None
-                logger.info("⚠️ OpenAI API key not found, using pattern-based domain detection")
-        except ImportError:
-            self.openai_client = None
-            logger.info("⚠️ OpenAI not installed, using pattern-based domain detection")
+            from .providers import get_llm_provider
+            self._llm = get_llm_provider()
+            logger.info("AI-powered domain classification enabled")
+        except Exception:
+            self._llm = None
+            logger.info("LLM provider not available, using pattern-based domain detection")
         
     def _load_config(self, config_path: Optional[str]) -> Dict:
         """Load configurable relevance parameters"""
@@ -245,19 +239,12 @@ Possible domains:
 
 Return only the domain name (e.g., "accounting"):"""
 
-            # Simple classification using OpenAI (fallback to keyword matching if unavailable)
-            if hasattr(self, 'openai_client') and self.openai_client:
-                response = self.openai_client.chat.completions.create(
-                    model="gpt-4o-mini",
-                    messages=[{"role": "user", "content": domain_prompt}],
-                    temperature=0.1,
-                    max_tokens=10
-                )
-                domain = response.choices[0].message.content.strip().lower()
-                logger.info(f"🤖 AI-classified domain: '{domain}' for query: '{query[:50]}...'")
+            # Classification using LLM provider (fallback to keyword matching if unavailable)
+            if self._llm:
+                domain = self._llm.generate_sync(domain_prompt, task="classification").lower()
+                logger.info(f"AI-classified domain: '{domain}' for query: '{query[:50]}...'")
                 return domain if domain in ['accounting', 'insurance', 'foreign_currency', 'tax', 'legal', 'regulatory', 'general'] else None
             else:
-                # Fallback to enhanced keyword matching
                 return self._fallback_domain_detection(query)
                 
         except Exception as e:
@@ -357,14 +344,8 @@ Respond with a relevance score from 0.0 to 0.3 where:
 
 Respond with only the number (e.g., "0.2"):"""
 
-            response = self.openai_client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[{"role": "user", "content": methodology_prompt}],
-                temperature=0.1,
-                max_tokens=10
-            )
-
-            boost_score = float(response.choices[0].message.content.strip())
+            result = self._llm.generate_sync(methodology_prompt, task="scoring")
+            boost_score = float(result)
             logger.debug(f"🤖 LLM methodology boost: {boost_score} for {filename}")
             return min(max(boost_score, 0.0), 0.3)  # Clamp between 0.0 and 0.3
 

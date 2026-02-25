@@ -3,16 +3,17 @@ Simplified Enhanced Query Handler
 """
 
 from typing import Dict, Any, List, Optional, Tuple
-from openai import AsyncOpenAI
 import structlog
 
 logger = structlog.get_logger()
 
 class EnhancedQueryHandler:
     """Detects queries that need intelligent extraction"""
-    
-    def __init__(self, openai_client: AsyncOpenAI):
-        self.openai_client = openai_client
+
+    def __init__(self, openai_client=None):
+        # Accept legacy openai_client param but prefer provider
+        from .providers import get_llm_provider
+        self._llm = get_llm_provider()
         
         self.extraction_indicators = {
             'job_titles': ['job title', 'position', 'role', 'who is', 'breakdown by', 'list of people', 'employees', 'staff', 'personnel'],
@@ -57,17 +58,11 @@ Make it more specific and request:
 
 Return only the enhanced query."""
             
-            response = await self.openai_client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": "Create precise extraction queries."},
-                    {"role": "user", "content": enhancement_prompt}
-                ],
-                temperature=0.2,
-                max_tokens=200
+            enhanced = await self._llm.generate(
+                enhancement_prompt,
+                task="query_enhancement",
+                system_prompt="Create precise extraction queries.",
             )
-            
-            enhanced = response.choices[0].message.content.strip()
             return enhanced + " Please provide only explicitly stated information with confidence scores."
             
         except Exception as e:

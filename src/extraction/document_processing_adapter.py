@@ -468,23 +468,9 @@ Respond with JSON containing:
                 logger.debug("No LLM client available for metadata extraction")
                 return {}
 
-            if not hasattr(self.llm_client, 'chat') or not hasattr(self.llm_client.chat, 'completions'):
-                logger.warning(
-                    "Invalid LLM client for metadata extraction",
-                    client_type=type(self.llm_client).__name__ if self.llm_client else "None",
-                    has_chat=hasattr(self.llm_client, 'chat') if self.llm_client else False
-                )
-                return {}
-
-            response = await self.llm_client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.1,
-                max_tokens=1000
-            )
-
-            # Parse response
-            response_text = response.choices[0].message.content.strip()
+            from ..providers import get_llm_provider
+            llm = get_llm_provider()
+            response_text = await llm.generate(prompt, task="extraction")
 
             # Try to extract JSON
             import json

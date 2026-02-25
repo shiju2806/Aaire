@@ -45,8 +45,10 @@ class TableExtractor:
         # Extract table extraction config
         table_config = self.config.get('table_extraction', {})
 
-        # LLM settings from config (with fallbacks)
-        self.model = table_config.get('model', 'gpt-4o-mini')
+        # LLM settings resolved via provider; config overrides still supported
+        from ...providers import get_llm_provider
+        self._llm = get_llm_provider()
+        self.model = self._llm.get_model_name("extraction")
         self.temperature = table_config.get('temperature', 0)
         self.max_tokens = table_config.get('max_tokens', 2000)
 
