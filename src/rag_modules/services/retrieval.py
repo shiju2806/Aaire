@@ -2,18 +2,64 @@
 Document Retrieval Service Module
 
 Handles all document retrieval operations including:
-- Hybrid search (vector + keyword)
+- Hybrid search (vector + keyword) with parallel execution
 - Vector-based semantic search
 - Keyword-based BM25 search
+- Confidence-based early exit
 - Search result combination and ranking
-- Document diversity selection
+- Retrieval metrics instrumentation
 """
 
+import asyncio
 import re
+import time
 import structlog
+from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional
 
+from ...providers.config_loader import get_config, get_nested
+
 logger = structlog.get_logger()
+
+
+# ---------------------------------------------------------------------------
+# Retrieval Metrics
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class RetrievalMetrics:
+    """Per-query retrieval metrics for monitoring and optimization."""
+
+    retrieval_latency_ms: float = 0.0
+    vector_latency_ms: float = 0.0
+    keyword_latency_ms: float = 0.0
+    vector_result_count: int = 0
+    keyword_result_count: int = 0
+    final_result_count: int = 0
+    top_5_average_score: float = 0.0
+    element_types_retrieved: List[str] = field(default_factory=list)
+    early_exit_triggered: bool = False
+    bm25_contributed: bool = False
+    bm25_skipped: bool = False
+    entropy_disambiguation_triggered: bool = False
+
+    def log(self) -> None:
+        """Emit structured log of metrics."""
+        logger.info(
+            "retrieval_metrics",
+            retrieval_latency_ms=round(self.retrieval_latency_ms, 1),
+            vector_latency_ms=round(self.vector_latency_ms, 1),
+            keyword_latency_ms=round(self.keyword_latency_ms, 1),
+            vector_results=self.vector_result_count,
+            keyword_results=self.keyword_result_count,
+            final_results=self.final_result_count,
+            top_5_avg_score=round(self.top_5_average_score, 3),
+            element_types=self.element_types_retrieved,
+            early_exit=self.early_exit_triggered,
+            bm25_contributed=self.bm25_contributed,
+            bm25_skipped=self.bm25_skipped,
+        )
 
 
 class DocumentRetriever:
@@ -35,58 +81,73 @@ class DocumentRetriever:
     async def retrieve_documents(self, query: str, doc_type_filter: Optional[List[str]],
                                similarity_threshold: Optional[float] = None,
                                filters: Optional[Dict[str, Any]] = None) -> List[Dict]:
-        """Hybrid retrieval: combines vector search with BM25 keyword search using buffer approach"""
+        """Hybrid retrieval: parallel vector + BM25 search with confidence-based early exit."""
+
+        start_time = time.perf_counter()
+        metrics = RetrievalMetrics()
+
+        # Load confidence thresholds from config.
+        scoring_config = get_config("scoring")
+        early_exit_threshold = get_nested(
+            scoring_config, "retrieval", "confidence_early_exit", default=0.90
+        )
+        low_confidence_threshold = get_nested(
+            scoring_config, "retrieval", "default_similarity_threshold", default=0.5
+        )
 
         # Analyze query intent for smart filtering
         try:
             query_intent = await self.metadata_analyzer.analyze_query_intent(query)
-            logger.info(f"Query intent analyzed",
+            logger.info("Query intent analyzed",
                        query=query[:50],
                        confidence=query_intent.confidence,
                        domains=query_intent.content_domains,
                        framework=query_intent.required_filters.get('framework'),
-                       tags=query_intent.context_tags[:3])  # First 3 tags for brevity
-
-            # Apply smart filtering if confidence is high enough
-            # DISABLED: Smart filtering was blocking all documents
-            if False and query_intent.confidence > 0.6 and self.metadata_analyzer.smart_filtering_enabled:
-                # Merge intent-based filters with existing filters
-                smart_filters = filters.copy() if filters else {}
-
-                # Apply required filters from intent analysis
-                for key, value in query_intent.required_filters.items():
-                    smart_filters[key] = value
-
-                # Apply excluded filters (handled in vector/keyword search methods)
-                if query_intent.excluded_filters:
-                    smart_filters['_excluded'] = query_intent.excluded_filters
-
-                logger.info(f"Smart filtering applied",
-                           original_filters=filters,
-                           smart_filters=smart_filters,
-                           confidence=query_intent.confidence)
-
-                filters = smart_filters
-            else:
-                logger.debug(f"Smart filtering skipped",
-                           confidence=query_intent.confidence,
-                           enabled=self.metadata_analyzer.smart_filtering_enabled)
-
+                       tags=query_intent.context_tags[:3])
         except Exception as e:
-            logger.warning(f"Query intent analysis failed, proceeding without smart filtering",
+            logger.warning("Query intent analysis failed, proceeding without smart filtering",
                          error=str(e))
 
         # Get the target document limit
         doc_limit = self.quality_metrics_manager.get_document_limit(query)
 
-        # Use buffer approach: both searches get the full limit to ensure we don't miss important documents
-        # This allows the best documents from either method to compete fairly
-        vector_results = await self.vector_search(query, doc_type_filter, similarity_threshold, filters, buffer_limit=doc_limit)
-        keyword_results = await self.keyword_search(query, doc_type_filter, filters, buffer_limit=doc_limit)
+        # --- Parallel search execution ---
+        vector_start = time.perf_counter()
+        vector_coro = self.vector_search(query, doc_type_filter, similarity_threshold, filters, buffer_limit=doc_limit)
+        keyword_coro = self.keyword_search(query, doc_type_filter, filters, buffer_limit=doc_limit)
 
-        logger.info(f"Buffer approach: Retrieved {len(vector_results)} vector + {len(keyword_results)} keyword results, target limit: {doc_limit}")
+        vector_results, keyword_results = await asyncio.gather(vector_coro, keyword_coro)
 
-        # Combine results using advanced relevance engine
+        metrics.vector_latency_ms = (time.perf_counter() - vector_start) * 1000
+        metrics.vector_result_count = len(vector_results)
+        metrics.keyword_result_count = len(keyword_results)
+
+        # --- Confidence-based early exit ---
+        # If top 3 vector results all score above threshold, skip BM25 contribution
+        if len(vector_results) >= 3:
+            top_3_scores = [r['score'] for r in vector_results[:3]]
+            if all(s >= early_exit_threshold for s in top_3_scores):
+                logger.info(
+                    "Early exit: top 3 vector scores all above threshold",
+                    scores=top_3_scores,
+                    threshold=early_exit_threshold,
+                )
+                metrics.early_exit_triggered = True
+                metrics.bm25_skipped = True
+                # Use only vector results — already high confidence
+                combined_results = self.relevance_engine.rank_documents(query, vector_results)
+                if len(combined_results) > doc_limit:
+                    combined_results = combined_results[:doc_limit]
+                metrics.final_result_count = len(combined_results)
+                metrics.top_5_average_score = self._avg_top_n_score(combined_results, 5)
+                metrics.element_types_retrieved = self._unique_element_types(combined_results)
+                metrics.retrieval_latency_ms = (time.perf_counter() - start_time) * 1000
+                metrics.log()
+                return combined_results
+
+        logger.info(f"Parallel retrieval: {len(vector_results)} vector + {len(keyword_results)} keyword results, target limit: {doc_limit}")
+
+        # --- Combine results ---
         all_results = vector_results + keyword_results
 
         # Remove duplicates while preserving all scoring info
@@ -96,22 +157,45 @@ class DocumentRetriever:
             if node_id not in unique_results:
                 unique_results[node_id] = result
             else:
-                # Merge scoring information from both searches
                 existing = unique_results[node_id]
                 existing['search_type'] = 'hybrid'
-                # Keep the higher score
                 if result['score'] > existing['score']:
                     existing['score'] = result['score']
+
+        # Check if BM25 contributed unique results
+        vector_ids = {r['node_id'] for r in vector_results}
+        keyword_ids = {r['node_id'] for r in keyword_results}
+        metrics.bm25_contributed = bool(keyword_ids - vector_ids)
 
         # Use advanced relevance engine for ranking
         combined_results = self.relevance_engine.rank_documents(query, list(unique_results.values()))
 
-        # Apply the document limit to the final combined results
         if len(combined_results) > doc_limit:
-            logger.info(f"Trimming combined results from {len(combined_results)} to {doc_limit}")
             combined_results = combined_results[:doc_limit]
 
+        # --- Metrics ---
+        metrics.final_result_count = len(combined_results)
+        metrics.top_5_average_score = self._avg_top_n_score(combined_results, 5)
+        metrics.element_types_retrieved = self._unique_element_types(combined_results)
+        metrics.retrieval_latency_ms = (time.perf_counter() - start_time) * 1000
+        metrics.log()
+
         return combined_results
+
+    @staticmethod
+    def _avg_top_n_score(results: List[Dict], n: int) -> float:
+        """Average score of top N results."""
+        scores = [r.get('score', 0) or r.get('relevance_score', 0) for r in results[:n]]
+        return sum(scores) / len(scores) if scores else 0.0
+
+    @staticmethod
+    def _unique_element_types(results: List[Dict]) -> List[str]:
+        """Unique element types present in results."""
+        types = set()
+        for r in results:
+            et = r.get('metadata', {}).get('element_type', 'text')
+            types.add(et)
+        return sorted(types)
 
     async def vector_search(self, query: str, doc_type_filter: Optional[List[str]],
                           similarity_threshold: Optional[float] = None,
@@ -302,34 +386,6 @@ class DocumentRetriever:
             bm25_filters['doc_type'] = doc_type_filter
 
         return bm25_filters if bm25_filters else None
-
-    def convert_filters_for_whoosh(self, filters: Optional[Dict[str, Any]],
-                                 doc_type_filter: Optional[List[str]]) -> Optional[Dict[str, Any]]:
-        """Convert RAG pipeline filters to Whoosh filter format (deprecated)"""
-        if not filters and not doc_type_filter:
-            return None
-
-        whoosh_filters = {}
-
-        if filters:
-            # Handle primary_framework filter (most important for smart metadata)
-            if 'primary_framework' in filters:
-                whoosh_filters['primary_framework'] = filters['primary_framework']
-
-            # Handle content_domains filter
-            if 'content_domains' in filters:
-                whoosh_filters['content_domains'] = filters['content_domains']
-
-            # Handle document_type filter
-            if 'document_type' in filters:
-                whoosh_filters['document_type'] = filters['document_type']
-
-        # Convert doc_type_filter to Whoosh format
-        if doc_type_filter:
-            # Whoosh engine expects doc_type in the document_type field
-            whoosh_filters['document_type'] = doc_type_filter
-
-        return whoosh_filters if whoosh_filters else None
 
     def combine_search_results(self, vector_results: List[Dict], keyword_results: List[Dict],
                              query: str) -> List[Dict]:
