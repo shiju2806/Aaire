@@ -120,9 +120,9 @@ class RAGPipeline:
         
         logger.info(f"Using OpenAI model: {model_name}")
         
-        self.embedding_model = OpenAIEmbedding(
-            model=self.config['embedding_config']['model']
-        )
+        from .providers import get_embedding_provider
+        self._embedding_provider = get_embedding_provider()
+        self.embedding_model = self._embedding_provider.get_llama_index_embedding()
 
         # Initialize AsyncOpenAI client for parallel processing
         self.async_client = AsyncOpenAI(
@@ -1193,7 +1193,7 @@ Provide a detailed response covering all information that relates to the questio
                 from qdrant_client.models import Distance, VectorParams
                 self.qdrant_client.create_collection(
                     collection_name=self.collection_name,
-                    vectors_config=VectorParams(size=1536, distance=Distance.COSINE)
+                    vectors_config=VectorParams(size=self._embedding_provider.dimension, distance=Distance.COSINE)
                 )
 
                 # Reinitialize the index
@@ -1823,7 +1823,7 @@ Do NOT add unnecessary information - only reformat what's provided."""
             self.qdrant_client.create_collection(
                 collection_name=self.collection_name,
                 vectors_config=VectorParams(
-                    size=1536,  # OpenAI embedding dimension
+                    size=self._embedding_provider.dimension,  # OpenAI embedding dimension
                     distance=Distance.COSINE
                 )
             )

@@ -1,0 +1,37 @@
+# Infrastructure, Server, and Operational Configuration
+
+server:
+  host: "0.0.0.0"
+  port: 8000
+
+redis:
+  host: ${REDIS_HOST:-localhost}
+  port: 6379
+  session_ttl_hours: 2
+
+auth:
+  algorithm: HS256
+  access_token_expire_hours: 8
+
+timeouts:
+  citation_analysis_seconds: 30
+  extraction_seconds: 300
+  llm_retry_max: 2
+  cache_ttl_hours: 24
+
+paths:
+  upload_dir: data/uploads
+  analytics_dir: data/analytics
+  taxonomy_dir: data/taxonomies
+
+token_limits:
+  target_tokens: 30000
+  chars_per_token: 4
+  document_preview_length: 2000
+
+external_apis:
+  sec_edgar:
+    base_url: https://data.sec.gov
+    tickers_url: https://www.sec.gov/files/company_tickers.json
+  xbrl:
+    taxonomy_url: https://xbrl.us/data/taxonomies/us-gaap/2024/concepts

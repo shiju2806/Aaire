@@ -54,3 +54,8 @@ providers:
       reasoning:
         temperature: 0.2
         max_tokens: 8000
+
+# Embedding model configuration
+embedding:
+  model: text-embedding-3-large
+  dimension: 1536
