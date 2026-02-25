@@ -169,7 +169,7 @@ class CircuitBreakerState:
 # Legacy compatibility classes for backward compatibility
 @dataclass
 class QueryIntent:
-    """Legacy QueryIntent class for backward compatibility with smart_metadata_analyzer"""
+    """Query intent extracted from user query for retrieval filtering"""
     content_domains: List[str]  # e.g., ["regulatory", "insurance"]
     context_tags: List[str]     # e.g., ["usstat", "reserves"]
     required_filters: Dict[str, Any]  # Must match these
@@ -180,7 +180,7 @@ class QueryIntent:
 
 @dataclass
 class LegacyDocumentMetadata:
-    """Legacy DocumentMetadata class for backward compatibility with smart_metadata_analyzer"""
+    """Document metadata for filtering and classification"""
     # Core fields (always present)
     source_document: str
     content_domain: str         # regulatory, legal, technical, medical, etc.

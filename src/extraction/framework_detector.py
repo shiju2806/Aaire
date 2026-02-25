@@ -31,7 +31,8 @@ class FrameworkDetector:
     """
 
     def __init__(self, config_path: Optional[str] = None):
-        self.config_path = config_path or "/Users/shijuprakash/AAIRE/config/mvp_config.yaml"
+        default_config = Path(__file__).resolve().parent.parent.parent / "config" / "mvp_config.yaml"
+        self.config_path = config_path or str(default_config)
         self.framework_config = self._load_framework_config()
         self.enabled = self.framework_config.get('enabled', True)
         self.confidence_threshold = self.framework_config.get('confidence_threshold', 0.7)

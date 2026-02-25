@@ -17,8 +17,6 @@ import re
 import json
 import numpy as np
 from collections import defaultdict
-from .whoosh_search_engine import WhooshSearchEngine, SearchResult
-
 # LlamaIndex imports - current version structure  
 from llama_index.core import (
     VectorStoreIndex,

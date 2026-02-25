@@ -33,32 +33,19 @@ class AuthManager:
         # Password hashing
         self.pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
         
-        # JWT settings
-        self.secret_key = os.getenv("JWT_SECRET_KEY", "your-secret-key-change-in-production")
-        self.algorithm = "HS256"
-        self.access_token_expire_hours = 8  # As specified in MVP
-        
+        # JWT settings — require secret key from environment
+        self.secret_key = os.getenv("JWT_SECRET_KEY")
+        if not self.secret_key:
+            raise RuntimeError(
+                "JWT_SECRET_KEY environment variable is required. "
+                "Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(64))\""
+            )
+        self.algorithm = os.getenv("JWT_ALGORITHM", "HS256")
+        self.access_token_expire_hours = int(os.getenv("JWT_EXPIRE_HOURS", "8"))
+
         # In-memory user store for MVP (replace with database in production)
-        self.users_db = {
-            "admin@company.com": {
-                "id": "admin-001",
-                "email": "admin@company.com",
-                "name": "Admin User",
-                "hashed_password": self.pwd_context.hash("admin123"),  # Demo only
-                "roles": ["admin", "user"],
-                "is_admin": True,
-                "can_upload_documents": True
-            },
-            "user@company.com": {
-                "id": "user-001", 
-                "email": "user@company.com",
-                "name": "Regular User",
-                "hashed_password": self.pwd_context.hash("user123"),  # Demo only
-                "roles": ["user"],
-                "is_admin": False,
-                "can_upload_documents": False
-            }
-        }
+        # Users must be configured via environment variables
+        self.users_db = self._load_users_from_env()
         
         # Active sessions
         self.active_sessions = {}
@@ -66,6 +53,53 @@ class AuthManager:
         logger.info("Authentication manager initialized", 
                    user_count=len(self.users_db))
     
+    def _load_users_from_env(self) -> Dict[str, Any]:
+        """Load users from environment variables.
+
+        Expected format:
+            AAIRE_ADMIN_EMAIL=admin@company.com
+            AAIRE_ADMIN_PASSWORD=<secure password>
+            AAIRE_ADMIN_NAME=Admin User
+            AAIRE_USER_EMAIL=user@company.com
+            AAIRE_USER_PASSWORD=<secure password>
+            AAIRE_USER_NAME=Regular User
+        """
+        users = {}
+
+        admin_email = os.getenv("AAIRE_ADMIN_EMAIL")
+        admin_password = os.getenv("AAIRE_ADMIN_PASSWORD")
+        if admin_email and admin_password:
+            users[admin_email] = {
+                "id": "admin-001",
+                "email": admin_email,
+                "name": os.getenv("AAIRE_ADMIN_NAME", "Admin User"),
+                "hashed_password": self.pwd_context.hash(admin_password),
+                "roles": ["admin", "user"],
+                "is_admin": True,
+                "can_upload_documents": True,
+            }
+
+        user_email = os.getenv("AAIRE_USER_EMAIL")
+        user_password = os.getenv("AAIRE_USER_PASSWORD")
+        if user_email and user_password:
+            users[user_email] = {
+                "id": "user-001",
+                "email": user_email,
+                "name": os.getenv("AAIRE_USER_NAME", "Regular User"),
+                "hashed_password": self.pwd_context.hash(user_password),
+                "roles": ["user"],
+                "is_admin": False,
+                "can_upload_documents": False,
+            }
+
+        if not users:
+            logger.warning(
+                "No users configured. Set AAIRE_ADMIN_EMAIL/AAIRE_ADMIN_PASSWORD "
+                "environment variables to enable authentication."
+            )
+
+        return users
+
     def verify_password(self, plain_password: str, hashed_password: str) -> bool:
         """Verify password against hash"""
         return self.pwd_context.verify(plain_password, hashed_password)
@@ -243,8 +277,8 @@ class AuthManager:
         expired_sessions = []
         
         for user_id, session in self.active_sessions.items():
-            # Session timeout after 8 hours of inactivity
-            if (current_time - session["last_activity"]).total_seconds() > (8 * 3600):
+            # Session timeout based on configured token expiry
+            if (current_time - session["last_activity"]).total_seconds() > (self.access_token_expire_hours * 3600):
                 expired_sessions.append(user_id)
         
         for user_id in expired_sessions:
