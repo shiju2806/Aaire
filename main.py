@@ -38,14 +38,10 @@ except ImportError:
     ComplianceEngine = None
 
 try:
-    from src.enhanced_document_processor import EnhancedDocumentProcessor as DocumentProcessor
-    logger.info("Using Enhanced Document Processor with shape-aware extraction")
+    from src.ingestion import IngestionPipeline
+    logger.info("Using new IngestionPipeline (layout-aware, element-typed)")
 except ImportError:
-    try:
-        from src.document_processor import DocumentProcessor
-        logger.info("Using standard Document Processor")
-    except ImportError:
-        DocumentProcessor = None
+    IngestionPipeline = None
 
 try:
     from src.external_apis import ExternalAPIManager
@@ -170,7 +166,7 @@ security = HTTPBearer()
 # Initialize core components with fallbacks
 rag_pipeline = None
 compliance_engine = None
-document_processor = None
+ingestion_pipeline = None
 external_api_manager = None
 auth_manager = None
 audit_logger = None
@@ -201,13 +197,20 @@ except Exception as e:
     logger.error("❌ Compliance Engine initialization failed", error=str(e))
 
 try:
-    if DocumentProcessor:
-        document_processor = DocumentProcessor(rag_pipeline)
-        logger.info("✅ Document Processor initialized")
+    if IngestionPipeline:
+        from src.providers import get_llm_provider, get_embedding_provider, get_retrieval_provider
+        ingestion_pipeline = IngestionPipeline(
+            llm_provider=get_llm_provider(),
+            embedding_provider=get_embedding_provider(),
+            retrieval_provider=get_retrieval_provider(),
+        )
+        logger.info("✅ Ingestion Pipeline initialized")
     else:
-        logger.warning("❌ DocumentProcessor class not available")
+        ingestion_pipeline = None
+        logger.warning("❌ IngestionPipeline class not available")
 except Exception as e:
-    logger.error("❌ Document Processor initialization failed", error=str(e))
+    ingestion_pipeline = None
+    logger.error("❌ Ingestion Pipeline initialization failed", error=str(e))
 
 try:
     if ExternalAPIManager:
@@ -255,9 +258,9 @@ except Exception as e:
     logger.warning("❌ Workflow Engine initialization failed", error=str(e)[:100])
     workflow_engine = None
 
-logger.info("Component initialization complete", 
+logger.info("Component initialization complete",
            rag_pipeline_available=rag_pipeline is not None,
-           document_processor_available=document_processor is not None)
+           ingestion_pipeline_available=ingestion_pipeline is not None)
 
 # Include Browser Extension API routes (separate from main functionality)
 try:
@@ -635,87 +638,92 @@ async def upload_document(
 ):
     """
     Document upload endpoint - MVP-FR-009 through MVP-FR-012
+    Uses the new IngestionPipeline for layout-aware, element-typed processing.
     """
+    import uuid
     logger.info("Upload request received", filename=file.filename, content_type=file.content_type, metadata=metadata)
+
     try:
-        if not document_processor:
-            # Enhanced fallback that actually processes documents
-            import uuid
-            job_id = str(uuid.uuid4())
-            
-            # Save file to uploads directory
-            os.makedirs("data/uploads", exist_ok=True)
-            file_path = f"data/uploads/{job_id}_{file.filename}"
-            
-            with open(file_path, "wb") as buffer:
-                content = await file.read()
-                buffer.write(content)
-            
-            # Create a basic processing job entry that can be tracked
-            fallback_jobs = getattr(app.state, 'fallback_jobs', {})
-            
-            # Parse metadata
-            try:
-                metadata_dict = json.loads(metadata) if metadata else {}
-            except:
-                metadata_dict = {"title": file.filename, "source_type": "COMPANY", "effective_date": datetime.utcnow().strftime("%Y-%m-%d")}
-            
-            # Create a completed job entry with enhanced summary
-            fallback_jobs[job_id] = {
-                'job_id': job_id,
-                'status': 'completed',
-                'progress': 100,
-                'filename': file.filename,
-                'created_at': datetime.utcnow().isoformat(),
-                'completed_at': datetime.utcnow().isoformat(),
-                'summary': create_enhanced_fallback_summary(file.filename, len(content), metadata_dict)
-            }
-            
-            app.state.fallback_jobs = fallback_jobs
-            
-            return DocumentUploadResponse(
-                job_id=job_id,
-                status="completed",
-                message=f"Document {file.filename} uploaded and processed successfully"
-            )
-        
-        # For MVP, use demo user
-        user_id = "demo-user"
-        
-        # Process document upload with fallback handling
+        # Parse metadata.
         try:
-            job_id = await document_processor.upload_document(
-                file=file,
-                metadata=metadata,
-                user_id=user_id
-            )
-        except Exception as e:
-            logger.warning(f"Document processor failed, using enhanced fallback: {str(e)}")
-            # Create enhanced fallback when document processor fails
-            import uuid
-            job_id = str(uuid.uuid4())
-            
-            # Save file to uploads directory
-            os.makedirs("data/uploads", exist_ok=True)
-            file_path = f"data/uploads/{job_id}_{file.filename}"
-            
-            # Reset file pointer and read content
-            file.file.seek(0)
-            content = await file.read()
-            
-            with open(file_path, "wb") as buffer:
-                buffer.write(content)
-            
-            # Parse metadata
-            try:
-                metadata_dict = json.loads(metadata) if metadata else {}
-            except:
-                metadata_dict = {"title": file.filename, "source_type": "COMPANY", "effective_date": datetime.utcnow().strftime("%Y-%m-%d")}
-            
-            # Create enhanced fallback summary with document analysis
-            enhanced_summary = create_enhanced_fallback_summary(file.filename, len(content), metadata_dict)
-            
-            # Store in fallback jobs
+            metadata_dict = json.loads(metadata) if metadata else {}
+        except Exception:
+            metadata_dict = {"title": file.filename, "source_type": "COMPANY", "effective_date": datetime.utcnow().strftime("%Y-%m-%d")}
+
+        job_id = str(uuid.uuid4())
+
+        # Save uploaded file.
+        os.makedirs("data/uploads", exist_ok=True)
+        file_ext = Path(file.filename).suffix
+        file_path = Path(f"data/uploads/{job_id}{file_ext}")
+
+        content = await file.read()
+        with open(file_path, "wb") as buffer:
+            buffer.write(content)
+
+        # Map source_type to jurisdiction.
+        source_to_jurisdiction = {
+            "US_GAAP": "US_GAAP", "US_STAT": "US_STAT",
+            "IFRS": "IFRS", "COMPANY": "unknown", "ACTUARIAL": "unknown",
+        }
+        jurisdiction = source_to_jurisdiction.get(metadata_dict.get("source_type", ""), "unknown")
+
+        if ingestion_pipeline:
+            # Process via new pipeline (async, non-blocking).
+            async def _run_ingestion() -> None:
+                try:
+                    result = await ingestion_pipeline.ingest(
+                        file_path=file_path,
+                        document_id=job_id,
+                        document_title=metadata_dict.get("title", file.filename),
+                        jurisdiction=jurisdiction,
+                    )
+                    fallback_jobs = getattr(app.state, 'fallback_jobs', {})
+                    fallback_jobs[job_id] = {
+                        'job_id': job_id,
+                        'status': 'completed' if not result.errors else 'completed_with_errors',
+                        'progress': 100,
+                        'filename': file.filename,
+                        'created_at': datetime.utcnow().isoformat(),
+                        'completed_at': datetime.utcnow().isoformat(),
+                        'chunks_created': result.total_chunks,
+                        'element_counts': result.element_counts,
+                        'errors': result.errors,
+                        'summary': {
+                            'title': metadata_dict.get("title", file.filename),
+                            'elements': result.total_elements,
+                            'chunks': result.total_chunks,
+                            'duration': f"{result.duration_seconds:.1f}s",
+                        },
+                    }
+                    app.state.fallback_jobs = fallback_jobs
+                    logger.info("Ingestion complete", job_id=job_id, chunks=result.total_chunks)
+                except Exception as e:
+                    logger.error("Ingestion failed", job_id=job_id, error=str(e))
+                    fallback_jobs = getattr(app.state, 'fallback_jobs', {})
+                    fallback_jobs[job_id] = {
+                        'job_id': job_id,
+                        'status': 'failed',
+                        'progress': 0,
+                        'filename': file.filename,
+                        'error': str(e),
+                    }
+                    app.state.fallback_jobs = fallback_jobs
+
+            # Store initial job entry.
+            fallback_jobs = getattr(app.state, 'fallback_jobs', {})
+            fallback_jobs[job_id] = {
+                'job_id': job_id,
+                'status': 'processing',
+                'progress': 0,
+                'filename': file.filename,
+                'created_at': datetime.utcnow().isoformat(),
+            }
+            app.state.fallback_jobs = fallback_jobs
+
+            asyncio.create_task(_run_ingestion())
+        else:
+            # Fallback: save file with basic summary (no pipeline available).
             fallback_jobs = getattr(app.state, 'fallback_jobs', {})
             fallback_jobs[job_id] = {
                 'job_id': job_id,
@@ -724,23 +732,23 @@ async def upload_document(
                 'filename': file.filename,
                 'created_at': datetime.utcnow().isoformat(),
                 'completed_at': datetime.utcnow().isoformat(),
-                'summary': enhanced_summary
+                'summary': create_enhanced_fallback_summary(file.filename, len(content), metadata_dict),
             }
             app.state.fallback_jobs = fallback_jobs
-        
+
         if audit_logger:
             await audit_logger.log_event(
                 event="document_uploaded",
-                user_id=user_id,
-                data={"filename": file.filename, "job_id": job_id}
+                user_id="demo-user",
+                data={"filename": file.filename, "job_id": job_id},
             )
-        
+
         return DocumentUploadResponse(
             job_id=job_id,
             status="accepted",
-            message="Document queued for processing"
+            message="Document queued for processing",
         )
-        
+
     except Exception as e:
         logger.error("Error uploading document", error=str(e), filename=file.filename, metadata=metadata)
         raise HTTPException(status_code=422, detail=f"Upload failed: {str(e)}")
@@ -860,18 +868,10 @@ Note: This is general accounting knowledge, not from your specific company docum
 @app.get("/api/v1/documents/{job_id}/status")
 async def get_document_status(job_id: str):
     """Get document processing status"""
-    # Check fallback jobs first
     fallback_jobs = getattr(app.state, 'fallback_jobs', {})
     if job_id in fallback_jobs:
         return fallback_jobs[job_id]
-    
-    if not document_processor:
-        raise HTTPException(status_code=404, detail="Document not found")
-    
-    # For MVP, use demo user
-    user_id = "demo-user"
-    status = await document_processor.get_status(job_id, user_id)
-    return status
+    raise HTTPException(status_code=404, detail="Document not found")
 
 @app.delete("/api/v1/documents/{job_id}")
 async def delete_document(job_id: str):
@@ -895,17 +895,16 @@ async def delete_document(job_id: str):
             deletion_results["fallback_jobs"] = {"removed": job_data.get("filename", "unknown")}
             logger.info(f"✅ Removed from fallback jobs: {job_data.get('filename')}")
         
-        # 3. Clear from document processor if available
-        if document_processor:
+        # 3. Clean up uploaded file
+        upload_dir = Path("data/uploads")
+        for f in upload_dir.glob(f"{job_id}*"):
             try:
-                # Remove from processing jobs
-                await document_processor.cleanup_job(job_id, user_id)
-                deletion_results["document_processor"] = "cleaned"
-                logger.info(f"✅ Document processor cleanup completed")
+                f.unlink()
+                deletion_results["upload_file"] = f"deleted {f.name}"
+                logger.info(f"✅ Upload file deleted: {f.name}")
             except Exception as e:
-                logger.warning(f"⚠️ Document processor cleanup failed: {str(e)}")
-                deletion_results["document_processor"] = f"failed: {str(e)}"
-        
+                logger.warning(f"⚠️ Upload file cleanup failed: {str(e)}")
+
         # 4. Clear any targeted cache entries
         if rag_pipeline and hasattr(rag_pipeline, 'redis_client') and rag_pipeline.redis_client:
             try:
@@ -950,7 +949,7 @@ async def get_knowledge_stats():
             "components": {
                 "rag_pipeline": rag_pipeline is not None,
                 "compliance_engine": compliance_engine is not None,
-                "document_processor": document_processor is not None,
+                "ingestion_pipeline": ingestion_pipeline is not None,
                 "external_api_manager": external_api_manager is not None
             }
         }
@@ -1219,32 +1218,7 @@ async def get_document_summary(job_id: str):
                 "summary": job_data.get('summary', {})
             }
         
-        logger.info(f"🔍 Job not in fallback_jobs, checking document_processor")
-        
-        if not document_processor:
-            logger.error(f"❌ Document processor not available for job_id: {job_id}")
-            raise HTTPException(status_code=404, detail="Document not found")
-        
-        # For MVP, use demo user
-        user_id = "demo-user"
-        logger.info(f"👤 Using user_id: {user_id} for document processor")
-        
-        # Get document status which includes summary
-        status = await document_processor.get_status(job_id, user_id)
-        logger.info(f"📊 Document processor status: {status}")
-        
-        if 'summary' not in status:
-            raise HTTPException(status_code=404, detail="Document summary not available")
-        
-        return {
-            "job_id": job_id,
-            "document_info": {
-                "filename": status.get('filename'),
-                "status": status.get('status'),
-                "created_at": status.get('created_at')
-            },
-            "summary": status['summary']
-        }
+        raise HTTPException(status_code=404, detail="Document not found")
         
     except HTTPException:
         raise
@@ -1409,7 +1383,7 @@ async def ingest_sec_filing(request: dict):
     if not sec_source_available:
         raise HTTPException(status_code=503, detail="SEC EDGAR integration not available")
     
-    if not document_processor or not rag_pipeline:
+    if not rag_pipeline:
         raise HTTPException(status_code=503, detail="Document processing not available")
     
     try:

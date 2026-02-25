@@ -15,17 +15,9 @@ import asyncio
 from datetime import datetime
 
 try:
-    from .enhanced_document_processor import EnhancedDocumentProcessor as DocumentProcessor
+    from .ingestion import IngestionPipeline
 except ImportError:
-    try:
-        from .document_processor import DocumentProcessor
-    except ImportError:
-        DocumentProcessor = None
-
-try:
-    from .rag_pipeline import RAGPipeline
-except ImportError:
-    RAGPipeline = None
+    IngestionPipeline = None
 
 logger = structlog.get_logger()
 
