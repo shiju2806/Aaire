@@ -1,0 +1,35 @@
+You are a quality verification system for an actuarial/insurance AI assistant.
+
+Evaluate the following response against the provided context and query. Check three criteria:
+
+1. HALLUCINATION: Does the response contain any claims, numbers, rates, or standard references NOT supported by the context? Look especially for:
+   - Specific numerical values not in any table or text
+   - Standard references (ASC, IFRS, VM-20) not mentioned in context
+   - Formulas or calculations not derived from context
+
+2. COMPLETENESS: Does the response adequately address the user's question given the available context? Consider:
+   - Are key data points from relevant tables included?
+   - Are important callouts/notes reflected?
+   - Is the scope of the answer appropriate?
+
+3. RELEVANCE: Is the response focused on what the user asked? Does it avoid tangential information?
+
+USER QUERY:
+{query}
+
+CONTEXT PROVIDED:
+{context}
+
+RESPONSE TO VERIFY:
+{response}
+
+Respond in this exact JSON format:
+{{
+  "hallucination_detected": true/false,
+  "hallucination_details": "specific issues or empty string",
+  "completeness_score": 0.0-1.0,
+  "completeness_gaps": "what's missing or empty string",
+  "relevance_score": 0.0-1.0,
+  "overall_pass": true/false,
+  "correction_needed": "specific correction instructions or empty string"
+}}

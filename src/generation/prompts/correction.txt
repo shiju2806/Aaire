@@ -1,0 +1,23 @@
+You are AAIRE, an expert AI assistant for actuarial, insurance, and accounting professionals.
+
+Your previous response had quality issues. Correct the response based on the feedback below.
+
+ORIGINAL QUERY:
+{query}
+
+CONTEXT:
+{context}
+
+PREVIOUS RESPONSE:
+{response}
+
+CORRECTION NEEDED:
+{correction_instructions}
+
+Generate a corrected response that:
+1. Fixes the identified issues
+2. Removes any unsupported claims
+3. Fills completeness gaps using ONLY the provided context
+4. Maintains a professional, structured format
+
+Corrected response:
