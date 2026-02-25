@@ -67,6 +67,16 @@ from .rag_modules.services import SemanticSimilarityService, create_semantic_sim
 from .rag_modules.search import create_bm25_search_engine
 from .rag_modules.storage import DocumentManager, create_document_manager
 
+# Phase 2-4 modules
+from .providers import get_llm_provider
+from .retrieval.intent_cache import IntentCache
+from .retrieval.element_aware_retriever import ElementAwareRetriever
+from .ingestion.chunk_schema import StructuredStore
+from .generation.context_assembler import ContextAssembler
+from .generation.verification import VerificationPipeline
+from .generation.compliance_check import ComplianceChecker
+from .generation.citation_builder import CitationBuilder
+
 logger = structlog.get_logger()
 
 class RAGPipeline:
@@ -220,6 +230,24 @@ class RAGPipeline:
             config=self.config
         )
 
+
+        # Initialize Phase 2-4 modules
+        self._llm_provider = get_llm_provider()
+        self.intent_cache = IntentCache()
+        self.structured_store = StructuredStore()
+        self.element_aware_retriever = ElementAwareRetriever(
+            document_retriever=self.document_retriever,
+            structured_store=self.structured_store,
+        )
+        self.context_assembler = ContextAssembler()
+        self.verification_pipeline = VerificationPipeline(
+            llm_provider=self._llm_provider,
+        )
+        self.compliance_checker = ComplianceChecker(
+            llm_provider=self._llm_provider,
+        )
+        self.citation_builder = CitationBuilder()
+        logger.info("Phase 2-4 modules initialized (element-aware retrieval, context assembly, verification, compliance, citations)")
 
         # Initialize document manager (will create the index)
         self.document_manager = create_document_manager(
@@ -649,61 +677,82 @@ class RAGPipeline:
             # Store current query for citation filtering
             self._current_query = query
             
-            # ALWAYS search uploaded documents first, enhanced with semantic similarity
-            async def base_retrieval_func():
-                return await self.document_retriever.retrieve_documents(expanded_query, doc_type_filter, similarity_threshold, filters)
+            # --- Phase 3: Intent cache fast-path ---
+            cached_intent = self.intent_cache.classify_fast(expanded_query)
+            if cached_intent:
+                logger.info("Intent fast-path matched", query_type=cached_intent.query_type, jurisdiction=cached_intent.jurisdiction)
 
-            retrieved_docs = await base_retrieval_func()
+            # --- Phase 3: Element-aware retrieval with parallel search + early exit ---
+            enriched_results = await self.element_aware_retriever.retrieve(
+                query=expanded_query,
+                doc_type_filter=doc_type_filter,
+                similarity_threshold=similarity_threshold,
+                filters=filters,
+                fetch_originals=True,
+            )
+
+            # Convert enriched results back to dict format for backward compatibility
+            retrieved_docs = []
+            for er in enriched_results:
+                doc = {
+                    'content': er.original_content or er.content,
+                    'metadata': er.metadata,
+                    'score': er.score,
+                    'relevance_score': er.score,
+                    'node_id': er.node_id,
+                    'search_type': er.search_type,
+                }
+                retrieved_docs.append(doc)
 
             # Apply semantic similarity enhancement to improve document ranking
             if retrieved_docs and len(retrieved_docs) > 0:
                 logger.info(f"Applying cross-encoder reranking to {len(retrieved_docs)} retrieved documents")
-                # Rerank ALL documents (no filtering) - cross-encoder scores can be negative!
                 retrieved_docs = self.semantic_similarity_service.enhance_retrieval_with_semantic_similarity(
-                    query, retrieved_docs, top_k=None  # Keep all documents, just reranked
+                    query, retrieved_docs, top_k=None
                 )
-                logger.info(f"Cross-encoder reranking completed, {len(retrieved_docs)} documents reranked")
-            
+
             # Check if we found relevant documents in uploaded content
             if retrieved_docs and len(retrieved_docs) > 0:
-                # Found relevant documents - use them for response
                 logger.info(f"Found {len(retrieved_docs)} relevant documents for query: '{query[:50]}...'")
-                
-                # Log document sources for transparency
+
                 doc_sources = [(doc['metadata'].get('filename', 'Unknown'),
                               doc.get('relevance_score', doc.get('score', 0)))
                              for doc in retrieved_docs[:5]]
                 logger.info(f"Top document sources with scores: {doc_sources}")
 
-                # Log detailed chunk content for SR/DR/NPR analysis
-                logger.info("=" * 80)
-                logger.info("📄 DETAILED CHUNK ANALYSIS FOR RETRIEVED DOCUMENTS")
-                logger.info("=" * 80)
-                for idx, doc in enumerate(retrieved_docs[:10], 1):
-                    content_preview = doc['content'][:300].replace('\n', ' ')
-                    contains_sr = 'stochastic' in doc['content'].lower() or 'cte' in doc['content'].lower()
-                    contains_dr = 'deterministic' in doc['content'].lower()
-                    contains_npr = 'net premium' in doc['content'].lower()
+                # --- Phase 4: Assemble rich context ---
+                assembled = self.context_assembler.assemble(enriched_results, query)
 
-                    logger.info(f"\n📑 Chunk #{idx}")
-                    logger.info(f"   Score: {doc.get('relevance_score', doc.get('score', 0)):.4f}")
-                    logger.info(f"   Length: {len(doc['content'])} chars")
-                    logger.info(f"   Contains: SR={contains_sr}, DR={contains_dr}, NPR={contains_npr}")
-                    logger.info(f"   Preview: {content_preview}...")
-                logger.info("=" * 80)
-                
-                # Check for potential document confusion issues
-                unique_sources = set([source[0] for source in doc_sources])
-                if len(unique_sources) > 1:
-                    logger.info(f"Multiple document sources found for query, applying strict citation filters")
-                
-                response = await self.response_generator.generate_response(query, retrieved_docs, user_context, conversation_history, session_id, taxonomy_terms)
+                # --- Phase 4: Generate with verification pipeline (2-3 LLM calls max) ---
+                conversation_context = ""
+                if conversation_history:
+                    recent = conversation_history[-6:]  # Last 3 exchanges
+                    conversation_context = "\n".join(
+                        f"{msg.get('role', 'user')}: {msg.get('content', '')}" for msg in recent
+                    )
 
+                verification_result = await self.verification_pipeline.run(
+                    query=query,
+                    context_text=assembled.text,
+                    conversation_history=conversation_context,
+                )
+                response = verification_result.response
+                logger.info(
+                    "Verification complete",
+                    verified=verification_result.verified,
+                    llm_calls=verification_result.llm_calls,
+                    correction_applied=verification_result.correction_applied,
+                )
 
-                # Pass 2: Format the response using LLM-based formatting
-                response = self.formatting_manager.format_response(response)
-                
-                citations = self.citation_analyzer.extract_citations(retrieved_docs, query, response)
+                # --- Phase 4: Post-generation compliance check ---
+                compliance_result = await self.compliance_checker.check(response)
+                response = compliance_result.response
+                if compliance_result.disclaimer_added:
+                    logger.info("Compliance disclaimer added", issues=compliance_result.issues)
+
+                # --- Phase 4: Precise citations ---
+                built_citations = self.citation_builder.build(enriched_results, response)
+                citations = [c.to_dict() for c in built_citations]
                 confidence = self.quality_metrics_manager.calculate_confidence(retrieved_docs, response)
             else:
                 # No relevant documents found - check if this could be relevant general knowledge
