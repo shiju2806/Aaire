@@ -1,0 +1,87 @@
+# Knowledge Graph Configuration
+# ES-backed entity-relationship graph for entity disambiguation in RAG retrieval.
+#
+# Reload at runtime: config_loader.reload_config("knowledge_graph")
+
+graph_store:
+  index_name: "aaire-entities"
+  # Max hops for graph traversal when finding connected chunks
+  max_traversal_hops: 2
+  # Minimum confidence to keep a relationship in the graph
+  min_relationship_confidence: 0.60
+
+entity_resolution:
+  # Stage 1: Exact alias match — always auto-merge
+  exact_match_threshold: 1.0
+
+  # Stage 2: Fuzzy string match (Jaro-Winkler on canonical_name + aliases)
+  fuzzy_match_threshold: 0.85
+
+  # Stage 3: Embedding cosine similarity on entity names
+  embedding_threshold: 0.80
+
+  # Confidence zone for human review (between these values → review queue)
+  review_zone:
+    low: 0.65
+    high: 0.85
+
+  # What to do below review_zone.low
+  below_review: "create_new"   # "create_new" | "discard"
+
+  # Human review queue
+  review_queue:
+    enabled: true
+    storage: "data/entity_review_queue.jsonl"
+
+extraction:
+  # Master kill switch — set to false to disable LLM relationship extraction
+  enabled: true
+
+  # Only send chunks with ≥ this many entities to LLM
+  min_entities_per_chunk: 2
+
+  # Batch size: group N chunks per LLM call to reduce API overhead
+  batch_size: 5
+
+  # Content-hash cache directory (SHA256 of chunk text → skip if seen)
+  cache_dir: "data/entity_extraction_cache"
+
+  # Relationship types the LLM may produce
+  relationship_types:
+    - headed_by
+    - part_of
+    - governed_by
+    - defined_as
+    - reports_to
+    - implements
+    - contains
+
+retrieval:
+  # Boost factor for graph-connected chunks in RRF merge
+  graph_boost: 1.3
+
+  # Max graph-connected chunks to inject into retrieval
+  max_graph_chunks: 20
+
+  # Whether to inject entity context string into LLM prompt
+  inject_entity_context: true
+
+privacy:
+  # PII handling mode: "plaintext" | "hmac" | "exclude"
+  #   plaintext — development/testing (no protection)
+  #   hmac      — staging/UAT (HMAC with per-deployment secret)
+  #   exclude   — production (person entities excluded from graph entirely)
+  pii_mode: "plaintext"
+
+  # Environment variable holding HMAC secret (for pii_mode=hmac)
+  hmac_key_env: "ENTITY_PII_KEY"
+
+  # Entity types considered PII
+  pii_entity_types:
+    - person
+
+audit:
+  # Structured logging of retrieval decisions
+  enabled: true
+  # Log level for audit events
+  log_level: "info"

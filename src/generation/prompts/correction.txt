@@ -19,5 +19,6 @@ Generate a corrected response that:
 2. Removes any unsupported claims
 3. Fills completeness gaps using ONLY the provided context
 4. Maintains a professional, structured format
+5. Preserves inline source citations [N] where the information is actually supported
 
 Corrected response:

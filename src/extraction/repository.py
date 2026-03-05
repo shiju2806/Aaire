@@ -9,8 +9,8 @@ from typing import Dict, List, Any, Optional, Tuple
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
     PointStruct, Filter, FieldCondition, MatchValue, MatchAny,
-    VectorParams, Distance, OptimizersConfig, HnswConfigDiff,
-    PayloadSchemaType, SearchParams, CreateCollection, UpdateCollection
+    VectorParams, Distance, OptimizersConfigDiff, HnswConfigDiff,
+    PayloadSchemaType, SearchParams
 )
 import structlog
 
@@ -72,16 +72,13 @@ class DocumentRepository:
             full_scan_threshold=self.config.get('hnsw_full_scan_threshold', 10000)
         )
 
-        # Optimizer configuration
-        optimizer_config = OptimizersConfig(
+        # Optimizer configuration (use Diff model for create_collection)
+        optimizer_config = OptimizersConfigDiff(
             deleted_threshold=0.2,
             vacuum_min_vector_number=1000,
             default_segment_number=2,
-            max_segment_size=None,
-            memmap_threshold=None,
             indexing_threshold=self.config.get('indexing_threshold', 20000),
             flush_interval_sec=5,
-            max_optimization_threads=None
         )
 
         self.client.create_collection(

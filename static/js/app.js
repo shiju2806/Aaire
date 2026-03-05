@@ -1068,8 +1068,10 @@ class AAIREApp {
     }
 
     async pollDocumentStatus(jobId, attempt) {
-        const maxAttempts = 6; // Try for ~30 seconds
-        const delays = [2000, 3000, 5000, 5000, 10000, 10000]; // Increasing delays
+        const maxAttempts = 30; // Try for ~5 minutes (covers large document ingestion)
+        const delays = [2000, 3000, 5000, 5000, 10000, 10000, 10000, 10000, 10000, 10000,
+                        10000, 10000, 10000, 10000, 10000, 10000, 10000, 10000, 10000, 10000,
+                        10000, 10000, 10000, 10000, 10000, 10000, 10000, 10000, 10000, 10000]; // Poll every 10s after initial ramp
         
         try {
             const response = await fetch(`/api/v1/documents/${jobId}/status`);
@@ -1104,20 +1106,20 @@ class AAIREApp {
                         }
                     }
                     // If accepted, also retry (might change to completed)
-                    else if (status.status === 'accepted' && attempt < 3) {
+                    else if (status.status === 'accepted' && attempt < maxAttempts - 1) {
                         setTimeout(() => {
                             this.pollDocumentStatus(jobId, attempt + 1);
-                        }, delays[attempt] || 5000);
+                        }, delays[attempt] || 10000);
                     }
                 }
             }
         } catch (error) {
             console.warn(`Could not check document status (attempt ${attempt + 1}):`, error);
             // Retry on error too
-            if (attempt < 3) {
+            if (attempt < maxAttempts - 1) {
                 setTimeout(() => {
                     this.pollDocumentStatus(jobId, attempt + 1);
-                }, delays[attempt] || 5000);
+                }, delays[attempt] || 10000);
             }
         }
     }

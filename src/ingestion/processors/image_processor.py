@@ -97,19 +97,12 @@ class ImageProcessor:
         elem: DocumentElement,
         document_title: str,
     ) -> str:
-        """Generate text description of an image element."""
-        # If vision model available, use it.
-        if self._llm is not None and hasattr(self._llm, "generate"):
-            try:
-                # Future: pass actual image bytes/base64 to vision-capable model.
-                # For now, use context clues if available.
-                context = f"Document: {document_title}, Section: {elem.parent_section}"
-                prompt = f"{_VISION_PROMPT}\n\nContext: {context}\nImage caption/alt text: {elem.content}"
-                return await self._llm.generate(prompt, task="extraction")
-            except Exception as e:
-                logger.warning("Vision model description failed", error=str(e))
+        """Generate text description of an image element.
 
-        # Fallback: use whatever text content is available.
+        When Docling VLM is enabled, elem.content already contains the
+        VLM-generated description from parsing — no extra API call needed.
+        Falls back to a placeholder when content is empty.
+        """
         if elem.content and elem.content.strip():
             return elem.content.strip()
 

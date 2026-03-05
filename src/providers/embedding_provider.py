@@ -114,7 +114,10 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
         """Return a LlamaIndex OpenAIEmbedding configured with our model."""
         if self._llama_embedding is None:
             from llama_index.embeddings.openai import OpenAIEmbedding
-            self._llama_embedding = OpenAIEmbedding(model=self._model_name)
+            self._llama_embedding = OpenAIEmbedding(
+                model=self._model_name,
+                dimensions=self._dimension,
+            )
         return self._llama_embedding
 
 

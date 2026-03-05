@@ -31,6 +31,8 @@ class AssembledContext:
         truncated: Whether truncation was applied.
         total_chars: Total character count of the context.
         source_documents: List of source document titles referenced.
+        source_map: Maps source index [N] to the EnrichedResult or metadata
+                    that produced it, enabling inline citation extraction.
     """
 
     text: str = ""
@@ -39,6 +41,7 @@ class AssembledContext:
     truncated: bool = False
     total_chars: int = 0
     source_documents: List[str] = field(default_factory=list)
+    source_map: Dict[int, Any] = field(default_factory=dict)
 
 
 class ContextAssembler:
@@ -85,43 +88,58 @@ class ContextAssembler:
         # Group results by section for locality.
         grouped = self._group_by_section(results)
 
-        # Render each element.
-        rendered_blocks: List[tuple[float, str, str]] = []  # (score, element_type, text)
+        # Render each element with a source index [N].
+        # rendered_blocks: (score, element_type, text, source_item_or_None)
+        rendered_blocks: List[tuple[float, str, str, Any]] = []
         for section, items in grouped:
             if section:
-                rendered_blocks.append((999.0, "section_header", f"\n### {section}\n"))
+                rendered_blocks.append((999.0, "section_header", f"\n### {section}\n", None))
 
             for item in items:
                 score = self._get_score(item)
                 element_type = self._get_element_type(item)
                 rendered = self._render_element(item, element_type)
                 if rendered:
-                    rendered_blocks.append((score, element_type, rendered))
+                    rendered_blocks.append((score, element_type, rendered, item))
 
         # Build the context string, respecting token limit.
+        # Each non-header block gets a [N] prefix for inline citation support.
         context_parts: List[str] = []
         total_chars = 0
         truncated = False
         type_counts: Dict[str, int] = {}
         doc_titles: set = set()
+        source_map: Dict[int, Any] = {}
+        source_index = 0
 
-        for _, element_type, text in rendered_blocks:
-            if total_chars + len(text) > self._max_chars:
+        for _, element_type, text, source_item in rendered_blocks:
+            if element_type == "section_header":
+                # Section headers don't get a source number.
+                block_text = text
+            else:
+                source_index += 1
+                block_text = f"[{source_index}] {text}"
+                if source_item is not None:
+                    source_map[source_index] = source_item
+
+            if total_chars + len(block_text) > self._max_chars:
                 truncated = True
-                # Try to include a truncated version of this block.
                 remaining = self._max_chars - total_chars
                 if remaining > 200:
-                    context_parts.append(text[:remaining] + "\n[...truncated]")
+                    context_parts.append(block_text[:remaining] + "\n[...truncated]")
                     total_chars += remaining
                 break
 
-            context_parts.append(text)
-            total_chars += len(text)
+            context_parts.append(block_text)
+            total_chars += len(block_text)
             if element_type != "section_header":
                 type_counts[element_type] = type_counts.get(element_type, 0) + 1
 
             # Track source documents.
-            doc_title = self._get_doc_title(rendered_blocks)
+            if source_item is not None:
+                title = self._get_doc_title(source_item)
+                if title:
+                    doc_titles.add(title)
 
         context_text = "\n\n".join(context_parts)
 
@@ -132,6 +150,7 @@ class ContextAssembler:
             truncated=truncated,
             total_chars=total_chars,
             source_documents=sorted(doc_titles),
+            source_map=source_map,
         )
 
         logger.info(

@@ -248,58 +248,76 @@ class DocumentRetriever:
         """Original vector-based semantic search with filtering support"""
         all_results = []
 
-        try:
-            # Use buffer limit if provided (for combined ranking), otherwise use dynamic calculation
-            if buffer_limit is not None:
-                vector_limit = buffer_limit
-            else:
-                # Get dynamic document limit based on query
-                doc_limit = self.quality_metrics_manager.get_document_limit(query)
-                # For standalone search, allocate 70% to vector search
-                vector_limit = int(doc_limit * 0.7)
+        # Use buffer limit if provided (for combined ranking), otherwise use dynamic calculation
+        if buffer_limit is not None:
+            vector_limit = buffer_limit
+        else:
+            # Get dynamic document limit based on query
+            doc_limit = self.quality_metrics_manager.get_document_limit(query)
+            # For standalone search, allocate 70% to vector search
+            vector_limit = int(doc_limit * 0.7)
 
-            # Create retriever from single index with dynamic limit
-            retriever = self.index.as_retriever(
-                similarity_top_k=vector_limit
-            )
+        # Create retriever from single index with dynamic limit
+        retriever = self.index.as_retriever(
+            similarity_top_k=vector_limit
+        )
 
-            # Retrieve documents
-            nodes = retriever.retrieve(query)
+        # Retrieve documents — let connection/transient errors propagate for retry
+        nodes = retriever.retrieve(query)
 
-            # Use adaptive threshold if provided, otherwise fall back to config
-            threshold = similarity_threshold if similarity_threshold is not None else self.config.get('retrieval_config', {}).get('similarity_threshold', 0.5)
+        # Use adaptive threshold if provided, otherwise fall back to config
+        threshold = similarity_threshold if similarity_threshold is not None else self.config.get('retrieval_config', {}).get('similarity_threshold', 0.5)
 
-            for node in nodes:
-                if node.score >= threshold:
-                    # Apply job_id filter if specified (highest priority)
-                    if filters and 'job_id' in filters:
-                        node_job_id = node.metadata.get('job_id') if node.metadata else None
-                        if node_job_id != filters['job_id']:
-                            continue  # Skip nodes from different documents
+        for node in nodes:
+            if node.score >= threshold:
+                # Apply job_id filter if specified (highest priority)
+                if filters and 'job_id' in filters:
+                    node_job_id = node.metadata.get('job_id') if node.metadata else None
+                    if node_job_id != filters['job_id']:
+                        continue  # Skip nodes from different documents
 
-                    # Apply document type filter if specified
-                    if doc_type_filter:
-                        node_doc_type = node.metadata.get('doc_type') if node.metadata else None
-                        if node_doc_type not in doc_type_filter:
-                            continue  # Skip nodes that don't match filter
+                # Apply document type filter if specified
+                if doc_type_filter:
+                    node_doc_type = node.metadata.get('doc_type') if node.metadata else None
+                    if node_doc_type not in doc_type_filter:
+                        continue  # Skip nodes that don't match filter
 
-                    # Apply smart metadata filters if specified
-                    if filters:
-                        node_metadata = node.metadata or {}
+                # Apply smart metadata filters if specified
+                if filters:
+                    node_metadata = node.metadata or {}
 
-                        # Apply required filters (must match exactly)
+                    # Apply required filters (must match exactly)
+                    skip_node = False
+                    for key, value in filters.items():
+                        if key.startswith('_'):  # Skip special filter keys
+                            continue
+                        if key in ['job_id']:  # Skip already handled filters
+                            continue
+
+                        node_value = node_metadata.get(key)
+                        if node_value != value:
+                            # For context_tags, also check if the required tag is in the list
+                            if key == 'context_tags' and isinstance(node_value, list):
+                                if value not in node_value:
+                                    skip_node = True
+                                    break
+                            else:
+                                skip_node = True
+                                break
+
+                    if skip_node:
+                        continue
+
+                    # Apply excluded filters (must NOT match)
+                    if '_excluded' in filters:
+                        excluded_filters = filters['_excluded']
                         skip_node = False
-                        for key, value in filters.items():
-                            if key.startswith('_'):  # Skip special filter keys
-                                continue
-                            if key in ['job_id']:  # Skip already handled filters
-                                continue
-
+                        for key, value in excluded_filters.items():
                             node_value = node_metadata.get(key)
-                            if node_value != value:
-                                # For context_tags, also check if the required tag is in the list
+                            if node_value == value:
+                                # For context_tags, check if excluded tag is in the list
                                 if key == 'context_tags' and isinstance(node_value, list):
-                                    if value not in node_value:
+                                    if value in node_value:
                                         skip_node = True
                                         break
                                 else:
@@ -309,41 +327,18 @@ class DocumentRetriever:
                         if skip_node:
                             continue
 
-                        # Apply excluded filters (must NOT match)
-                        if '_excluded' in filters:
-                            excluded_filters = filters['_excluded']
-                            skip_node = False
-                            for key, value in excluded_filters.items():
-                                node_value = node_metadata.get(key)
-                                if node_value == value:
-                                    # For context_tags, check if excluded tag is in the list
-                                    if key == 'context_tags' and isinstance(node_value, list):
-                                        if value in node_value:
-                                            skip_node = True
-                                            break
-                                    else:
-                                        skip_node = True
-                                        break
-
-                            if skip_node:
-                                continue
-
-                    all_results.append({
-                        'content': node.text,
-                        'metadata': node.metadata or {},
-                        'score': node.score,
-                        'source_type': node.metadata.get('doc_type', 'unknown') if node.metadata else 'unknown',
-                        'node_id': node.id_,
-                        'search_type': 'vector'
-                    })
-
-        except Exception as e:
-            logger.error("Failed to retrieve from index", error=str(e), exc_info=True)
+                all_results.append({
+                    'content': node.text,
+                    'metadata': node.metadata or {},
+                    'score': node.score,
+                    'source_type': node.metadata.get('doc_type', 'unknown') if node.metadata else 'unknown',
+                    'node_id': node.id_,
+                    'search_type': 'vector'
+                })
 
         # Sort by relevance score
         all_results.sort(key=lambda x: x['score'], reverse=True)
-        # Note: vector_limit is already applied in retriever, but trimming here for safety
-        return all_results[:vector_limit] if 'vector_limit' in locals() else all_results
+        return all_results[:vector_limit]
 
     async def keyword_search(self, query: str, doc_type_filter: Optional[List[str]],
                            filters: Optional[Dict[str, Any]] = None,

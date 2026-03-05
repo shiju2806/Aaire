@@ -20,6 +20,7 @@ providers:
       taxonomy: gpt-4o-mini           # domain term relationship extraction
       query_enhancement: gpt-4o-mini  # query rewriting and expansion
       reasoning: gpt-4o               # chain-of-thought, complex analysis
+      entity_graph_extraction: gpt-4o-mini  # structured relationship extraction
 
     # Default parameters per task type
     params:
@@ -55,7 +56,11 @@ providers:
         temperature: 0.2
         max_tokens: 8000
 
+      entity_graph_extraction:
+        temperature: 0.0
+        max_tokens: 1000
+
 # Embedding model configuration
 embedding:
   model: text-embedding-3-large
-  dimension: 1536
+  dimension: 3072

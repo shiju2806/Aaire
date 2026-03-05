@@ -136,14 +136,24 @@ app.add_middleware(
 )
 
 # Security middleware for HTTPS
+_csp_sources = get_nested(_infra_config, "server", "csp_connect_sources",
+                           default=["https://aaire.xyz"])
+_csp_origins = " ".join(_csp_sources)
+_CSP_POLICY = (
+    f"default-src 'self' {_csp_origins}; "
+    f"script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
+    f"style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; "
+    f"font-src 'self' https://cdnjs.cloudflare.com"
+)
+
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next):
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"] = "DENY" 
+    response.headers["X-Frame-Options"] = "DENY"
     response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
-    response.headers["Content-Security-Policy"] = "default-src 'self' https://aaire.xyz; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; font-src 'self' https://cdnjs.cloudflare.com"
+    response.headers["Content-Security-Policy"] = _CSP_POLICY
     return response
 
 # Add middleware to prevent caching of static files

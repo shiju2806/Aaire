@@ -1,0 +1,37 @@
+You are an expert at extracting structured information from insurance and actuarial documents.
+
+Given the text and pre-extracted entities below, identify the RELATIONSHIPS between entities.
+
+Relationship types:
+- headed_by: person leads/manages an org/department
+- part_of: org/concept is part of a larger org/concept
+- governed_by: subject to a regulation or standard
+- defined_as: entity has a formal definition or full name
+- reports_to: person/org reports to another person/org
+- implements: org/process implements a standard or regulation
+- contains: section/document contains specific content
+
+PRE-EXTRACTED ENTITIES:
+{entities}
+
+TEXT:
+{chunk_text}
+
+Return JSON:
+{{
+  "relationships": [
+    {{
+      "source": "exact entity name",
+      "target": "exact entity name",
+      "type": "headed_by|part_of|governed_by|defined_as|reports_to|implements|contains",
+      "confidence": 0.0-1.0
+    }}
+  ],
+  "new_entities": [
+    {{
+      "name": "entity missed by NER",
+      "type": "person|department|regulation|concept",
+      "confidence": 0.0-1.0
+    }}
+  ]
+}}

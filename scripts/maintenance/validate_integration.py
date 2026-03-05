@@ -42,7 +42,7 @@ def validate_integration():
     
     integrations = [
         ("Enhanced Document Processor import", "from src.enhanced_document_processor import EnhancedDocumentProcessor"),
-        ("Enhanced Query Processing", "process_query_with_intelligence"),
+        ("Query Processing", "process_query"),
         ("Shape-aware logging", "Using Enhanced Document Processor")
     ]
     

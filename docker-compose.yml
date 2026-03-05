@@ -21,6 +21,7 @@ services:
       - redis
       - postgres
       - qdrant
+      - elasticsearch
     restart: unless-stopped
     networks:
       - aaire-network
@@ -67,6 +68,21 @@ services:
     networks:
       - aaire-network
 
+  elasticsearch:
+    image: elasticsearch:8.12.0
+    container_name: aaire-elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    ports:
+      - "9200:9200"
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+    restart: unless-stopped
+    networks:
+      - aaire-network
+
   # Optional: Nginx reverse proxy
   nginx:
     image: nginx:alpine
@@ -89,6 +105,7 @@ volumes:
   redis-data:
   postgres-data:
   qdrant-data:
+  elasticsearch-data:
 
 networks:
   aaire-network:

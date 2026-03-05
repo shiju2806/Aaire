@@ -116,23 +116,13 @@ class TableProcessor:
         document_title: str,
         section: str,
     ) -> str:
-        """Generate a text summary of the table for embedding."""
-        # Try LLM-based summary first.
-        if self._llm is not None:
-            try:
-                prompt = (
-                    f"Summarize this table in 1-2 sentences. "
-                    f"Include what it shows, key columns, and data context.\n\n"
-                    f"Document: {document_title}\n"
-                    f"Section: {section}\n"
-                    f"Table:\n{markdown[:3000]}"
-                )
-                return await self._llm.generate(prompt, task="extraction")
-            except Exception as e:
-                logger.warning("LLM table summary failed, using heuristic", error=str(e))
+        """Generate a text summary of the table for embedding.
 
-        # Heuristic fallback.
-        col_str = ", ".join(columns[:8])
+        Uses heuristic summary (column names + row count) which is sufficient
+        for vector search. LLM summaries add API cost without meaningful
+        retrieval quality improvement.
+        """
+        col_str = ", ".join(str(c) for c in columns[:8])
         if len(columns) > 8:
             col_str += f", ... ({len(columns)} columns total)"
 

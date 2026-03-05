@@ -1,0 +1,40 @@
+# Ingestion pipeline configuration
+# Controls document parsing, VLM image description, and processor behavior.
+
+layout_parser:
+  vlm:
+    enabled: false                  # Disabled — SmolVLM-256M removed; Ollama handles vision
+
+  api_ollama:
+    url: "http://localhost:11434"
+    timeout: 120                    # Vision inference needs more time
+
+  # Sparse-page VLM fallback: when Docling produces very few elements for a page
+  # (e.g., org charts, flow diagrams classified as text), render the page as an
+  # image and describe it with the VLM for structured content.
+  sparse_page_fallback:
+    enabled: true
+    # api_openai  — best quality, fast (3-13s/page), sends images to OpenAI
+    # api_ollama  — fully local, needs 16GB+ GPU for llama3.2-vision:11b
+    engine: "api_openai"
+    model: "gpt-4o-mini"            # api_openai: gpt-4o-mini | api_ollama: llama3.2-vision
+    max_elements_per_page: 3        # Pages with ≤N elements are candidates
+    min_avg_elements_per_page: 5    # Only trigger if document is generally sparse
+    vlm_image_scale: 2.0            # Render quality (2x for readability)
+    vlm_max_tokens: 1024            # More tokens for detailed descriptions
+    vlm_prompt: |
+      Describe this document page in detail. Include:
+      - All text, names, titles, labels, and data values visible
+      - The visual structure and layout (org charts, flow diagrams, etc.)
+      - Hierarchical relationships (who reports to whom, what connects to what)
+      - Any headings, footers, or annotations
+      Preserve structure using indentation or bullet points to show hierarchy.
+
+graph_store:
+  bulk_buffer_size: 50          # Batch N entity writes before ES refresh
+
+processors:
+  table:
+    use_llm_summary: false      # false = heuristic (fast), true = LLM (slow)
+  image:
+    use_llm_fallback: false     # Only used when VLM is disabled

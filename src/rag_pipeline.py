@@ -302,13 +302,14 @@ class RAGPipeline:
         if self.vector_store_type == "qdrant" and hasattr(self, 'qdrant_client'):
             try:
                 from qdrant_client.models import PayloadSchemaType
-                for entity_field in ["entities", "entity_orgs", "entity_persons", "document_title"]:
+                for entity_field in ["entities", "entity_orgs", "entity_persons", "document_title",
+                                     "doc_content_hash", "content_hash"]:
                     self.qdrant_client.create_payload_index(
                         collection_name=self.collection_name,
                         field_name=entity_field,
                         field_schema=PayloadSchemaType.KEYWORD,
                     )
-                logger.info("Entity payload indexes ensured")
+                logger.info("Payload indexes ensured (including dedup fields)")
             except Exception as e:
                 logger.debug("Entity index creation skipped (may already exist)", error=str(e))
 
@@ -771,7 +772,7 @@ class RAGPipeline:
                 logger.info(f"Top document sources with scores: {doc_sources}")
 
                 # --- Phase 4: Assemble rich context ---
-                assembled = self.context_assembler.assemble(enriched_results, query)
+                assembled = self.context_assembler.assemble(retrieved_docs, query)
 
                 # --- Phase 4.1: Inject knowledge graph entity context ---
                 graph_context = ""
@@ -1013,7 +1014,7 @@ class RAGPipeline:
                 logger.info(f"Found {len(retrieved_docs)} relevant documents")
 
                 # --- Phase 4: Assemble context ---
-                assembled = self.context_assembler.assemble(enriched_results, query)
+                assembled = self.context_assembler.assemble(retrieved_docs, query)
 
                 # --- Phase 4: Verification pipeline (generate + verify + correct) ---
                 conversation_context = ""
@@ -1371,14 +1372,15 @@ class RAGPipeline:
                     field_name="job_id",
                     field_schema=PayloadSchemaType.KEYWORD
                 )
-                # Entity payload indexes for disambiguation filtering
-                for entity_field in ["entities", "entity_orgs", "entity_persons"]:
+                # Entity + dedup payload indexes
+                for entity_field in ["entities", "entity_orgs", "entity_persons",
+                                     "doc_content_hash", "content_hash"]:
                     self.qdrant_client.create_payload_index(
                         collection_name=self.collection_name,
                         field_name=entity_field,
                         field_schema=PayloadSchemaType.KEYWORD,
                     )
-                logger.info("✅ Recreated payload indexes (including entity fields)")
+                logger.info("Recreated payload indexes (including dedup fields)")
             except Exception as e:
                 logger.warning(f"Could not recreate payload indexes: {e}")
 

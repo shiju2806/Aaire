@@ -255,6 +255,120 @@ class SemanticSimilarityService:
             logger.warning(f"Error extracting document content: {e}")
             return str(doc)
 
+    def rerank_enriched_results(
+        self,
+        query: str,
+        enriched_results: List[Any],
+        query_entities: Optional[Any] = None,
+    ) -> List[Any]:
+        """Rerank EnrichedResult objects using cross-encoder with relative-gap filtering.
+
+        Uses top-K + relative score gap instead of an absolute threshold:
+        - Always keeps at least ``min_keep`` results (graceful degradation)
+        - Drops additional results only if their score is more than ``max_score_gap``
+          below the best score (uses the cross-encoder's strength: relative ordering)
+
+        When ``query_entities`` is provided, an entity-overlap signal is blended
+        into the final rerank score as a composite: cross-encoder score + entity bonus.
+
+        Both parameters are read from ``config/scoring.yaml`` under ``reranking:``.
+
+        Args:
+            query: Search query.
+            enriched_results: List of EnrichedResult objects from retrieval.
+            query_entities: Optional ExtractedEntities from query for entity-aware scoring.
+
+        Returns:
+            Filtered and reordered list of EnrichedResult objects.
+        """
+        if not enriched_results:
+            return enriched_results
+
+        if not self.use_cross_encoder:
+            logger.info("Cross-encoder disabled, returning original order")
+            return enriched_results
+
+        if not self.is_loaded:
+            self._load_models()
+
+        if not self.cross_encoder:
+            logger.warning("Cross-encoder not available, returning original order")
+            return enriched_results
+
+        try:
+            from ...providers.config_loader import get_config, get_nested
+            scoring = get_config("scoring")
+            max_len = get_nested(scoring, "reranking", "max_content_length", default=512)
+            min_keep = get_nested(scoring, "reranking", "min_keep", default=5)
+            max_gap = get_nested(scoring, "reranking", "max_score_gap", default=15.0)
+        except Exception:
+            max_len = 512
+            min_keep = 5
+            max_gap = 15.0
+
+        try:
+            # Build query-document pairs from EnrichedResult objects.
+            contents = []
+            for er in enriched_results:
+                content = getattr(er, "original_content", None) or getattr(er, "content", "")
+                contents.append(content[:max_len])
+
+            pairs = [[query, c] for c in contents]
+
+            logger.info("Reranking enriched results with cross-encoder", count=len(pairs))
+            scores = self.cross_encoder.predict(pairs, batch_size=32, show_progress_bar=False)
+
+            # Compute entity-overlap bonus if query_entities provided
+            entity_set = set()
+            if query_entities and hasattr(query_entities, 'all_entities'):
+                entity_set = set(query_entities.all_entities)
+
+            # Attach composite scores: cross-encoder + entity bonus
+            for er, score in zip(enriched_results, scores):
+                ce_score = float(score)
+                entity_bonus = 0.0
+
+                if entity_set:
+                    chunk_entities = set(getattr(er, 'metadata', {}).get('entities', []))
+                    if chunk_entities:
+                        overlap = entity_set & chunk_entities
+                        if overlap:
+                            overlap_ratio = len(overlap) / len(entity_set)
+                            # Scale entity bonus relative to CE score range (~±10)
+                            entity_bonus = overlap_ratio * 2.0
+
+                    # Graph-connected chunks get extra bonus
+                    if getattr(er, 'search_type', '') == 'graph':
+                        entity_bonus += 1.0
+
+                er.rerank_score = ce_score + entity_bonus
+
+            enriched_results.sort(key=lambda er: er.rerank_score, reverse=True)
+
+            # Relative-gap filtering: keep min_keep results unconditionally,
+            # then keep additional results only if within max_gap of the best.
+            best_score = enriched_results[0].rerank_score
+            kept = []
+            for i, er in enumerate(enriched_results):
+                if i < min_keep or (best_score - er.rerank_score) <= max_gap:
+                    kept.append(er)
+
+            filtered_count = len(enriched_results) - len(kept)
+            logger.info(
+                "Cross-encoder reranking complete",
+                kept=len(kept),
+                filtered=filtered_count,
+                best_score=round(best_score, 2),
+                worst_kept=round(kept[-1].rerank_score, 2) if kept else None,
+                entity_aware=bool(entity_set),
+            )
+
+            return kept
+
+        except Exception as e:
+            logger.error("Cross-encoder reranking failed, returning original order", error=str(e))
+            return enriched_results
+
     def enhance_retrieval_with_semantic_similarity(self,
                                                   query: str,
                                                   retrieved_docs: List[Dict],

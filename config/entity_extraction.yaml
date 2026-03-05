@@ -1,0 +1,52 @@
+# Entity Extraction Configuration
+# Controls how entities are extracted from chunks (ingestion) and queries (retrieval).
+# All thresholds are here — no intelligence logic hardcoded in Python.
+
+spacy:
+  model: "en_core_web_sm"        # Lightweight model (~12MB), lazy-loaded
+  max_chars: 5000                # Truncate text before NER
+  entity_types:                  # Which NER labels to extract
+    - PERSON
+    - ORG
+    - DATE
+    - GPE
+
+elasticsearch:
+  # c-TF-IDF via significant_terms aggregation.
+  # Finds terms statistically overrepresented in a chunk relative to the corpus.
+  significant_terms:
+    min_doc_count: 2             # Term must appear in at least N docs corpus-wide
+    max_doc_percent: 30          # Skip terms appearing in >30% of corpus
+    top_k: 10                   # Max discriminative terms per chunk
+  termvectors:
+    enabled: true                # Use termvectors API for per-chunk TF-IDF
+    min_term_freq: 2             # Min frequency of term within chunk
+    min_word_length: 3           # Skip short terms (a, in, to)
+
+regex:
+  # Additional patterns beyond ActuarialEntityExtractor
+  extract_acronyms: true
+  acronym_pattern: '\b[A-Z][A-Z&]{1,10}\b'   # FP&A, LDTI, VM-20, etc.
+  min_acronym_length: 2
+  # Insurance/actuarial regulatory patterns are hardcoded in entity_extractor.py
+  # (_INSURANCE_PATTERNS) because they use compiled regex. The patterns cover:
+  # IFRS 17, ASU 2018-12, FAS 133, ASC 944, VM-20, AG 43, RBC C-3,
+  # LDTI, ORSA, CFT, NAIC, SOA, CAS, AAA, GAAP, PBR, DAC, VOBA, etc.
+
+privacy:
+  # PII handling for regulated industries (insurance, healthcare).
+  hash_person_names: false       # true = SHA256-hash person names in Qdrant payload
+                                 # false = store plaintext (needed for name-based queries)
+                                 # Set to true for production deployments with PII concerns.
+
+retrieval_filter:
+  # How query entities translate to Qdrant payload filters
+  strategy: "boost_only"         # "must_match" | "should_match" | "boost_only"
+                                 # Changed from should_match to boost_only to prevent
+                                 # chunks without entities from becoming invisible.
+                                 # Entity presence boosts score but doesn't exclude.
+  min_entity_overlap: 1          # At least 1 entity must match (for should_match)
+  fallback_on_empty: true        # No entities found in query → skip filtering
+  fallback_on_few_results: 3     # Entity filter returned < N results → retry unfiltered
+  max_filter_entities: 5         # Don't filter on more than N entities (too restrictive)
+  boost_factor: 1.5              # Score multiplier for entity-matching chunks

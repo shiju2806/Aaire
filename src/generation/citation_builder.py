@@ -14,6 +14,7 @@ carry element_type, section, page, document_title, and other metadata.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set
 
@@ -163,6 +164,75 @@ class CitationBuilder:
             lines.append(line)
 
         return "\n".join(lines)
+
+    # -- inline citation extraction -----------------------------------------
+
+    def extract_inline_citations(
+        self,
+        response_text: str,
+        source_map: Dict[int, Any],
+    ) -> List[Citation]:
+        """Extract citations from inline [N] markers in the LLM response.
+
+        Instead of guessing which sources were used via word overlap, this
+        reads the [1], [2], etc. markers that the LLM inserted and maps
+        them back to source metadata via the source_map from ContextAssembler.
+
+        Args:
+            response_text: The LLM-generated response containing [N] markers.
+            source_map: Maps source index to EnrichedResult (from AssembledContext).
+
+        Returns:
+            List of Citation objects for sources actually cited. Empty if
+            no markers found (e.g., refusal responses).
+        """
+        if not response_text or not source_map:
+            return []
+
+        # Find all [N] markers in the response.
+        cited_indices = re.findall(r"\[(\d+)\]", response_text)
+        # Deduplicate while preserving order.
+        seen: Set[int] = set()
+        unique_indices: List[int] = []
+        for idx_str in cited_indices:
+            idx = int(idx_str)
+            if idx not in seen and idx in source_map:
+                seen.add(idx)
+                unique_indices.append(idx)
+
+        if not unique_indices:
+            logger.debug("No inline citation markers found in response")
+            return []
+
+        citations: List[Citation] = []
+        for idx in unique_indices:
+            item = source_map[idx]
+            metadata = self._get_metadata(item)
+            element_type = self._get_element_type(item)
+            doc_title = metadata.get("document_title", metadata.get("filename", ""))
+            section = metadata.get("section", "")
+            page = metadata.get("page", 0)
+            content = self._get_content(item)
+            score = self._get_score(item)
+
+            source = self._format_source(element_type, doc_title, section, page, metadata)
+
+            citations.append(
+                Citation(
+                    id=len(citations) + 1,
+                    source=source,
+                    element_type=element_type,
+                    document_title=doc_title,
+                    section=section,
+                    page=page,
+                    content_preview=content[:150] + "..." if len(content) > 150 else content,
+                    confidence=score,
+                    metadata=metadata,
+                )
+            )
+
+        logger.debug("Inline citations extracted", count=len(citations))
+        return citations
 
     # -- source formatting --------------------------------------------------
 

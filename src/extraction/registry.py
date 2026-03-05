@@ -117,7 +117,7 @@ class ExtractorRegistry:
             general_config = {
                 'patterns': [],
                 'confidence_threshold': 0.5,
-                'llm_model': None  # resolved by LLM provider,
+                'llm_model': None,  # resolved by LLM provider
                 'enabled': True
             }
             self.register_extractor('general', GeneralExtractor(general_config))

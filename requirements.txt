@@ -1,53 +1,52 @@
-# AAIRE Clean Requirements - Only Essential Packages
-# Remove unnecessary packages that cause conflicts
+# AAIRE Clean Requirements - Python 3.13 Compatible
+# Relaxed version pins to support Python 3.13
 
 # Core FastAPI
-fastapi==0.110.0
-uvicorn[standard]==0.27.0
-websockets==12.0
-pydantic==2.8.2
+fastapi>=0.110.0,<1.0
+uvicorn[standard]>=0.27.0
+websockets>=12.0
+pydantic>=2.8.0,<3.0
 
-# Working llama-index ecosystem (tested 12/12 imports successful)
-llama-index-core==0.10.57
-llama-index-llms-openai==0.1.29
-llama-index-embeddings-openai==0.1.11
-llama-index-vector-stores-qdrant==0.2.8
-llama-index-readers-file==0.1.33
+# llama-index ecosystem (Python 3.13 compatible)
+llama-index-core>=0.10.57
+llama-index-llms-openai>=0.1.29
+llama-index-embeddings-openai>=0.1.11
+llama-index-vector-stores-qdrant>=0.2.8
+llama-index-readers-file>=0.1.33
 
-# Vector Database - Compatible with llama-index 0.10.x
-qdrant-client==1.8.2
-fastembed==0.2.7
+# Vector Database
+qdrant-client>=1.8.0
 
 # LLM Integration
-openai==1.58.1
+openai>=1.58.0
 
-# Document Processing (essential only)
-PyPDF2==3.0.1
-PyMuPDF==1.24.7  # Advanced PDF parsing with coordinate extraction
-pdfplumber==0.11.0  # Table extraction from PDFs
-python-docx==1.1.0
-python-pptx==0.6.23  # PowerPoint support
-pycryptodome==3.23.0  # For encrypted PDF handling
+# Document Processing
+PyPDF2>=3.0.0
+pdfplumber>=0.11.0
+python-docx>=1.1.0
+python-pptx>=0.6.23
 docling>=2.5.0  # IBM layout-aware document parser (PDF, DOCX, PPTX, HTML)
 
-# Advanced OCR and Image Processing
-easyocr==1.7.1  # Best OCR for financial charts and numbers (RECOMMENDED)
-python-doctr[torch]>=0.8.0  # Document Text Recognition - optimized for charts/tables
-pytesseract==0.3.10  # Tesseract OCR wrapper - fallback option
-opencv-python-headless==4.10.0.84  # Image preprocessing (headless for servers)
-Pillow==9.5.0  # Image handling
-torch==2.0.1  # Required for docTR and EasyOCR
-torchvision==0.15.2  # Required for docTR
+# Local Vision-Language Model (Apple Silicon MLX) for image description during parsing
+mlx>=0.22.0
+mlx-vlm>=0.1.27
+
+# NLP / Entity Extraction
+spacy>=3.7.0,<4.0.0  # NER for entity-aware retrieval (en_core_web_sm model)
+
+# Search & Retrieval
+elasticsearch>=8.12.0,<9.0.0  # BM25 keyword search + knowledge graph store
+sentence-transformers>=2.2.0  # Cross-encoder reranking
+rank-bm25>=0.2.0  # In-memory BM25 fallback
 
 # Basic utilities
-redis==5.0.1
-python-dotenv==1.0.0
-pyyaml==6.0.1
-structlog==23.2.0
-rank-bm25==0.2.2  # For hybrid keyword search
+redis>=5.0.0
+python-dotenv>=1.0.0
+pyyaml>=6.0.0
+structlog>=23.2.0
 
 # Authentication
-PyJWT==2.8.0
+PyJWT>=2.8.0
 
 # HTTP requests
-httpx==0.25.2
+httpx>=0.25.0

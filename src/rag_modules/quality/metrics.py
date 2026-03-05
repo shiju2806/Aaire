@@ -10,6 +10,8 @@ import math
 from typing import List, Dict, Any, Optional
 import structlog
 
+from ...providers.config_loader import get_config, get_nested
+
 logger = structlog.get_logger()
 
 
@@ -143,11 +145,12 @@ class QualityMetricsManager:
 
     def get_similarity_threshold(self, query: str) -> float:
         """
-        Determine optimal similarity threshold based on query type.
+        Determine optimal similarity threshold based on query type and embedding model.
 
-        Uses adaptive thresholds based on query characteristics:
-        - Stricter thresholds for specific/critical queries requiring precision
-        - Relaxed thresholds for general/exploratory queries needing comprehensiveness
+        Classifies the query as specific/general/neutral using keyword indicators,
+        then looks up the threshold from scoring.yaml keyed by the current embedding
+        model name (from llm.yaml). If the model is not configured, falls back to
+        _default with a warning. No threshold values are hardcoded in Python.
 
         Args:
             query: The user's input query
@@ -155,6 +158,18 @@ class QualityMetricsManager:
         Returns:
             Float similarity threshold value between 0.0 and 1.0
         """
+        # Load thresholds from config, keyed by embedding model
+        scoring_cfg = get_config("scoring")
+        llm_cfg = get_config("llm")
+        model = get_nested(llm_cfg, "embedding", "model", default="unknown")
+
+        all_thresholds = get_nested(scoring_cfg, "retrieval", "similarity_thresholds", default={})
+        model_thresholds = all_thresholds.get(model) or all_thresholds.get("_default", {})
+
+        if model not in all_thresholds:
+            logger.warning("No similarity thresholds configured for model, using _default",
+                           model=model)
+
         query_lower = query.lower()
 
         # Use stricter threshold for specific/critical queries that need precision
@@ -173,21 +188,21 @@ class QualityMetricsManager:
             'help me', 'show me how'
         ]
 
-        # Check for specific indicators first
+        # Classify query and look up threshold from config
         if any(indicator in query_lower for indicator in specific_indicators):
-            threshold = 0.75  # Stricter for precision
+            threshold = model_thresholds.get("specific", 0.35)
             reason = "specific query"
         elif any(indicator in query_lower for indicator in general_indicators):
-            threshold = 0.65  # Relaxed for comprehensiveness
+            threshold = model_thresholds.get("general", 0.25)
             reason = "general query"
         else:
-            threshold = 0.70  # Balanced middle ground
+            threshold = model_thresholds.get("neutral", 0.30)
             reason = "neutral query"
 
         logger.info("Adaptive threshold selected",
-                   query=query[:50] + "..." if len(query) > 50 else query,
                    threshold=threshold,
-                   reason=reason)
+                   reason=reason,
+                   model=model)
 
         return threshold
 

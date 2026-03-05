@@ -272,7 +272,8 @@ class QdrantProvider(RetrievalProvider):
         client = self._get_client()
         col = self._resolve_collection(collection)
 
-        for field_name in ["entities", "entity_orgs", "entity_persons"]:
+        for field_name in ["entities", "entity_orgs", "entity_persons",
+                          "doc_content_hash", "content_hash"]:
             try:
                 client.create_payload_index(
                     collection_name=col,
