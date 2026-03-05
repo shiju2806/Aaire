@@ -22,6 +22,27 @@ from ...providers.config_loader import get_config, get_nested
 logger = structlog.get_logger()
 
 
+async def _retry_async(coro_fn, *args, max_retries: int = 2, base_delay: float = 1.0,
+                        label: str = "operation", **kwargs):
+    """Retry an async callable with exponential backoff on transient failures."""
+    last_error = None
+    for attempt in range(max_retries + 1):
+        try:
+            return await coro_fn(*args, **kwargs)
+        except Exception as e:
+            last_error = e
+            if attempt < max_retries:
+                delay = base_delay * (2 ** attempt)
+                logger.warning(f"{label} failed (attempt {attempt + 1}/{max_retries + 1}), "
+                              f"retrying in {delay:.1f}s",
+                              error=str(e)[:120])
+                await asyncio.sleep(delay)
+            else:
+                logger.error(f"{label} failed after {max_retries + 1} attempts",
+                            error=str(e)[:200])
+    raise last_error
+
+
 # ---------------------------------------------------------------------------
 # Retrieval Metrics
 # ---------------------------------------------------------------------------
@@ -111,12 +132,35 @@ class DocumentRetriever:
         # Get the target document limit
         doc_limit = self.quality_metrics_manager.get_document_limit(query)
 
-        # --- Parallel search execution ---
+        # --- Parallel search execution with retry on transient failures ---
         vector_start = time.perf_counter()
-        vector_coro = self.vector_search(query, doc_type_filter, similarity_threshold, filters, buffer_limit=doc_limit)
-        keyword_coro = self.keyword_search(query, doc_type_filter, filters, buffer_limit=doc_limit)
 
-        vector_results, keyword_results = await asyncio.gather(vector_coro, keyword_coro)
+        async def _vector_with_retry():
+            return await _retry_async(
+                self.vector_search, query, doc_type_filter,
+                similarity_threshold, filters, buffer_limit=doc_limit,
+                label="vector_search")
+
+        async def _keyword_with_retry():
+            return await _retry_async(
+                self.keyword_search, query, doc_type_filter,
+                filters, buffer_limit=doc_limit,
+                label="keyword_search")
+
+        try:
+            vector_results, keyword_results = await asyncio.gather(
+                _vector_with_retry(), _keyword_with_retry(),
+                return_exceptions=True)
+        except Exception:
+            vector_results, keyword_results = [], []
+
+        # Handle individual search failures gracefully
+        if isinstance(vector_results, BaseException):
+            logger.error("Vector search failed after retries", error=str(vector_results)[:200])
+            vector_results = []
+        if isinstance(keyword_results, BaseException):
+            logger.error("Keyword search failed after retries", error=str(keyword_results)[:200])
+            keyword_results = []
 
         metrics.vector_latency_ms = (time.perf_counter() - vector_start) * 1000
         metrics.vector_result_count = len(vector_results)

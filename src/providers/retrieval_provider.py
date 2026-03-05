@@ -238,15 +238,54 @@ class QdrantProvider(RetrievalProvider):
         points: List[Tuple[str, List[float], Dict[str, Any]]],
         *,
         collection: Optional[str] = None,
+        max_retries: int = 2,
     ) -> int:
+        import time as _time
         from qdrant_client.models import PointStruct
         client = self._get_client()
         col = self._resolve_collection(collection)
         structs = [
             PointStruct(id=pid, vector=vec, payload=pay) for pid, vec, pay in points
         ]
-        client.upsert(collection_name=col, points=structs)
-        return len(structs)
+        last_error = None
+        for attempt in range(max_retries + 1):
+            try:
+                client.upsert(collection_name=col, points=structs)
+                return len(structs)
+            except Exception as e:
+                last_error = e
+                if attempt < max_retries:
+                    delay = 1.0 * (2 ** attempt)
+                    logger.warning("Qdrant upsert failed, retrying",
+                                   attempt=attempt + 1, delay=delay,
+                                   error=str(e)[:120])
+                    _time.sleep(delay)
+        raise last_error
+
+    def create_entity_indexes(self, collection: Optional[str] = None) -> None:
+        """Create Qdrant payload indexes for entity fields.
+
+        Idempotent — silently succeeds if indexes already exist.
+        """
+        from qdrant_client.models import PayloadSchemaType
+
+        client = self._get_client()
+        col = self._resolve_collection(collection)
+
+        for field_name in ["entities", "entity_orgs", "entity_persons"]:
+            try:
+                client.create_payload_index(
+                    collection_name=col,
+                    field_name=field_name,
+                    field_schema=PayloadSchemaType.KEYWORD,
+                )
+                logger.info("Created entity payload index", field=field_name)
+            except Exception as e:
+                logger.debug(
+                    "Entity index creation skipped (may already exist)",
+                    field=field_name,
+                    error=str(e),
+                )
 
     def delete(
         self,
@@ -415,7 +454,7 @@ _provider_instance: Optional[RetrievalProvider] = None
 
 
 def get_retrieval_provider(
-    default_collection: str = "documents",
+    default_collection: str = "aaire-documents",
 ) -> RetrievalProvider:
     """Get or create the singleton retrieval provider."""
     global _provider_instance

@@ -3,6 +3,15 @@
 server:
   host: "0.0.0.0"
   port: 8000
+  cors_origins:
+    - "https://aaire.xyz"
+    - "https://www.aaire.xyz"
+    - "http://localhost:3000"
+    - "http://localhost:5173"
+
+qdrant:
+  collection_name: "aaire-documents"
+  # url and api_key read from QDRANT_URL / QDRANT_API_KEY env vars
 
 redis:
   host: ${REDIS_HOST:-localhost}
@@ -23,11 +32,29 @@ paths:
   upload_dir: data/uploads
   analytics_dir: data/analytics
   taxonomy_dir: data/taxonomies
+  feedback_dir: data/feedback
+
+upload:
+  max_size_mb: 100
+  allowed_extensions:
+    - ".pdf"
+    - ".docx"
+    - ".pptx"
+    - ".xlsx"
+    - ".csv"
+    - ".txt"
+    - ".html"
+    - ".htm"
 
 token_limits:
   target_tokens: 30000
   chars_per_token: 4
   document_preview_length: 2000
+
+elasticsearch:
+  hosts: ["http://localhost:9200"]
+  index_name: "aaire-documents"
+  request_timeout: 30
 
 external_apis:
   sec_edgar:

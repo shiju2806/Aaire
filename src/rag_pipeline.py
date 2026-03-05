@@ -63,6 +63,7 @@ from .rag_modules.services import ResponseGenerator, create_response_generator
 from .rag_modules.services import SemanticSimilarityService, create_semantic_similarity_service
 from .rag_modules.search import create_search_engine
 from .rag_modules.storage import DocumentManager, create_document_manager
+from .providers.config_loader import get_config, get_nested
 
 # Phase 2-4 modules
 from .providers import get_llm_provider
@@ -153,7 +154,8 @@ class RAGPipeline:
         # Initialize vector store: Qdrant primary, local fallback
         self.vector_store_type = None
         self.index_name = None
-        self.collection_name = "aaire-documents"
+        _infra = get_config("infrastructure")
+        self.collection_name = get_nested(_infra, "qdrant", "collection_name", default="aaire-documents")
 
         # Try Qdrant first - just test the connection, don't init indexes yet
         if self._try_qdrant():
@@ -345,8 +347,7 @@ class RAGPipeline:
             collections = self.qdrant_client.get_collections()
             logger.info("✅ Connected to Qdrant successfully")
             
-            # Ensure collection exists
-            self.collection_name = "aaire-documents"
+            # Ensure collection exists (name set in __init__ from config)
             existing = [c.name for c in collections.collections]
             if self.collection_name not in existing:
                 from qdrant_client.models import Distance, VectorParams

@@ -23,6 +23,10 @@ import re
 from datetime import datetime
 from pathlib import Path
 
+from src.providers.config_loader import get_config, get_nested
+_infra_config = get_config("infrastructure")
+_UPLOAD_DIR = get_nested(_infra_config, "paths", "upload_dir", default="data/uploads")
+
 # Initialize logger
 logger = structlog.get_logger()
 
@@ -120,13 +124,15 @@ app = FastAPI(
     redoc_url="/api/redoc"
 )
 
-# Enable CORS
+# Enable CORS (origins from config/infrastructure.yaml)
+_cors_origins = get_nested(_infra_config, "server", "cors_origins",
+                           default=["https://aaire.xyz", "https://www.aaire.xyz"])
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://aaire.xyz", "https://www.aaire.xyz"],  # Updated for HTTPS domain
+    allow_origins=_cors_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization"],
 )
 
 # Security middleware for HTTPS
@@ -339,7 +345,7 @@ class FeedbackResponse(BaseModel):
 async def search_uploaded_documents(query: str) -> str:
     """Simple text search in uploaded documents"""
     try:
-        uploads_dir = Path("data/uploads")
+        uploads_dir = Path(_UPLOAD_DIR)
         if not uploads_dir.exists():
             return ""
         
@@ -563,6 +569,33 @@ async def health_check():
 async def chat(request: ChatRequest):
     return await chat_handler(request)
 
+@app.post("/api/v1/chat/stream")
+async def chat_stream(request: ChatRequest):
+    """SSE streaming chat endpoint — progressive response delivery."""
+    from fastapi.responses import StreamingResponse
+
+    if not rag_pipeline:
+        raise HTTPException(status_code=503, detail="RAG pipeline not available")
+
+    async def event_generator():
+        try:
+            async for chunk in rag_pipeline.process_query_streaming(
+                query=request.query,
+                filters=request.filters,
+                session_id=request.session_id,
+                conversation_history=request.conversation_history,
+            ):
+                yield f"data: {json.dumps(chunk)}\n\n"
+        except Exception as e:
+            logger.error("Streaming chat error", error=str(e))
+            yield f"data: {json.dumps({'type': 'error', 'message': 'An error occurred.'})}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
 @app.post("/api/v2/data/process", response_model=ChatResponse)
 async def chat_v2(request: ChatRequest):
     """API v2 compatibility endpoint - routes to same chat handler"""
@@ -704,8 +737,9 @@ Note: This is general accounting knowledge, not from your specific company docum
             processing_time_ms=processing_time
         )
 
-_MAX_UPLOAD_SIZE = 100 * 1024 * 1024  # 100 MB
-_ALLOWED_EXTENSIONS = {".pdf", ".docx", ".pptx", ".xlsx", ".csv", ".txt", ".html", ".htm"}
+_MAX_UPLOAD_SIZE = get_nested(_infra_config, "upload", "max_size_mb", default=100) * 1024 * 1024
+_ALLOWED_EXTENSIONS = set(get_nested(_infra_config, "upload", "allowed_extensions",
+                                      default=[".pdf", ".docx", ".pptx", ".xlsx", ".csv", ".txt", ".html", ".htm"]))
 
 @app.post("/api/v1/upload", response_model=DocumentUploadResponse)
 async def upload_document(
@@ -738,8 +772,8 @@ async def upload_document(
         job_id = str(uuid.uuid4())
 
         # Save uploaded file.
-        os.makedirs("data/uploads", exist_ok=True)
-        file_path = Path(f"data/uploads/{job_id}{file_ext}")
+        os.makedirs(_UPLOAD_DIR, exist_ok=True)
+        file_path = Path(f"{_UPLOAD_DIR}/{job_id}{file_ext}")
 
         content = await file.read()
         if len(content) > _MAX_UPLOAD_SIZE:
@@ -996,7 +1030,7 @@ async def delete_document(job_id: str):
             logger.info(f"✅ Removed from fallback jobs: {job_data.get('filename')}")
         
         # 3. Clean up uploaded file
-        upload_dir = Path("data/uploads")
+        upload_dir = Path(_UPLOAD_DIR)
         for f in upload_dir.glob(f"{job_id}*"):
             try:
                 f.unlink()
