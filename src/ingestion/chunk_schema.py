@@ -60,17 +60,27 @@ class ChunkRecord:
     jurisdiction: str = "unknown"   # IFRS|US_GAAP|US_STAT|unknown
     product_type: str = "general"   # universal_life|whole_life|term|general
 
+    # Entity fields (populated by EntityExtractor during ingestion)
+    entities: List[str] = field(default_factory=list)
+    entity_orgs: List[str] = field(default_factory=list)
+    entity_persons: List[str] = field(default_factory=list)
+
+    # Content deduplication
+    content_hash: str = ""          # SHA256 of display_text (for dedup)
+
     # Metadata (extensible)
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def to_qdrant_payload(self) -> Dict[str, Any]:
-        """Convert to a flat dict for Qdrant point payload."""
-        payload = {
+        """Convert to a flat dict for Qdrant point payload.
+
+        Includes LlamaIndex-compatible ``_node_content`` so the existing
+        retrieval path (QdrantVectorStore → LlamaIndex retriever) can
+        build TextNode objects from these points.
+        """
+        metadata = {
             "chunk_id": self.chunk_id,
             "document_id": self.document_id,
-            "embedding_text": self.embedding_text,
-            "display_text": self.display_text,
-            "context_prefix": self.context_prefix,
             "element_type": self.element_type,
             "schema_version": self.schema_version,
             "chunking_strategy": self.chunking_strategy,
@@ -81,11 +91,35 @@ class ChunkRecord:
             "importance": self.importance,
             "jurisdiction": self.jurisdiction,
             "product_type": self.product_type,
+            "entities": self.entities,
+            "entity_orgs": self.entity_orgs,
+            "entity_persons": self.entity_persons,
+            "content_hash": self.content_hash,
         }
-        # Flatten simple metadata into payload (Qdrant supports nested dicts).
+        # Flatten simple metadata.
         for k, v in self.metadata.items():
-            if k not in payload:
-                payload[k] = v
+            if k not in metadata:
+                metadata[k] = v
+
+        # LlamaIndex compatibility: _node_content is what QdrantVectorStore
+        # reads to reconstruct TextNode objects.
+        node_content = {
+            "id_": self.chunk_id,
+            "text": self.display_text,
+            "metadata": metadata,
+            "embedding": None,
+            "relationships": {},
+        }
+
+        payload = {
+            **metadata,
+            "embedding_text": self.embedding_text,
+            "display_text": self.display_text,
+            "context_prefix": self.context_prefix,
+            # LlamaIndex expects these two fields:
+            "_node_content": json.dumps(node_content),
+            "_node_type": "TextNode",
+        }
         return payload
 
     @classmethod

@@ -13,6 +13,7 @@ Usage:
 
 from __future__ import annotations
 
+import hashlib
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -63,6 +64,9 @@ class IngestionPipeline:
         embedding_provider: Optional[Any] = None,
         retrieval_provider: Optional[Any] = None,
         structured_store_dir: str = "data/structured_store",
+        search_engine: Optional[Any] = None,
+        entity_extractor: Optional[Any] = None,
+        relationship_extractor: Optional[Any] = None,
     ) -> None:
         # Core components.
         self._parser = LayoutParser()
@@ -79,6 +83,9 @@ class IngestionPipeline:
         self._llm = llm_provider
         self._embedding = embedding_provider
         self._retrieval = retrieval_provider
+        self._search_engine = search_engine
+        self._entity_extractor = entity_extractor
+        self._relationship_extractor = relationship_extractor
 
     async def ingest(
         self,
@@ -112,6 +119,42 @@ class IngestionPipeline:
 
         if not document_title:
             document_title = path.stem.replace("_", " ").replace("-", " ").title()
+
+        # Compute document-level content hash for deduplication.
+        try:
+            file_bytes = path.read_bytes()
+            doc_content_hash = hashlib.sha256(file_bytes).hexdigest()[:16]
+        except Exception:
+            doc_content_hash = ""
+
+        # Step 0: Remove existing chunks for this document to prevent duplicates on re-upload.
+        if self._retrieval and document_title:
+            try:
+                deleted = self._retrieval.delete_by_filter({"document_title": document_title})
+                if deleted:
+                    logger.info("Deleted existing chunks before re-ingestion",
+                                document_title=document_title, deleted=deleted)
+            except Exception as e:
+                logger.warning("Failed to deduplicate before ingestion (non-fatal)", error=str(e))
+
+        # Step 0b: Remove existing chunks by content hash (catches renamed re-uploads).
+        if self._retrieval and doc_content_hash:
+            try:
+                deleted = self._retrieval.delete_by_filter({"doc_content_hash": doc_content_hash})
+                if deleted:
+                    logger.info("Deleted existing chunks by content hash",
+                                doc_content_hash=doc_content_hash, deleted=deleted)
+            except Exception as e:
+                logger.warning("Content-hash dedup failed (non-fatal)", error=str(e))
+
+        # Also remove from keyword search engine.
+        if self._search_engine and document_title:
+            try:
+                if hasattr(self._search_engine, 'delete_by_metadata'):
+                    self._search_engine.delete_by_metadata("document_title", document_title)
+                    logger.info("Deleted existing search engine entries", document_title=document_title)
+            except Exception as e:
+                logger.warning("Failed to deduplicate search engine (non-fatal)", error=str(e))
 
         # Step 1: Parse document into typed elements.
         try:
@@ -148,6 +191,7 @@ class IngestionPipeline:
         )
 
         # Process each type.
+        # Sync processors run first (no I/O).
         try:
             text_chunks = self._text_processor.process(text_with_headers, document_title)
             all_chunks.extend(text_chunks)
@@ -156,32 +200,30 @@ class IngestionPipeline:
             logger.error("Text processing failed", error=str(e))
 
         try:
-            table_chunks = await self._table_processor.process(table_elements, document_title)
-            all_chunks.extend(table_chunks)
-        except Exception as e:
-            result.errors.append(f"Table processing error: {e}")
-            logger.error("Table processing failed", error=str(e))
-
-        try:
-            formula_chunks = await self._formula_processor.process(formula_elements, document_title)
-            all_chunks.extend(formula_chunks)
-        except Exception as e:
-            result.errors.append(f"Formula processing error: {e}")
-            logger.error("Formula processing failed", error=str(e))
-
-        try:
             callout_chunks = self._callout_processor.process(callout_elements, document_title)
             all_chunks.extend(callout_chunks)
         except Exception as e:
             result.errors.append(f"Callout processing error: {e}")
             logger.error("Callout processing failed", error=str(e))
 
-        try:
-            image_chunks = await self._image_processor.process(image_elements, document_title)
-            all_chunks.extend(image_chunks)
-        except Exception as e:
-            result.errors.append(f"Image processing error: {e}")
-            logger.error("Image processing failed", error=str(e))
+        # Async processors run in parallel (independent I/O operations).
+        import asyncio
+
+        async_results = await asyncio.gather(
+            self._table_processor.process(table_elements, document_title),
+            self._formula_processor.process(formula_elements, document_title),
+            self._image_processor.process(image_elements, document_title),
+            return_exceptions=True,
+        )
+
+        for label, chunks_or_error in zip(
+            ("Table", "Formula", "Image"), async_results
+        ):
+            if isinstance(chunks_or_error, BaseException):
+                result.errors.append(f"{label} processing error: {chunks_or_error}")
+                logger.error(f"{label} processing failed", error=str(chunks_or_error))
+            else:
+                all_chunks.extend(chunks_or_error)
 
         # Step 4: Convert to ChunkRecords.
         embedding_model = ""
@@ -198,6 +240,12 @@ class IngestionPipeline:
                 jurisdiction=jurisdiction,
                 product_type=product_type,
             )
+            # Compute per-chunk content hash for dedup.
+            record.content_hash = hashlib.sha256(
+                record.display_text.encode("utf-8")
+            ).hexdigest()[:16]
+            # Store document-level hash for bulk dedup on re-upload.
+            record.metadata["doc_content_hash"] = doc_content_hash
             records.append(record)
 
         result.total_chunks = len(records)
@@ -214,6 +262,18 @@ class IngestionPipeline:
         # Step 5: Store structured content (tables, formulas, images).
         self._store_structured_content(records, result.document_id)
 
+        # Step 5.5: Extract entities for each chunk.
+        self._extract_entities(records)
+
+        # Step 5.7: Extract entity relationships via LLM (async).
+        await self._extract_relationships(records, result)
+
+        # Step 5.8: Flush graph store writes to make entities searchable.
+        if self._relationship_extractor:
+            graph = getattr(self._relationship_extractor, "_graph", None)
+            if graph and hasattr(graph, "flush"):
+                graph.flush()
+
         # Step 6: Embed and store in Qdrant.
         if not skip_embedding and self._embedding and self._retrieval:
             try:
@@ -221,6 +281,9 @@ class IngestionPipeline:
             except Exception as e:
                 result.errors.append(f"Embedding/storage error: {e}")
                 logger.error("Embedding/storage failed", error=str(e))
+
+        # Step 7: Index in keyword search engine (Elasticsearch) for hybrid search.
+        self._index_in_search_engine(records)
 
         result.duration_seconds = time.time() - start_time
         logger.info(
@@ -258,34 +321,164 @@ class IngestionPipeline:
                         metadata={"document_id": document_id},
                     )
 
+    def _index_in_search_engine(self, records: List[ChunkRecord]) -> None:
+        """Push chunk records to keyword search engine (Elasticsearch/BM25).
+
+        Graceful degradation: failure here must not block ingestion.
+        """
+        if not self._search_engine:
+            return
+
+        docs = []
+        for rec in records:
+            if rec.display_text and len(rec.display_text.strip()) > 10:
+                docs.append({
+                    "doc_id": rec.chunk_id,
+                    "content": rec.display_text,
+                    "title": rec.document_title,
+                    "metadata": {
+                        "node_id": rec.chunk_id,
+                        "document_id": rec.document_id,
+                        "document_title": rec.document_title,
+                        "element_type": rec.element_type,
+                        "section": rec.section,
+                        "page": rec.page,
+                        "primary_framework": rec.jurisdiction,
+                        "product_type": rec.product_type,
+                        "entities": rec.entities,
+                        "entity_orgs": rec.entity_orgs,
+                        "entity_persons": rec.entity_persons,
+                    },
+                })
+        if docs:
+            try:
+                count = self._search_engine.add_documents(docs)
+                logger.info("Indexed chunks in search engine", count=count)
+            except Exception as e:
+                logger.error("Search engine indexing failed (non-fatal)", error=str(e))
+
+    def _extract_entities(self, records: List[ChunkRecord]) -> None:
+        """Extract entities for each chunk and populate entity fields.
+
+        Uses batch extraction via spaCy's nlp.pipe() for performance.
+        Graceful degradation: if the extractor is unavailable or fails,
+        chunks simply have empty entity lists.
+        """
+        if not self._entity_extractor:
+            return
+
+        start = time.time()
+
+        # Use batch extraction if available (3-5x faster via nlp.pipe()).
+        if hasattr(self._entity_extractor, "extract_batch"):
+            try:
+                texts = [r.display_text for r in records]
+                all_entities = self._entity_extractor.extract_batch(texts)
+                extracted_count = 0
+                total_entity_count = 0
+                for record, entities in zip(records, all_entities):
+                    record.entities = entities.all_entities
+                    record.entity_orgs = entities.organizations
+                    record.entity_persons = entities.persons
+                    if entities.entity_count > 0:
+                        extracted_count += 1
+                        total_entity_count += entities.entity_count
+
+                duration = time.time() - start
+                logger.info(
+                    "Batch entity extraction complete",
+                    total_chunks=len(records),
+                    chunks_with_entities=extracted_count,
+                    coverage_pct=round(extracted_count / max(len(records), 1) * 100, 1),
+                    avg_entities_per_chunk=round(total_entity_count / max(extracted_count, 1), 1),
+                    duration_seconds=round(duration, 2),
+                    throughput_chunks_per_sec=round(len(records) / max(duration, 0.001), 1),
+                )
+                return
+            except Exception as e:
+                logger.warning(
+                    "Batch entity extraction failed, falling back to per-chunk",
+                    error=str(e),
+                )
+
+        # Fallback: per-chunk extraction.
+        extracted_count = 0
+        total_entity_count = 0
+        for record in records:
+            try:
+                entities = self._entity_extractor.extract(record.display_text)
+                record.entities = entities.all_entities
+                record.entity_orgs = entities.organizations
+                record.entity_persons = entities.persons
+                if entities.entity_count > 0:
+                    extracted_count += 1
+                    total_entity_count += entities.entity_count
+            except Exception as e:
+                logger.warning(
+                    "Entity extraction failed for chunk (non-fatal)",
+                    chunk_id=record.chunk_id,
+                    error=str(e),
+                )
+
+        duration = time.time() - start
+        logger.info(
+            "Entity extraction complete",
+            total_chunks=len(records),
+            chunks_with_entities=extracted_count,
+            coverage_pct=round(extracted_count / max(len(records), 1) * 100, 1),
+            avg_entities_per_chunk=round(total_entity_count / max(extracted_count, 1), 1),
+            duration_seconds=round(duration, 2),
+        )
+
+    async def _extract_relationships(
+        self, records: List[ChunkRecord], result: IngestionResult
+    ) -> None:
+        """Extract entity relationships via LLM and populate knowledge graph.
+
+        Runs after _extract_entities so chunks have populated entity fields.
+        Graceful degradation: if the extractor is unavailable or fails,
+        ingestion continues without relationships.
+        """
+        if not self._relationship_extractor:
+            return
+
+        try:
+            extraction_results = await self._relationship_extractor.extract_relationships(records)
+            total_rels = sum(len(r.relationships) for r in extraction_results)
+            if total_rels > 0:
+                logger.info(
+                    "Relationship extraction complete",
+                    chunks_processed=len(extraction_results),
+                    total_relationships=total_rels,
+                )
+        except Exception as e:
+            result.errors.append(f"Relationship extraction error: {e}")
+            logger.warning(
+                "Relationship extraction failed (non-fatal)", error=str(e)
+            )
+
     async def _embed_and_store(self, records: List[ChunkRecord]) -> None:
-        """Embed chunk texts and upsert into Qdrant."""
+        """Embed chunk texts and upsert into Qdrant in batches."""
         if not records:
             return
 
-        # Batch embed all chunks.
-        texts = [r.embedding_text for r in records]
-        vectors = await self._embedding.embed_batch(texts)
+        embed_batch_size = 100  # ~100 chunks keeps us well under OpenAI's 300K token limit
+        total_stored = 0
 
-        # Prepare Qdrant points.
-        points = []
-        for record, vector in zip(records, vectors):
-            points.append({
-                "id": record.chunk_id,
-                "vector": vector,
-                "payload": record.to_qdrant_payload(),
-            })
+        for i in range(0, len(records), embed_batch_size):
+            batch_records = records[i : i + embed_batch_size]
+            texts = [r.embedding_text for r in batch_records]
+            vectors = await self._embedding.embed_batch(texts)
 
-        # Upsert in batches.
-        batch_size = 100
-        for i in range(0, len(points), batch_size):
-            batch = points[i : i + batch_size]
-            await self._retrieval.upsert_batch(
-                collection_name="documents",
-                points=batch,
-            )
+            points = [
+                (rec.chunk_id, vec, rec.to_qdrant_payload())
+                for rec, vec in zip(batch_records, vectors)
+            ]
+            self._retrieval.upsert_batch(points)
+            total_stored += len(points)
+            logger.info("Stored batch in Qdrant", batch=i // embed_batch_size + 1, count=len(points))
 
-        logger.info("Stored chunks in Qdrant", count=len(points))
+        logger.info("Stored chunks in Qdrant", count=total_stored)
 
     @staticmethod
     def _count_by_type(elements: List[DocumentElement]) -> Dict[str, int]:

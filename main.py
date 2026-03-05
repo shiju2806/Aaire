@@ -68,6 +68,9 @@ try:
 except ImportError:
     WorkflowEngine = None
 
+# Configure stdlib logging root level (structlog delegates to stdlib)
+logging.basicConfig(format="%(message)s", level=logging.INFO)
+
 # Configure structured logging
 structlog.configure(
     processors=[
@@ -199,10 +202,30 @@ except Exception as e:
 try:
     if IngestionPipeline:
         from src.providers import get_llm_provider, get_embedding_provider, get_retrieval_provider
+        search_engine = getattr(rag_pipeline, 'bm25_engine', None) if rag_pipeline else None
+        entity_extractor = getattr(rag_pipeline, 'entity_extractor', None) if rag_pipeline else None
+
+        # Initialize relationship extractor for knowledge graph population
+        relationship_extractor = None
+        graph_store = getattr(rag_pipeline, 'graph_store', None) if rag_pipeline else None
+        if graph_store:
+            try:
+                from src.knowledge_graph.relationship_extractor import RelationshipExtractor
+                relationship_extractor = RelationshipExtractor(
+                    llm_provider=get_llm_provider(),
+                    graph_store=graph_store,
+                )
+                logger.info("✅ Relationship extractor initialized for knowledge graph")
+            except Exception as re_err:
+                logger.warning("Relationship extractor init failed (non-fatal)", error=str(re_err))
+
         ingestion_pipeline = IngestionPipeline(
             llm_provider=get_llm_provider(),
             embedding_provider=get_embedding_provider(),
             retrieval_provider=get_retrieval_provider(),
+            search_engine=search_engine,
+            entity_extractor=entity_extractor,
+            relationship_extractor=relationship_extractor,
         )
         logger.info("✅ Ingestion Pipeline initialized")
     else:
@@ -478,13 +501,63 @@ async def app_page():
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint"""
-    return {
-        "status": "healthy",
-        "timestamp": datetime.utcnow().isoformat(),
-        "service": "AAIRE",
-        "version": "1.0-MVP"
-    }
+    """Health check endpoint — verifies all critical dependencies."""
+    checks = {}
+    overall_healthy = True
+
+    # Check Qdrant vector store
+    if rag_pipeline and hasattr(rag_pipeline, 'qdrant_client') and rag_pipeline.qdrant_client:
+        try:
+            rag_pipeline.qdrant_client.get_collections()
+            checks["qdrant"] = "healthy"
+        except Exception as e:
+            checks["qdrant"] = f"unhealthy: {str(e)[:80]}"
+            overall_healthy = False
+    else:
+        checks["qdrant"] = "not configured"
+
+    # Check Elasticsearch / BM25 search engine
+    if rag_pipeline and hasattr(rag_pipeline, 'bm25_engine') and rag_pipeline.bm25_engine:
+        try:
+            stats = rag_pipeline.bm25_engine.get_stats()
+            checks["search_engine"] = f"healthy ({stats.get('total_documents', 0)} docs)"
+        except Exception as e:
+            checks["search_engine"] = f"unhealthy: {str(e)[:80]}"
+            overall_healthy = False
+    else:
+        checks["search_engine"] = "not configured"
+
+    # Check Redis cache
+    if rag_pipeline and hasattr(rag_pipeline, 'cache') and rag_pipeline.cache:
+        try:
+            rag_pipeline.cache.ping()
+            checks["redis"] = "healthy"
+        except Exception as e:
+            checks["redis"] = f"unhealthy: {str(e)[:80]}"
+            overall_healthy = False
+    else:
+        checks["redis"] = "not configured"
+
+    # Check RAG pipeline overall
+    checks["rag_pipeline"] = "healthy" if rag_pipeline else "not available"
+    if not rag_pipeline:
+        overall_healthy = False
+
+    # Check ingestion pipeline
+    checks["ingestion_pipeline"] = "healthy" if ingestion_pipeline else "not available"
+
+    status_code = 200 if overall_healthy else 503
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "status": "healthy" if overall_healthy else "degraded",
+            "timestamp": datetime.utcnow().isoformat(),
+            "service": "AAIRE",
+            "version": "1.0-MVP",
+            "checks": checks,
+        },
+    )
 
 @app.post("/api/v1/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
@@ -555,7 +628,7 @@ async def chat_handler(request: ChatRequest):
                 query_filters["job_id"] = request.job_id
                 logger.info(f"Filtering query to job_id: {request.job_id}")
             
-            rag_response = await rag_pipeline.process_query_with_intelligence(
+            rag_response = await rag_pipeline.process_query(
                 query=request.query,
                 filters=query_filters,
                 user_context=request.user_context or {},
@@ -631,6 +704,9 @@ Note: This is general accounting knowledge, not from your specific company docum
             processing_time_ms=processing_time
         )
 
+_MAX_UPLOAD_SIZE = 100 * 1024 * 1024  # 100 MB
+_ALLOWED_EXTENSIONS = {".pdf", ".docx", ".pptx", ".xlsx", ".csv", ".txt", ".html", ".htm"}
+
 @app.post("/api/v1/upload", response_model=DocumentUploadResponse)
 async def upload_document(
     file: UploadFile = File(...),
@@ -644,6 +720,15 @@ async def upload_document(
     logger.info("Upload request received", filename=file.filename, content_type=file.content_type, metadata=metadata)
 
     try:
+        # Validate file extension.
+        safe_filename = Path(file.filename).name  # Strip path traversal
+        file_ext = Path(safe_filename).suffix.lower()
+        if file_ext not in _ALLOWED_EXTENSIONS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"File type '{file_ext}' not allowed. Accepted: {', '.join(sorted(_ALLOWED_EXTENSIONS))}"
+            )
+
         # Parse metadata.
         try:
             metadata_dict = json.loads(metadata) if metadata else {}
@@ -654,10 +739,17 @@ async def upload_document(
 
         # Save uploaded file.
         os.makedirs("data/uploads", exist_ok=True)
-        file_ext = Path(file.filename).suffix
         file_path = Path(f"data/uploads/{job_id}{file_ext}")
 
         content = await file.read()
+        if len(content) > _MAX_UPLOAD_SIZE:
+            raise HTTPException(
+                status_code=413,
+                detail=f"File too large ({len(content) / 1024 / 1024:.1f} MB). Maximum size is {_MAX_UPLOAD_SIZE / 1024 / 1024:.0f} MB."
+            )
+        if len(content) == 0:
+            raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+
         with open(file_path, "wb") as buffer:
             buffer.write(content)
 
@@ -697,6 +789,14 @@ async def upload_document(
                         },
                     }
                     app.state.fallback_jobs = fallback_jobs
+                    # Invalidate query cache — document state has changed
+                    if rag_pipeline and hasattr(rag_pipeline, 'cache') and rag_pipeline.cache:
+                        try:
+                            rag_pipeline.cache.flushdb()
+                            logger.info("Query cache invalidated after ingestion", job_id=job_id)
+                        except Exception as cache_err:
+                            logger.warning("Cache invalidation failed (non-fatal)", error=str(cache_err))
+
                     logger.info("Ingestion complete", job_id=job_id, chunks=result.total_chunks)
                 except Exception as e:
                     logger.error("Ingestion failed", job_id=job_id, error=str(e))

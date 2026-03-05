@@ -294,7 +294,7 @@ class DocumentRetriever:
                     })
 
         except Exception as e:
-            logger.warning("Failed to retrieve from index", error=str(e))
+            logger.error("Failed to retrieve from index", error=str(e), exc_info=True)
 
         # Sort by relevance score
         all_results.sort(key=lambda x: x['score'], reverse=True)
@@ -477,12 +477,54 @@ class DocumentRetriever:
             doc_limit = self.quality_metrics_manager.get_document_limit(query)
             return vector_results[:doc_limit]
 
-    def get_diverse_context_documents(self, documents: List[Dict]) -> List[Dict]:
-        """Select diverse documents for context to ensure comprehensive coverage"""
-        # FIXED: Return all documents for maximum comprehensive coverage
-        # The issue was complex deduplication logic that was too aggressive
-        logger.info(f"🔍 DIVERSE SELECTION DEBUG: Input={len(documents)}, Output={len(documents)} (returning all)")
-        return documents
+    def get_diverse_context_documents(self, documents: List[Dict],
+                                      max_per_source: int = 5) -> List[Dict]:
+        """Select diverse documents to avoid flooding context with one source.
+
+        Strategy: round-robin across source documents, keeping top-scored
+        chunks from each. Ensures every source document gets at least one
+        chunk before any source gets a second.
+        """
+        if len(documents) <= max_per_source:
+            return documents
+
+        # Group by source document (title or filename).
+        from collections import OrderedDict
+        by_source: OrderedDict[str, List[Dict]] = OrderedDict()
+        for doc in documents:
+            meta = doc.get("metadata", {})
+            source = meta.get("document_title", meta.get("filename", "unknown"))
+            by_source.setdefault(source, []).append(doc)
+
+        # Round-robin: pick best from each source, then second-best, etc.
+        selected_ids: set = set()
+        selected: List[Dict] = []
+        target = len(documents)  # keep all, just reorder for diversity
+        max_rounds = max_per_source
+
+        for round_num in range(max_rounds):
+            for _source, docs in by_source.items():
+                if round_num < len(docs):
+                    doc = docs[round_num]
+                    nid = doc.get("node_id")
+                    if nid not in selected_ids:
+                        selected_ids.add(nid)
+                        selected.append(doc)
+                        if len(selected) >= target:
+                            break
+            if len(selected) >= target:
+                break
+
+        # Append any remaining (shouldn't happen, but safety net).
+        for doc in documents:
+            if doc.get("node_id") not in selected_ids:
+                selected.append(doc)
+
+        logger.info("Diversity selection applied",
+                    input=len(documents), output=len(selected),
+                    sources=len(by_source),
+                    max_per_source=max_per_source)
+        return selected
 
 
 def create_document_retriever(vector_index=None, bm25_engine=None, relevance_engine=None,

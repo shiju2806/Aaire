@@ -47,11 +47,8 @@ except ImportError:
 import redis
 import structlog
 from .relevance_engine import RelevanceEngine
-from .extraction.bridge_adapter import IntelligentDocumentExtractor
-from .enhanced_query_handler_simple import EnhancedQueryHandler
 from .conversation_memory import ConversationMemoryManager
 from .extraction.document_processing_adapter import DocumentProcessingAdapter
-from .extraction.models import QueryIntent, LegacyDocumentMetadata as DocumentMetadata
 
 # Import modular components
 from .rag_modules.core.response import RAGResponse
@@ -64,7 +61,7 @@ from .rag_modules.quality import QualityMetricsManager, create_quality_metrics_m
 from .rag_modules.services import DocumentRetriever, create_document_retriever
 from .rag_modules.services import ResponseGenerator, create_response_generator
 from .rag_modules.services import SemanticSimilarityService, create_semantic_similarity_service
-from .rag_modules.search import create_bm25_search_engine
+from .rag_modules.search import create_search_engine
 from .rag_modules.storage import DocumentManager, create_document_manager
 
 # Phase 2-4 modules
@@ -156,6 +153,7 @@ class RAGPipeline:
         # Initialize vector store: Qdrant primary, local fallback
         self.vector_store_type = None
         self.index_name = None
+        self.collection_name = "aaire-documents"
 
         # Try Qdrant first - just test the connection, don't init indexes yet
         if self._try_qdrant():
@@ -247,7 +245,35 @@ class RAGPipeline:
             llm_provider=self._llm_provider,
         )
         self.citation_builder = CitationBuilder()
-        logger.info("Phase 2-4 modules initialized (element-aware retrieval, context assembly, verification, compliance, citations)")
+
+        # Initialize entity extraction for disambiguation
+        try:
+            from .extraction.entity_extractor import EntityExtractor
+            self.entity_extractor = EntityExtractor(es_engine=self.bm25_engine)
+            self.element_aware_retriever._entity_extractor = self.entity_extractor
+            logger.info("Entity extractor initialized for retrieval disambiguation")
+        except Exception as e:
+            self.entity_extractor = None
+            logger.warning("Entity extractor initialization failed (non-fatal)", error=str(e))
+
+        # Initialize knowledge graph for entity disambiguation
+        self.graph_store = None
+        try:
+            from .knowledge_graph.graph_store import GraphStore
+            es_client = getattr(self.bm25_engine, 'client', None)
+            if es_client:
+                self.graph_store = GraphStore(
+                    es_client=es_client,
+                    embedding_provider=self.semantic_similarity_service,
+                )
+                self.element_aware_retriever._graph_store = self.graph_store
+                logger.info("Knowledge graph initialized for entity disambiguation")
+            else:
+                logger.info("No ES client available, knowledge graph disabled")
+        except Exception as e:
+            logger.warning("Knowledge graph initialization failed (non-fatal)", error=str(e))
+
+        logger.info("Phase 2-4 modules initialized (element-aware retrieval, entity extraction, knowledge graph, context assembly, verification, compliance, citations)")
 
         # Initialize document manager (will create the index)
         self.document_manager = create_document_manager(
@@ -269,6 +295,20 @@ class RAGPipeline:
 
         # Update document retriever with the created index
         self.document_retriever.index = self.index
+
+        # Ensure entity payload indexes exist in Qdrant (idempotent)
+        if self.vector_store_type == "qdrant" and hasattr(self, 'qdrant_client'):
+            try:
+                from qdrant_client.models import PayloadSchemaType
+                for entity_field in ["entities", "entity_orgs", "entity_persons", "document_title"]:
+                    self.qdrant_client.create_payload_index(
+                        collection_name=self.collection_name,
+                        field_name=entity_field,
+                        field_schema=PayloadSchemaType.KEYWORD,
+                    )
+                logger.info("Entity payload indexes ensured")
+            except Exception as e:
+                logger.debug("Entity index creation skipped (may already exist)", error=str(e))
 
         logger.info("RAG Pipeline initialized",
                    model=self.config['llm_config']['model'],
@@ -305,8 +345,17 @@ class RAGPipeline:
             collections = self.qdrant_client.get_collections()
             logger.info("✅ Connected to Qdrant successfully")
             
-            # Initialize Qdrant vector store
+            # Ensure collection exists
             self.collection_name = "aaire-documents"
+            existing = [c.name for c in collections.collections]
+            if self.collection_name not in existing:
+                from qdrant_client.models import Distance, VectorParams
+                self.qdrant_client.create_collection(
+                    collection_name=self.collection_name,
+                    vectors_config=VectorParams(size=self._embedding_provider.dimension, distance=Distance.COSINE),
+                )
+                logger.info(f"Created Qdrant collection: {self.collection_name}")
+
             logger.info(f"Initializing QdrantVectorStore with collection: {self.collection_name}")
             self.vector_store = QdrantVectorStore(
                 client=self.qdrant_client,
@@ -337,125 +386,130 @@ class RAGPipeline:
             self.cache = None
     
     def _init_hybrid_search(self):
-        """Initialize BM25 keyword search for hybrid retrieval"""
+        """Initialize keyword search for hybrid retrieval (Elasticsearch or BM25 fallback)"""
         try:
-            # Initialize BM25 search engine
-            self.bm25_engine = create_bm25_search_engine()
+            self.bm25_engine = create_search_engine()
             self.keyword_search_ready = False
-            logger.info("✅ BM25 search engine initialized")
+            logger.info("Search engine initialized", engine=type(self.bm25_engine).__name__)
 
-            # Start BM25 backfill in background thread to avoid startup delays
+            # Start sync in background thread
             import threading
             self.backfill_thread = threading.Thread(
-                target=self._populate_bm25_from_existing_documents,
+                target=self._sync_search_index,
                 daemon=True
             )
             self.backfill_thread.start()
-            logger.info("🚀 BM25 backfill started in background")
+            logger.info("Search index sync started in background")
 
         except Exception as e:
-            logger.error("Failed to initialize BM25 search", error=str(e))
-            # Set fallback values
+            logger.error("Failed to initialize search engine", error=str(e))
             self.bm25_engine = None
             self.keyword_search_ready = False
 
-    def _populate_bm25_from_existing_documents(self):
-        """Populate BM25 index with existing documents from Qdrant on startup (optimized)"""
+    def _sync_search_index(self):
+        """Sync search index with Qdrant documents. Skips if already in sync (Elasticsearch persistence)."""
         try:
-            # Only proceed if we have Qdrant and BM25 available
-            if not hasattr(self, 'qdrant_client') or not self.qdrant_client or not self.bm25_engine:
-                logger.info("🔄 Qdrant or BM25 not available, skipping BM25 backfill")
+            if not hasattr(self, 'qdrant_client') or not self.qdrant_client or not self.bm25_engine or not hasattr(self, 'collection_name'):
+                logger.info("Qdrant or search engine not available, skipping sync")
                 return
 
-            logger.info("🔄 Starting BM25 backfill from existing Qdrant documents...")
+            # If engine supports doc_count (Elasticsearch), check if already synced.
+            if hasattr(self.bm25_engine, 'doc_count'):
+                es_count = self.bm25_engine.doc_count()
+                try:
+                    qdrant_info = self.qdrant_client.get_collection(self.collection_name)
+                    qdrant_count = qdrant_info.points_count or 0
+                except Exception:
+                    qdrant_count = 0
 
-            # Use smaller batches for better performance
+                if es_count > 0 and abs(es_count - qdrant_count) <= 5:
+                    logger.info(
+                        "Search index already synced, skipping backfill",
+                        es_docs=es_count,
+                        qdrant_points=qdrant_count,
+                    )
+                    self.keyword_search_ready = True
+                    self._build_taxonomy_from_documents()
+                    return
+
+            logger.info("Starting search index sync from Qdrant documents...")
+
             batch_size = 50
             documents_processed = 0
             offset = None
 
-            # Process documents in batches
             while True:
                 try:
-                    # Fetch batch of documents
                     response = self.qdrant_client.scroll(
                         collection_name=self.collection_name,
                         limit=batch_size,
                         offset=offset,
                         with_payload=True,
-                        with_vectors=False  # We only need the text content
+                        with_vectors=False,
                     )
 
                     points = response[0]
                     if not points:
                         break
 
-                    # Prepare documents for BM25 indexing
                     batch_docs = []
-
                     for point in points:
                         payload = point.payload
-
-                        # Extract text content (try different field names)
                         text_content = (
+                            payload.get('display_text') or
                             payload.get('text') or
                             payload.get('content') or
-                            payload.get('_node_content') or
                             str(payload)
                         )
+                        doc_name = (
+                            payload.get('document_title') or
+                            payload.get('filename') or
+                            'Unknown'
+                        )
 
-                        if text_content and len(text_content.strip()) > 10:  # Only meaningful content
-                            # Convert to BM25 document format
-                            bm25_doc = {
+                        if text_content and len(text_content.strip()) > 10:
+                            batch_docs.append({
                                 'doc_id': str(point.id),
                                 'content': text_content,
-                                'title': payload.get('filename', 'Unknown'),
+                                'title': doc_name,
                                 'metadata': {
                                     'point_id': str(point.id),
-                                    'filename': payload.get('filename', 'Unknown'),
+                                    'title': doc_name,
+                                    'filename': doc_name,
                                     'doc_type': payload.get('doc_type', 'company'),
                                     'added_at': payload.get('added_at', ''),
                                     'page': payload.get('page', 0),
-                                    'primary_framework': payload.get('primary_framework', 'unknown'),
+                                    'primary_framework': payload.get('primary_framework', payload.get('jurisdiction', 'unknown')),
                                     'content_domains': payload.get('content_domains', []),
-                                    'document_type': payload.get('document_type', 'unknown'),
-                                    'file_path': payload.get('filename', 'Unknown'),
+                                    'document_type': payload.get('document_type', payload.get('element_type', 'unknown')),
+                                    'file_path': doc_name,
                                     'confidence_score': payload.get('confidence_score', 0.5),
-                                    # Include all existing metadata for smart filtering
                                     **payload
                                 }
-                            }
-                            batch_docs.append(bm25_doc)
+                            })
 
-                    # Index batch in BM25
                     if batch_docs:
                         self.bm25_engine.add_documents(batch_docs)
                         documents_processed += len(batch_docs)
-                        logger.info(f"📄 Indexed {documents_processed} documents in BM25...")
+                        logger.info(f"Indexed {documents_processed} documents in search engine...")
 
-                    # Update offset for next batch
                     offset = response[1]
-
                     if len(points) < batch_size:
                         break
 
                 except Exception as batch_error:
-                    logger.error(f"Error processing BM25 batch: {str(batch_error)}")
+                    logger.error(f"Error processing search sync batch: {str(batch_error)}")
                     break
 
-            logger.info(f"📚 BM25 backfill completed: {documents_processed} documents indexed")
-            logger.info("🎯 Hybrid search (vector + keyword) now available for ALL documents")
+            logger.info(f"Search index sync completed: {documents_processed} documents indexed")
             self.keyword_search_ready = True
-
-            # Now build taxonomy from documents for query enhancement
             self._build_taxonomy_from_documents()
 
         except Exception as e:
-            logger.error(f"❌ BM25 backfill failed: {str(e)}")
-            # Don't crash the system, just log the error
+            logger.error(f"Search index sync failed: {str(e)}")
             import traceback
             logger.error(f"Full error trace: {traceback.format_exc()}")
-            self.keyword_search_ready = True  # Mark as ready even if failed
+            self.keyword_search_ready = True
 
     def _calculate_document_hash(self, documents: List[Dict]) -> str:
         """
@@ -673,10 +727,7 @@ class RAGPipeline:
             
             # Get adaptive similarity threshold
             similarity_threshold = self.quality_metrics_manager.get_similarity_threshold(query)
-            
-            # Store current query for citation filtering
-            self._current_query = query
-            
+
             # --- Phase 3: Intent cache fast-path ---
             cached_intent = self.intent_cache.classify_fast(expanded_query)
             if cached_intent:
@@ -691,37 +742,75 @@ class RAGPipeline:
                 fetch_originals=True,
             )
 
-            # Convert enriched results back to dict format for backward compatibility
-            retrieved_docs = []
-            for er in enriched_results:
-                doc = {
-                    'content': er.original_content or er.content,
-                    'metadata': er.metadata,
-                    'score': er.score,
-                    'relevance_score': er.score,
-                    'node_id': er.node_id,
-                    'search_type': er.search_type,
-                }
-                retrieved_docs.append(doc)
-
-            # Apply semantic similarity enhancement to improve document ranking
-            if retrieved_docs and len(retrieved_docs) > 0:
-                logger.info(f"Applying cross-encoder reranking to {len(retrieved_docs)} retrieved documents")
-                retrieved_docs = self.semantic_similarity_service.enhance_retrieval_with_semantic_similarity(
-                    query, retrieved_docs, top_k=None
+            # --- Phase 3: Cross-encoder reranking with entity-aware composite scoring ---
+            _query_entities = None
+            if self.entity_extractor:
+                try:
+                    _query_entities = self.entity_extractor.extract_from_query(query)
+                except Exception:
+                    pass
+            if enriched_results and self.semantic_similarity_service:
+                enriched_results = self.semantic_similarity_service.rerank_enriched_results(
+                    query, enriched_results, query_entities=_query_entities
                 )
 
-            # Check if we found relevant documents in uploaded content
-            if retrieved_docs and len(retrieved_docs) > 0:
+            # Convert reranked results to dict format for backward-compatible consumers
+            retrieved_docs = [self._enriched_to_dict(er) for er in enriched_results]
+
+            # Apply diversity selection to spread context across source documents
+            retrieved_docs = self.document_retriever.get_diverse_context_documents(retrieved_docs)
+
+            # Check if we found relevant documents after reranking
+            if retrieved_docs:
                 logger.info(f"Found {len(retrieved_docs)} relevant documents for query: '{query[:50]}...'")
 
-                doc_sources = [(doc['metadata'].get('filename', 'Unknown'),
-                              doc.get('relevance_score', doc.get('score', 0)))
+                doc_sources = [(doc['metadata'].get('document_title', 'Unknown'),
+                              doc.get('rerank_score', doc.get('score', 0)))
                              for doc in retrieved_docs[:5]]
                 logger.info(f"Top document sources with scores: {doc_sources}")
 
                 # --- Phase 4: Assemble rich context ---
                 assembled = self.context_assembler.assemble(enriched_results, query)
+
+                # --- Phase 4.1: Inject knowledge graph entity context ---
+                graph_context = ""
+                resolved_nodes = getattr(self.element_aware_retriever, '_last_resolved_nodes', [])
+                if self.graph_store and resolved_nodes:
+                    try:
+                        from .providers.config_loader import get_config as _get_config, get_nested as _get_nested
+                        kg_cfg = _get_config("knowledge_graph")
+                        if _get_nested(kg_cfg, "retrieval", "inject_entity_context", default=True):
+                            graph_context = self.graph_store.get_entity_context(
+                                [n.entity_id for n in resolved_nodes]
+                            )
+                            if graph_context:
+                                assembled.text = graph_context + "\n\n" + assembled.text
+                                logger.info("Graph entity context injected into prompt",
+                                            resolved_entities=len(resolved_nodes))
+                    except Exception as e:
+                        logger.debug("Graph context injection failed (non-fatal)", error=str(e))
+
+                # --- Phase 4.2: Emit retrieval audit trail ---
+                try:
+                    from .knowledge_graph.audit import RetrievalAudit
+                    graph_chunk_ids = getattr(self.element_aware_retriever, '_last_graph_chunk_ids', [])
+                    _audit_query_entities = []
+                    if _query_entities and hasattr(_query_entities, 'all_entities'):
+                        _audit_query_entities = _query_entities.all_entities
+                    audit = RetrievalAudit(
+                        query=query,
+                        query_entities=_audit_query_entities,
+                        resolved_entities=[n.entity_id for n in resolved_nodes],
+                        graph_connected_chunks=graph_chunk_ids,
+                        hybrid_search_chunks=[er.node_id for er in enriched_results[:20]],
+                        final_ranked_chunks=[er.node_id for er in enriched_results[:10]],
+                        rerank_scores={er.node_id: er.rerank_score for er in enriched_results[:10]
+                                       if er.rerank_score is not None},
+                        graph_context_injected=bool(graph_context),
+                    )
+                    audit.log()
+                except Exception:
+                    pass  # Audit must never block the pipeline
 
                 # --- Phase 4: Generate with verification pipeline (2-3 LLM calls max) ---
                 conversation_context = ""
@@ -750,10 +839,17 @@ class RAGPipeline:
                 if compliance_result.disclaimer_added:
                     logger.info("Compliance disclaimer added", issues=compliance_result.issues)
 
-                # --- Phase 4: Precise citations ---
-                built_citations = self.citation_builder.build(enriched_results, response)
-                citations = [c.to_dict() for c in built_citations]
-                confidence = self.quality_metrics_manager.calculate_confidence(retrieved_docs, response)
+                # --- Phase 4: Inline citation extraction with refusal guard ---
+                if self._detect_refusal(response):
+                    logger.info("Refusal detected — suppressing citations")
+                    citations = []
+                    confidence = 0.1
+                else:
+                    built_citations = self.citation_builder.extract_inline_citations(
+                        response, assembled.source_map
+                    )
+                    citations = [c.to_dict() for c in built_citations]
+                    confidence = self.quality_metrics_manager.calculate_confidence(retrieved_docs, response)
             else:
                 # No relevant documents found - check if this could be relevant general knowledge
                 is_general_query = self.query_analyzer.is_general_knowledge_query(query)
@@ -847,107 +943,146 @@ class RAGPipeline:
         conversation_history: Optional[List[Dict]] = None
     ):
         """
-        Process a user query with streaming response generation
-        Yields: response chunks, then final metadata
+        Process a user query with streaming response — uses the same
+        Phase 3-4 pipeline as process_query() (element-aware retrieval,
+        context assembly, verification, compliance, precise citations).
+
+        Yields: response chunks, then final metadata.
         """
         if not session_id:
             session_id = str(uuid.uuid4())
 
-        # Record user message
         if self.memory_manager:
             await self.memory_manager.add_message(session_id, 'user', query)
 
         try:
-            # Step 1: Retrieve documents (this happens before streaming starts)
-            logger.info("Enhanced query processing started", query=query, session_id=session_id)
+            logger.info("Streaming query processing started", query=query, session_id=session_id)
 
-            # Topic classification
+            # --- Topic gate ---
             topic_result = await self.query_analyzer.classify_query_topic(query)
             if not topic_result['is_relevant']:
-                # Yield off-topic response and return
                 yield {"type": "content", "content": topic_result['polite_response']}
                 yield {"type": "done", "session_id": session_id, "citations": [], "confidence": 1.0, "follow_up_questions": []}
                 return
 
-            # Semantic enhancement
-            logger.info("🧠 Starting semantic query enhancement for: '{query[:50]}...'")
-            enhancement_result = await self.query_analyzer.enhance_query_semantically(query)
-            taxonomy_terms = enhancement_result.get('taxonomy_terms', [])
+            # --- Semantic enhancement ---
+            doc_type_filter = self._get_doc_type_filter(filters)
+            try:
+                enhancement_result = await self.query_analyzer.enhance_query_semantically(query)
+                expanded_query = enhancement_result['enhanced_query']
+            except Exception as e:
+                logger.warning(f"Semantic enhancement failed: {e}")
+                expanded_query = self.query_analyzer.expand_query(query)
 
-            # Retrieval
-            logger.info("🚀 Query semantically enhanced: {len(enhancement_result.get('key_concepts', []))} concepts added")
-            retrieved_docs = await self.document_retriever.retrieve_documents(query, None, None, filters)
+            similarity_threshold = self.quality_metrics_manager.get_similarity_threshold(query)
 
-            # Reranking if we have docs
-            if retrieved_docs and self.semantic_similarity_service:
-                logger.info(f"Applying cross-encoder reranking to {len(retrieved_docs)} retrieved documents")
-                retrieved_docs = self.semantic_similarity_service.enhance_retrieval_with_semantic_similarity(
-                    query, retrieved_docs, top_k=None
+            # --- Phase 3: Intent cache fast-path ---
+            cached_intent = self.intent_cache.classify_fast(expanded_query)
+            if cached_intent:
+                logger.info("Intent fast-path matched", query_type=cached_intent.query_type)
+
+            # --- Phase 3: Element-aware retrieval ---
+            enriched_results = await self.element_aware_retriever.retrieve(
+                query=expanded_query,
+                doc_type_filter=doc_type_filter,
+                similarity_threshold=similarity_threshold,
+                filters=filters,
+                fetch_originals=True,
+            )
+
+            # --- Phase 3: Cross-encoder reranking with entity-aware composite scoring ---
+            _query_entities_stream = None
+            if self.entity_extractor:
+                try:
+                    _query_entities_stream = self.entity_extractor.extract_from_query(query)
+                except Exception:
+                    pass
+            if enriched_results and self.semantic_similarity_service:
+                enriched_results = self.semantic_similarity_service.rerank_enriched_results(
+                    query, enriched_results, query_entities=_query_entities_stream
                 )
-                logger.info(f"Cross-encoder reranking completed, {len(retrieved_docs)} documents reranked")
 
-            logger.info("Found {len(retrieved_docs)} relevant documents for query: '{query[:50]}...'")
+            # Convert reranked results to dict format
+            retrieved_docs = [self._enriched_to_dict(er) for er in enriched_results]
 
-            # Step 2: Stream response generation
+            # Apply diversity selection to spread context across source documents
+            retrieved_docs = self.document_retriever.get_diverse_context_documents(retrieved_docs)
+
             if retrieved_docs:
-                response_stream = await self.response_generator.generate_response(
-                    query, retrieved_docs, user_context, conversation_history, session_id, taxonomy_terms, stream=True
+                logger.info(f"Found {len(retrieved_docs)} relevant documents")
+
+                # --- Phase 4: Assemble context ---
+                assembled = self.context_assembler.assemble(enriched_results, query)
+
+                # --- Phase 4: Verification pipeline (generate + verify + correct) ---
+                conversation_context = ""
+                if conversation_history:
+                    recent = conversation_history[-6:]
+                    conversation_context = "\n".join(
+                        f"{msg.get('role', 'user')}: {msg.get('content', '')}" for msg in recent
+                    )
+
+                verification_result = await self.verification_pipeline.run(
+                    query=query,
+                    context_text=assembled.text,
+                    conversation_history=conversation_context,
                 )
+                response = verification_result.response
 
-                full_response = ""
-                async for chunk in response_stream:
-                    full_response += chunk
-                    yield {"type": "content", "content": chunk}
+                # --- Phase 4: Compliance check ---
+                compliance_result = await self.compliance_checker.check(response)
+                response = compliance_result.response
 
-                # Format response
-                response = self.formatting_manager.format_response(full_response)
+                # Stream the response progressively (word-level chunks)
+                words = response.split(' ')
+                buffer = []
+                for word in words:
+                    buffer.append(word)
+                    if len(buffer) >= 5:
+                        yield {"type": "content", "content": ' '.join(buffer) + ' '}
+                        buffer = []
+                        await asyncio.sleep(0.03)
+                if buffer:
+                    yield {"type": "content", "content": ' '.join(buffer)}
 
-                # Generate citations and follow-ups
-                citations = self.citation_analyzer.extract_citations(retrieved_docs, query, response)
-                confidence = self.quality_metrics_manager.calculate_confidence(retrieved_docs, response)
+                # --- Phase 4: Inline citation extraction with refusal guard ---
+                if self._detect_refusal(response):
+                    logger.info("Refusal detected — suppressing citations")
+                    citations = []
+                    confidence = 0.1
+                else:
+                    built_citations = self.citation_builder.extract_inline_citations(
+                        response, assembled.source_map
+                    )
+                    citations = [c.to_dict() for c in built_citations]
+                    confidence = self.quality_metrics_manager.calculate_confidence(retrieved_docs, response)
                 follow_up_questions = await self.response_generator.generate_follow_up_questions(query, response, retrieved_docs)
-                quality_metrics = self.quality_metrics_manager.calculate_quality_metrics(query, response, retrieved_docs, citations)
 
-                # Record assistant response
                 if self.memory_manager:
                     await self.memory_manager.add_message(session_id, 'assistant', response)
 
-                # Yield final metadata
                 yield {
                     "type": "done",
                     "session_id": session_id,
-                    "citations": citations,  # Pass full citation objects with all metadata
+                    "citations": citations,
                     "confidence": confidence,
                     "follow_up_questions": follow_up_questions,
-                    "quality_metrics": quality_metrics
                 }
             else:
-                # No documents - use general knowledge
+                # No documents found
                 is_general_query = self.query_analyzer.is_general_knowledge_query(query)
                 if is_general_query:
                     response_stream = await self.response_generator.generate_response(
                         query, [], user_context, conversation_history, session_id, stream=True
                     )
-
                     full_response = ""
                     async for chunk in response_stream:
                         full_response += chunk
                         yield {"type": "content", "content": chunk}
 
-                    response = self.formatting_manager.format_response(full_response)
-                    response = self.citation_analyzer.remove_citations_from_response(response)
-
                     if self.memory_manager:
-                        await self.memory_manager.add_message(session_id, 'assistant', response)
-
-                    yield {
-                        "type": "done",
-                        "session_id": session_id,
-                        "citations": [],
-                        "confidence": 0.3,
-                        "follow_up_questions": [],
-                        "quality_metrics": {}
-                    }
+                        await self.memory_manager.add_message(session_id, 'assistant', full_response)
+                    yield {"type": "done", "session_id": session_id, "citations": [], "confidence": 0.3, "follow_up_questions": []}
                 else:
                     error_msg = f"I couldn't find specific information about '{query}' in the uploaded documents."
                     yield {"type": "content", "content": error_msg}
@@ -958,57 +1093,49 @@ class RAGPipeline:
             yield {"type": "error", "message": "I apologize, but I encountered an error processing your request."}
             raise
 
-    async def _generate_extraction_follow_ups(self, query: str, extraction_result) -> List[str]:
-        """Generate relevant follow-up questions for extraction results"""
-        try:
-            if not extraction_result.entities:
-                return []
-            
-            follow_up_prompt = f"""Based on this organizational information extraction, suggest 3 relevant follow-up questions:
-            
-    Original query: {query}
-    Document type: {extraction_result.structure_type}
-    People found: {len(extraction_result.entities)}
-    
-    Create questions that would:
-    1. Dive deeper into specific roles or departments
-    2. Explore relationships or reporting structures  
-    3. Clarify authority levels or responsibilities
-    
-    Return only the questions, one per line."""
-            
-            from .providers import get_llm_provider
-            llm = get_llm_provider()
-            result = await llm.generate(
-                follow_up_prompt,
-                task="generation",
-                system_prompt="Generate relevant follow-up questions for organizational analysis.",
-            )
-            questions = [q.strip() for q in result.split("\n") if q.strip()]
-            return questions[:3]  # Limit to 3 questions
-            
-        except Exception as e:
-            logger.error("Follow-up generation failed", error=str(e))
-            return []
-    
+    @staticmethod
+    def _enriched_to_dict(er) -> Dict[str, Any]:
+        """Convert an EnrichedResult to a backward-compatible dict."""
+        return {
+            'content': er.original_content or er.content,
+            'metadata': er.metadata,
+            'score': er.score,
+            'relevance_score': er.score,
+            'rerank_score': er.rerank_score,
+            'node_id': er.node_id,
+            'search_type': er.search_type,
+        }
 
-    async def stream_response(self, query: str) -> AsyncGenerator[str, None]:
-        """Stream response generation for real-time UI updates"""
-        # This is a simplified streaming implementation
-        # In production, you'd want proper streaming from the LLM
-        response = await self.process_query(query)
-        
-        # Simulate streaming by yielding chunks
-        words = response.answer.split()
-        chunk_size = 5
-        
-        for i in range(0, len(words), chunk_size):
-            chunk = " ".join(words[i:i + chunk_size])
-            if i + chunk_size < len(words):
-                chunk += " "
-            yield chunk
-            await asyncio.sleep(0.1)  # Small delay for demo purposes
-    
+    @staticmethod
+    def _detect_refusal(response: str) -> bool:
+        """Detect if the LLM response is a refusal / 'I can't find it' answer.
+
+        If the LLM refused to answer, we suppress all citations to avoid
+        the contradiction of 'I have no info' + 5 source citations.
+        """
+        if not response:
+            return True
+        response_lower = response.lower()
+        refusal_patterns = [
+            "i couldn't find",
+            "i could not find",
+            "could not find specific",
+            "couldn't find specific",
+            "does not contain",
+            "doesn't contain",
+            "no relevant information",
+            "no specific information",
+            "insufficient information",
+            "not enough information",
+            "unable to answer",
+            "cannot answer",
+            "i'm sorry, but the provided context",
+            "i apologize, but the provided context",
+            "no information available",
+            "not available in the provided",
+        ]
+        return any(p in response_lower for p in refusal_patterns)
+
     def _get_doc_type_filter(self, filters: Optional[Dict[str, Any]]) -> Optional[List[str]]:
         """Get document types to filter by based on filters"""
         if not filters or not filters.get('source_type'):
@@ -1031,242 +1158,6 @@ class RAGPipeline:
         
         return doc_types if doc_types else None
     
-    def _create_semantic_document_groups(self, documents: List[Dict]) -> List[List[Dict]]:
-        """Group documents by semantic similarity without hard-coded topics"""
-        try:
-            # Use LLM to analyze document themes and create groups
-            doc_summaries = []
-            for i, doc in enumerate(documents[:15], 1):  # Limit for analysis efficiency
-                content_sample = doc['content'][:300].replace('\n', ' ')
-                doc_summaries.append(f"Doc {i}: {content_sample}...")
-            
-            grouping_prompt = f"""Analyze these document excerpts and identify natural groupings based on their content themes.
-
-Documents:
-{chr(10).join(doc_summaries)}
-
-Create 2-4 logical groups where documents with similar themes are together.
-Output format:
-Group 1: Doc 1, Doc 3, Doc 7 (theme: [describe])
-Group 2: Doc 2, Doc 5, Doc 9 (theme: [describe])
-etc.
-
-Group documents by content similarity:"""
-            
-            response = self.llm.complete(grouping_prompt)
-            grouping_result = response.text.strip()
-            
-            logger.info(f"📊 SEMANTIC GROUPING RESULT:\n{grouping_result}")
-            
-            # Parse the grouping response to create actual groups
-            groups = self._parse_document_groupings(grouping_result, documents[:15])
-            
-            # Add remaining documents to smallest groups
-            if len(documents) > 15:
-                remaining_docs = documents[15:]
-                for doc in remaining_docs:
-                    smallest_group = min(groups, key=len)
-                    smallest_group.append(doc)
-            
-            logger.info(f"📚 Created {len(groups)} semantic document groups:")
-            for i, group in enumerate(groups, 1):
-                logger.info(f"  Group {i}: {len(group)} documents")
-            return groups
-            
-        except Exception as e:
-            logger.warning(f"Failed to create semantic groups, using simple split: {str(e)}")
-            # Fallback: simple split into 3 groups
-            group_size = len(documents) // 3
-            return [
-                documents[:group_size],
-                documents[group_size:2*group_size],
-                documents[2*group_size:]
-            ]
-    
-    def _parse_document_groupings(self, grouping_text: str, documents: List[Dict]) -> List[List[Dict]]:
-        """Parse LLM grouping output into actual document groups"""
-        import re
-        
-        groups = []
-        lines = grouping_text.split('\n')
-        
-        for line in lines:
-            # Look for patterns like "Group 1: Doc 1, Doc 3, Doc 7"
-            match = re.search(r'Group \d+:.*?Doc (\d+(?:, Doc \d+)*)', line)
-            if match:
-                doc_nums_str = match.group(1)
-                doc_nums = [int(num.strip()) for num in re.findall(r'\d+', doc_nums_str)]
-                
-                group_docs = []
-                for doc_num in doc_nums:
-                    if 1 <= doc_num <= len(documents):
-                        group_docs.append(documents[doc_num - 1])
-                
-                if group_docs:
-                    groups.append(group_docs)
-        
-        # Ensure we have at least 2 groups
-        if len(groups) < 2:
-            mid = len(documents) // 2
-            return [documents[:mid], documents[mid:]]
-        
-        return groups
-    
-    async def _process_with_chunked_enhancement(self, query: str, retrieved_docs: List[Dict], conversation_context: str) -> str:
-        """Main processing method that combines all our enhancements"""
-        try:
-            # 🔧 APPLY ENHANCED METHODOLOGICAL RANKING
-            enhanced_docs = self._apply_methodological_ranking(query, retrieved_docs)
-
-            # Get diverse documents for processing
-            diverse_docs = self._get_diverse_context_documents(enhanced_docs)
-            logger.info(f"📚 Processing {len(diverse_docs)} diverse documents (out of {len(enhanced_docs)} total)")
-            
-            # Check for organizational queries first
-            if self.query_analyzer.is_organizational_query(query, diverse_docs):
-                return self.query_analyzer.generate_organizational_response(query, diverse_docs, conversation_context)
-            
-            # Use chunked processing for comprehensive coverage
-            if len(diverse_docs) <= 8:
-                # Small document set - enhanced single pass
-                response = self._generate_enhanced_single_pass(query, diverse_docs, conversation_context)
-            else:
-                # Large document set - semantic chunking
-                response = await self._generate_chunked_response(query, diverse_docs, conversation_context)
-            
-            # Apply enhancements
-            # OPTIMIZATION: Disable completeness check for faster response times
-            # enhanced_response = self._completeness_check(query, response, diverse_docs)
-            logger.info("⚡ Completeness check disabled for speed optimization")
-
-            # Note: Structured response generation is already handled in the individual methods above
-            # Removing duplicate call to prevent double processing and API errors
-
-            return response  # CRITICAL FIX: Return the successful response!
-
-        except Exception as e:
-            logger.error(f"Enhanced processing failed: {str(e)}")
-            # Fallback to simple approach
-            return self._generate_enhanced_single_pass(query, diverse_docs[:5], conversation_context)
-    
-    async def _generate_chunked_response(self, query: str, documents: List[Dict], conversation_context: str) -> str:
-        """Generate response using semantic chunking for large document sets"""
-        # Create semantic groups
-        document_groups = self._create_semantic_document_groups(documents)
-        response_parts = []
-        
-        # Process all groups in parallel using async for faster response
-        async def process_group_async(group_index: int, doc_group: List[Dict]) -> str:
-            group_context = "\n\n".join([doc['content'] for doc in doc_group])
-
-            group_prompt = f"""You are answering: {query}
-
-This is document group {group_index} of {len(document_groups)}. Focus on these documents:
-
-{group_context}
-
-FORMATTING REQUIREMENTS (write like ChatGPT):
-- Follow this EXACT structure pattern:
-
-**1. Main Section Title**
-
-Content paragraph with details.
-
-**1.1 Subsection Title**
-
-- Bullet point item
-- Another bullet point
-- Third bullet point
-
-**2. Next Main Section**
-
-More content here.
-
-CRITICAL FORMATTING RULES:
-- Main headings: **1. Title**, **2. Title**, **3. Title** (consistent numbering)
-- Sub-headings: **1.1 Title**, **1.2 Title** (consistent sub-numbering)
-- NEVER use random ** mid-sentence or inconsistent bold patterns
-- NEVER create orphaned dashes like ":\n-\n" - always use complete bullet points
-- NEVER end with random asterisks or incomplete formatting
-- Always double line break between sections
-- Write formulas clearly: use simple notation like (A + B)/C
-- End every section with blank line for readability
-
-CONTENT REQUIREMENTS:
-- Include ALL relevant formulas, calculations, and mathematical expressions
-- Preserve specific numerical values like 90%, $2.50 per $1,000, etc.
-- Copy EXACT formulas from documents
-- Include ALL calculation methods and procedures
-- Maintain technical accuracy and detail
-
-Provide a detailed response covering all information that relates to the question using proper markdown formatting."""
-
-            # Use AsyncOpenAI for true parallel processing
-            response = await self.async_client.chat.completions.create(
-                model=self.actual_model,
-                messages=[{"role": "user", "content": group_prompt}],
-                temperature=0,
-                max_tokens=4000
-            )
-
-            logger.info(f"⚡ Processed group {group_index}/{len(document_groups)} (async)")
-            return response.choices[0].message.content.strip()
-
-        # Process all groups concurrently using asyncio.gather for true parallelism
-        logger.info(f"⚡ Starting parallel processing of {len(document_groups)} groups with AsyncOpenAI")
-        response_parts = await asyncio.gather(*[
-            process_group_async(i+1, doc_group)
-            for i, doc_group in enumerate(document_groups)
-        ])
-        
-        # Temporarily disable structured JSON approach - has parsing issues
-        # TODO: Fix JSON parsing and markdown conversion in structured approach
-        logger.info("📋 Using enhanced chunked response approach")
-        
-        # Fallback to existing chunked approach
-        # Merge all parts
-        merged_response = self._merge_response_parts(query, response_parts)
-        
-        # Apply basic normalization only (no heavy post-processing since structured failed)
-        return self.formatting_manager.normalize_spacing(merged_response)
-    
-    
-    async def clear_all_documents(self) -> Dict[str, Any]:
-        """Clear all documents from the vector store - use with caution"""
-        try:
-            if self.vector_store_type == "qdrant":
-                # Delete and recreate the entire collection
-                self.qdrant_client.delete_collection(self.collection_name)
-
-                # Recreate the collection
-                from qdrant_client.models import Distance, VectorParams
-                self.qdrant_client.create_collection(
-                    collection_name=self.collection_name,
-                    vectors_config=VectorParams(size=self._embedding_provider.dimension, distance=Distance.COSINE)
-                )
-
-                # Reinitialize the index
-                self.document_manager._init_qdrant_indexes()
-
-                # Clear BM25 index as well
-                self.document_manager._clear_bm25_index()
-
-                logger.info("Successfully cleared all documents from Qdrant and BM25")
-                return {"status": "success", "message": "All documents cleared", "method": "qdrant_recreate"}
-            else:
-                # For local storage, recreate the index
-                self.document_manager._init_local_index()
-
-                # Clear BM25 index as well
-                self.document_manager._clear_bm25_index()
-
-                logger.info("Successfully cleared all documents from local storage and BM25")
-                return {"status": "success", "message": "All documents cleared", "method": "local_recreate"}
-                
-        except Exception as e:
-            logger.error("Failed to clear all documents", error=str(e))
-            return {"status": "error", "error": str(e)}
-
     async def delete_document(self, job_id: str) -> Dict[str, Any]:
         """Delete all chunks associated with a document using the document manager"""
         return await self.document_manager.delete_document(job_id)
@@ -1423,423 +1314,6 @@ Provide a detailed response covering all information that relates to the questio
         
         return stats
     
-    async def generate_document_summary(self, document_content: str, doc_metadata: Dict[str, Any]) -> Dict[str, Any]:
-        """Generate intelligent executive summary of uploaded documents"""
-        try:
-            # Create specialized prompt for document summarization
-            summary_prompt = f"""You are AAIRE, a senior AI consultant specializing in insurance accounting, actuarial analysis, and financial compliance. You have deep expertise in US GAAP, IFRS, actuarial standards, and insurance regulations.
-
-**Document Analysis Request:**
-
-**Document Profile:**
-- Title: {doc_metadata.get('title', 'Unknown')}
-- Type: {doc_metadata.get('source_type', 'Unknown')}
-- Effective Date: {doc_metadata.get('effective_date', 'Unknown')}
-- Analysis Purpose: Executive Summary for Accounting/Actuarial Review
-
-**Document Content to Analyze:**
-{document_content[:6000]}
-
-**Required Analysis Framework:**
-
-**📋 EXECUTIVE SUMMARY**
-Provide a 2-3 sentence high-level overview of the document's purpose and significance.
-
-**🔍 KEY ACCOUNTING & ACTUARIAL IMPACTS**
-- Identify specific accounting standards referenced (ASC, IFRS, etc.)
-- Highlight changes to accounting treatments or methodologies
-- Assess impact on financial statement presentation
-- Note any actuarial assumption changes or valuation impacts
-
-**⚖️ REGULATORY & COMPLIANCE IMPLICATIONS**
-- Identify regulatory requirements and deadlines
-- Assess compliance obligations and reporting changes
-- Highlight any new disclosure requirements
-- Note potential audit or examination impacts
-
-**💰 FINANCIAL IMPACT ANALYSIS**
-- Quantify financial impacts where possible
-- Identify affected financial statement line items
-- Assess materiality and significance
-- Highlight cash flow or capital implications
-
-**⚠️ RISK ASSESSMENT & CONTROLS**
-- Identify compliance risks and mitigation strategies
-- Assess implementation challenges and timeline risks
-- Highlight areas requiring additional controls or procedures
-- Note potential reputational or regulatory penalties
-
-**🎯 STRATEGIC RECOMMENDATIONS**
-Provide 5-7 specific, actionable recommendations including:
-- Immediate actions required (with timelines)
-- Stakeholder communication needs
-- System/process changes required
-- Training or resource needs
-- Monitoring and ongoing compliance requirements
-
-**📊 KEY METRICS & BENCHMARKS**
-Extract and highlight:
-- Important dates and deadlines
-- Financial figures and thresholds
-- Percentage impacts or changes
-- Comparative data or benchmarks
-
-**🔗 INTERCONNECTED IMPACTS**
-- How this affects other accounting areas
-- Integration with existing policies/procedures
-- Coordination needs across departments
-- Potential conflicts with other standards
-
-Use professional, precise language with specific details. Include relevant accounting citations and technical terms. Focus on actionable insights that enable informed business decisions."""
-
-            # Generate summary using the LLM
-            response = self.llm.complete(summary_prompt)
-            summary_text = response.text.strip()
-            
-            # Extract key metrics and insights
-            key_insights = self._extract_key_insights(summary_text, document_content)
-            
-            return {
-                "summary": summary_text,
-                "key_insights": key_insights,
-                "document_metadata": doc_metadata,
-                "generated_at": datetime.utcnow().isoformat(),
-                "confidence": 0.85  # Base confidence for summarization
-            }
-            
-        except Exception as e:
-            logger.error("Failed to generate document summary", error=str(e))
-            return {
-                "summary": "Unable to generate summary at this time. The document has been processed and indexed for search.",
-                "key_insights": [],
-                "document_metadata": doc_metadata,
-                "generated_at": datetime.utcnow().isoformat(),
-                "confidence": 0.0
-            }
-    
-    def _extract_key_insights(self, summary_text: str, document_content: str) -> List[Dict[str, Any]]:
-        """Extract key insights and metrics from document analysis"""
-        insights = []
-        
-        # Extract potential accounting standards mentioned
-        standards_mentioned = []
-        accounting_keywords = ['ASC', 'FASB', 'IFRS', 'GAAP', 'CECL', 'LDTI', 'ASU', 'FAS']
-        for keyword in accounting_keywords:
-            if keyword in document_content.upper():
-                standards_mentioned.append(keyword)
-        
-        if standards_mentioned:
-            insights.append({
-                "type": "accounting_standards",
-                "value": standards_mentioned,
-                "description": "Accounting standards referenced in document"
-            })
-        
-        # Extract dates and deadlines
-        import re
-        date_patterns = [
-            r'\b\d{1,2}/\d{1,2}/\d{4}\b',  # MM/DD/YYYY
-            r'\b\d{4}-\d{2}-\d{2}\b',      # YYYY-MM-DD
-            r'\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4}\b'
-        ]
-        
-        dates_found = []
-        for pattern in date_patterns:
-            dates_found.extend(re.findall(pattern, document_content, re.IGNORECASE))
-        
-        if dates_found:
-            insights.append({
-                "type": "important_dates",
-                "value": dates_found[:5],  # Limit to first 5 dates
-                "description": "Important dates mentioned in document"
-            })
-        
-        # Extract financial terms
-        financial_terms = ['reserve', 'liability', 'asset', 'premium', 'claim', 'policyholder', 'actuarial', 'valuation']
-        terms_found = [term for term in financial_terms if term in document_content.lower()]
-        
-        if terms_found:
-            insights.append({
-                "type": "financial_concepts",
-                "value": terms_found,
-                "description": "Key financial concepts discussed"
-            })
-        
-        return insights
-
-    async def process_query_with_intelligence(
-        self,
-        query: str,
-        filters: Optional[Dict[str, Any]] = None,
-        user_context: Optional[Dict[str, Any]] = None,
-        session_id: str = "default",
-        conversation_history: Optional[List[Dict[str, Any]]] = None,
-        use_strict_mode: bool = True
-    ) -> RAGResponse:
-        """
-        Enhanced query processing with intelligent extraction capabilities
-        Routes queries to appropriate processing method based on content analysis
-        """
-        try:
-            # Import the enhanced components
-            from .enhanced_query_handler import EnhancedQueryHandler
-            from .extraction.bridge_adapter import IntelligentDocumentExtractor
-            
-            # Initialize components
-            query_handler = EnhancedQueryHandler(self.llm)
-            intelligent_extractor = IntelligentDocumentExtractor(self.llm)
-            
-            logger.info("Enhanced query processing started", 
-                       query=query[:100], 
-                       session_id=session_id)
-            
-            # Step 1: Analyze query to determine processing strategy
-            routing_decision = await query_handler.route_query(query, user_context)
-            
-            logger.info("Query routing decision made",
-                       method=routing_decision['method'],
-                       extraction_type=routing_decision['extraction_type'],
-                       confidence=routing_decision['confidence'])
-            
-            # Step 2: Route to appropriate processing method
-            if routing_decision['method'] == 'intelligent_extraction':
-                return await self._process_with_intelligent_extraction(
-                    query, routing_decision, intelligent_extractor, 
-                    filters, user_context, session_id, conversation_history
-                )
-            else:
-                # Fall back to standard RAG processing
-                logger.info("Using standard RAG processing")
-                return await self.process_query(
-                    query, filters, user_context, session_id, conversation_history
-                )
-                
-        except Exception as e:
-            logger.error("Enhanced query processing failed", 
-                        error=str(e), 
-                        query=query[:50],
-                        event="Enhanced query processing failed")
-            
-            # Fallback to standard processing
-            logger.info("Falling back to standard RAG processing")
-            return await self.process_query(
-                query, filters, user_context, session_id, conversation_history
-            )
-    
-    async def _process_with_intelligent_extraction(
-        self,
-        query: str,
-        routing_decision: Dict[str, Any],
-        intelligent_extractor,
-        filters: Optional[Dict[str, Any]] = None,
-        user_context: Optional[Dict[str, Any]] = None,
-        session_id: str = "default",
-        conversation_history: Optional[List[Dict[str, Any]]] = None
-    ) -> RAGResponse:
-        """Process query using intelligent document extraction"""
-        
-        logger.info("Starting intelligent extraction processing",
-                   extraction_type=routing_decision['extraction_type'])
-        
-        try:
-            # Step 1: Retrieve relevant documents using standard RAG
-            rag_response = await self.process_query(
-                query, filters, user_context, session_id, conversation_history
-            )
-            
-            # Step 2: Apply intelligent extraction to retrieved documents
-            extracted_insights = []
-            
-            if hasattr(rag_response, 'citations') and rag_response.citations:
-                for citation in rag_response.citations[:3]:  # Limit to top 3 docs
-                    try:
-                        # Get document content for extraction
-                        doc_content = citation.get('content', '')
-                        if doc_content:
-                            extraction_result = await intelligent_extractor.process_document(
-                                doc_content, query
-                            )
-                            
-                            if extraction_result.confidence_score > 0.5:
-                                extracted_insights.append({
-                                    'source': citation.get('source', 'Unknown'),
-                                    'extraction_data': extraction_result.extracted_data,
-                                    'confidence': extraction_result.confidence_score,
-                                    'document_type': extraction_result.document_type.value,
-                                    'warnings': extraction_result.warnings
-                                })
-                                
-                    except Exception as e:
-                        logger.warning(f"Extraction failed for document: {e}")
-                        continue
-            
-            # Step 3: Enhanced response generation with extracted insights
-            enhanced_response = await self._generate_enhanced_response(
-                query, rag_response, extracted_insights, routing_decision
-            )
-            
-            # Step 4: Update response with enhanced information
-            rag_response.response = enhanced_response
-            rag_response.follow_up_questions = self._generate_extraction_followups(
-                routing_decision['extraction_type'], extracted_insights
-            )
-            
-            # Add extraction metadata
-            if not hasattr(rag_response, 'metadata'):
-                rag_response.metadata = {}
-            
-            rag_response.metadata['intelligent_extraction'] = {
-                'extraction_type': routing_decision['extraction_type'],
-                'insights_count': len(extracted_insights),
-                'confidence': routing_decision['confidence'],
-                'processing_method': 'enhanced'
-            }
-            
-            logger.info("Intelligent extraction completed successfully",
-                       insights_found=len(extracted_insights),
-                       extraction_type=routing_decision['extraction_type'])
-            
-            return rag_response
-            
-        except Exception as e:
-            logger.error("Intelligent extraction processing failed", error=str(e))
-            # Return the basic RAG response if enhancement fails
-            return await self.process_query(
-                query, filters, user_context, session_id, conversation_history
-            )
-    
-    async def _generate_enhanced_response(
-        self,
-        query: str,
-        rag_response: RAGResponse,
-        extracted_insights: List[Dict[str, Any]],
-        routing_decision: Dict[str, Any]
-    ) -> str:
-        """Generate enhanced response incorporating intelligent extraction results"""
-        
-        if not extracted_insights:
-            return rag_response.response
-        
-        # Build enhancement prompt
-        insights_summary = []
-        for insight in extracted_insights:
-            insights_summary.append(f"From {insight['source']}: {insight['extraction_data']}")
-        
-        enhancement_prompt = f"""
-The user asked: "{query}"
-
-Original response:
-{rag_response.response}
-
-Additional intelligent extraction results:
-{chr(10).join(insights_summary)}
-
-Extraction type: {routing_decision['extraction_type']}
-
-Instructions:
-1. Enhance the original response with the specific extracted information
-2. For job title queries, provide a clear breakdown of roles and people
-3. Include confidence levels where appropriate
-4. Highlight any discrepancies or unclear information
-5. Keep the response professional and well-structured
-6. Focus on accuracy - only include information that was explicitly extracted
-
-Generate an enhanced response that combines the original information with the extracted insights:
-"""
-
-        try:
-            enhanced_response = self.llm.complete(enhancement_prompt)
-            return enhanced_response.text
-        except Exception as e:
-            logger.error(f"Failed to generate enhanced response: {e}")
-            return rag_response.response
-    
-    def _generate_extraction_followups(
-        self, 
-        extraction_type: str, 
-        extracted_insights: List[Dict[str, Any]]
-    ) -> List[str]:
-        """Generate follow-up questions based on extraction results"""
-        
-        followups = []
-        
-        if extraction_type == 'job_titles':
-            followups.extend([
-                "Can you provide more details about the reporting structure?",
-                "What are the responsibilities for each role?",
-                "Are there any vacant positions or recent changes?",
-                "How do these roles relate to the overall organizational structure?"
-            ])
-        elif extraction_type == 'financial_roles':
-            followups.extend([
-                "What are the specific responsibilities of each financial role?",
-                "How is the finance team structured hierarchically?",
-                "What approval authorities do these roles have?",
-                "Are there any recent changes in the finance organization?"
-            ])
-        elif extraction_type == 'organizational':
-            followups.extend([
-                "Can you explain the reporting relationships in more detail?",
-                "What departments are represented in this structure?",
-                "How does this structure support business operations?",
-                "Are there any upcoming organizational changes planned?"
-            ])
-        
-        # Add specific followups based on extracted data
-        if extracted_insights:
-            insight_count = sum(len(insight.get('extraction_data', {})) for insight in extracted_insights)
-            if insight_count > 0:
-                followups.append(f"Can you provide more context about the {insight_count} items identified?")
-        
-        return followups[:3]  # Limit to 3 follow-ups for optimal user experience
-    
-    
-    async def _apply_professional_formatting(self, response: str, query: str) -> str:
-        """Apply ChatGPT-style professional formatting to responses"""
-        try:
-            logger.info("📝 Applying professional formatting to response")
-            
-            # Use LLM to reformat the content professionally
-            system_prompt = """You are a formatting expert. Rewrite the provided technical content with:
-
-1. Clear visual hierarchy using emojis as section markers (🔹 for main points, ✅ for summary, 📌 for key points)
-2. Numbered sections with proper spacing
-3. Sub-points using (a), (b), (c) or bullet points
-4. Bold only for key terms and headers (use sparingly)
-5. Clean spacing between sections
-6. Professional, conversational tone
-7. Examples where helpful
-8. A clear summary at the end
-
-Format like high-quality ChatGPT responses - clean, organized, and easy to scan.
-Keep all technical accuracy but improve readability dramatically.
-Do NOT add unnecessary information - only reformat what's provided."""
-
-            messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Query: {query}\n\nContent to reformat:\n{response}"}
-            ]
-            
-            formatted_response = await self.llm_client.achat.completions.create(
-                model=self.llm_model,
-                messages=messages,
-                temperature=0.3,
-                max_tokens=4000
-            )
-            
-            result = formatted_response.choices[0].message.content
-            
-            # Apply final clean-up
-            result = self.formatting_manager.final_formatting_cleanup(result)
-            
-            logger.info("✅ Professional formatting applied successfully")
-            return result
-            
-        except Exception as e:
-            logger.warning(f"Could not apply professional formatting: {e}")
-            # Fall back to basic cleanup
-            return self.formatting_manager.basic_professional_format(response)
-    
     async def clear_all_documents(self) -> Dict[str, Any]:
         """Clear all documents from Qdrant database"""
         try:
@@ -1896,7 +1370,14 @@ Do NOT add unnecessary information - only reformat what's provided."""
                     field_name="job_id",
                     field_schema=PayloadSchemaType.KEYWORD
                 )
-                logger.info("✅ Recreated payload indexes")
+                # Entity payload indexes for disambiguation filtering
+                for entity_field in ["entities", "entity_orgs", "entity_persons"]:
+                    self.qdrant_client.create_payload_index(
+                        collection_name=self.collection_name,
+                        field_name=entity_field,
+                        field_schema=PayloadSchemaType.KEYWORD,
+                    )
+                logger.info("✅ Recreated payload indexes (including entity fields)")
             except Exception as e:
                 logger.warning(f"Could not recreate payload indexes: {e}")
 

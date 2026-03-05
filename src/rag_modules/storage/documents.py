@@ -279,11 +279,15 @@ class DocumentManager:
             # Update BM25 index for hybrid search
             self._update_bm25_index(nodes)
 
-            # Invalidate cache for this document type
+            # Invalidate all query cache — document state has changed
             if self.cache:
-                pattern = f"query_cache:{doc_type}:*"
-                for key in self.cache.scan_iter(match=pattern):
-                    self.cache.delete(key)
+                try:
+                    keys = self.cache.keys("*")
+                    if keys:
+                        self.cache.delete(*keys)
+                        logger.info("Cache invalidated after document addition", cleared=len(keys))
+                except Exception as e:
+                    logger.warning("Cache invalidation failed (non-fatal)", error=str(e))
 
             # Log summary of document-level metadata processing
             logger.info(f"Document-level metadata processing completed",
@@ -380,13 +384,15 @@ class DocumentManager:
                 # Local index doesn't support deletion by metadata easily
                 logger.warning("Local index deletion not implemented - rebuild index recommended")
 
-            # Clear cache entries related to this document
+            # Invalidate all query cache — document state has changed
             if self.cache:
-                # Clear all cache entries (simple approach for now)
-                pattern = "query_cache:*"
-                for key in self.cache.scan_iter(match=pattern):
-                    self.cache.delete(key)
-                logger.info("Cleared query cache after document deletion")
+                try:
+                    keys = self.cache.keys("*")
+                    if keys:
+                        self.cache.delete(*keys)
+                        logger.info("Cache invalidated after document deletion", cleared=len(keys))
+                except Exception as e:
+                    logger.warning("Cache invalidation failed (non-fatal)", error=str(e))
 
             return {
                 "status": "success",
@@ -654,20 +660,19 @@ class DocumentManager:
         return sampled_content
 
     def _update_bm25_index(self, nodes):
-        """Update BM25 index with new document nodes"""
+        """Update search index with new document nodes"""
         try:
             if not self.bm25_engine:
-                logger.warning("BM25 engine not available for indexing")
+                logger.warning("Search engine not available for indexing")
                 return
 
-            # Convert nodes to BM25 document format
-            bm25_docs = []
+            docs = []
             for node in nodes:
                 text = node.get_content() if hasattr(node, 'get_content') else str(node.text)
                 node_id = node.node_id if hasattr(node, 'node_id') else str(uuid.uuid4())
                 metadata = node.metadata or {}
 
-                bm25_doc = {
+                docs.append({
                     'doc_id': node_id,
                     'content': text,
                     'title': metadata.get('filename', 'Unknown'),
@@ -682,27 +687,24 @@ class DocumentManager:
                         'document_type': metadata.get('document_type', 'unknown'),
                         'file_path': metadata.get('filename', 'Unknown'),
                         'confidence_score': metadata.get('confidence_score', 0.5),
-                        **metadata  # Include all existing metadata
+                        **metadata,
                     }
-                }
-                bm25_docs.append(bm25_doc)
+                })
 
-            # Index documents in BM25 (incremental)
-            if bm25_docs:
-                indexed_count = self.bm25_engine.add_documents(bm25_docs)
-                logger.info(f"✅ BM25 index updated with {indexed_count} documents")
+            if docs:
+                indexed_count = self.bm25_engine.add_documents(docs)
+                logger.info(f"Search index updated with {indexed_count} documents")
         except Exception as e:
-            logger.error(f"Failed to update BM25 index: {str(e)}")
+            logger.error(f"Failed to update search index: {str(e)}")
 
     def _clear_bm25_index(self):
-        """Clear the BM25 search index"""
+        """Clear the search index"""
         try:
             if self.bm25_engine:
-                # Clear the BM25 engine's document store
                 self.bm25_engine.clear()
-                logger.info("Cleared BM25 search engine")
+                logger.info("Search index cleared")
         except Exception as e:
-            logger.error(f"Failed to clear BM25 index: {str(e)}")
+            logger.error(f"Failed to clear search index: {str(e)}")
 
     def _init_qdrant_indexes(self):
         """Initialize Qdrant collection and indexes"""
