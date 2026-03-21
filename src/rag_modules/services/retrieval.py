@@ -11,7 +11,6 @@ Handles all document retrieval operations including:
 """
 
 import asyncio
-import re
 import time
 import structlog
 from dataclasses import dataclass, field
@@ -425,96 +424,6 @@ class DocumentRetriever:
             bm25_filters['doc_type'] = doc_type_filter
 
         return bm25_filters if bm25_filters else None
-
-    def combine_search_results(self, vector_results: List[Dict], keyword_results: List[Dict],
-                             query: str) -> List[Dict]:
-        """Combine and rerank results from vector and keyword search with exact match boosting"""
-
-        try:
-            # Create a combined results dictionary to avoid duplicates
-            combined_dict = {}
-
-            # Check for exact matches in query (like ASC codes)
-            exact_match_patterns = re.findall(r'\b(ASC\s+\d{3}-\d{2}-\d{2}-\d{1,2})\b', query, re.IGNORECASE)
-            has_exact_patterns = len(exact_match_patterns) > 0
-
-            # Normalize scores and add vector results
-            max_vector_score = max([r['score'] for r in vector_results], default=1.0)
-            for result in vector_results:
-                node_id = result['node_id']
-                normalized_score = result['score'] / max_vector_score if max_vector_score > 0 else 0
-
-                # Check for exact pattern matches in content
-                exact_match_bonus = 0.0
-                if has_exact_patterns:
-                    content = result.get('content', '')
-                    for pattern in exact_match_patterns:
-                        if re.search(re.escape(pattern), content, re.IGNORECASE):
-                            exact_match_bonus += 0.5  # Significant boost for exact matches
-                            logger.info(f"Exact match bonus applied for '{pattern}' in {result['metadata'].get('filename', 'Unknown')}")
-
-                combined_dict[node_id] = result.copy()
-                combined_dict[node_id]['vector_score'] = normalized_score
-                combined_dict[node_id]['keyword_score'] = 0.0
-                combined_dict[node_id]['exact_match_bonus'] = exact_match_bonus
-                combined_dict[node_id]['combined_score'] = (normalized_score * 0.6) + exact_match_bonus  # Vector + exact match bonus
-
-            # Normalize scores and add/update keyword results
-            max_keyword_score = max([r['score'] for r in keyword_results], default=1.0)
-            for result in keyword_results:
-                node_id = result['node_id']
-                normalized_score = result['score'] / max_keyword_score if max_keyword_score > 0 else 0
-
-                # Check for exact matches in keyword results too
-                exact_match_bonus = 0.0
-                if has_exact_patterns:
-                    content = result.get('content', '')
-                    for pattern in exact_match_patterns:
-                        if re.search(re.escape(pattern), content, re.IGNORECASE):
-                            exact_match_bonus += 0.5
-
-                if node_id in combined_dict:
-                    # Update existing result with keyword score
-                    combined_dict[node_id]['keyword_score'] = normalized_score
-                    # Recalculate with all components
-                    combined_dict[node_id]['combined_score'] = (
-                        combined_dict[node_id]['vector_score'] * 0.6 +
-                        normalized_score * 0.4 +
-                        combined_dict[node_id]['exact_match_bonus']  # Keep existing bonus
-                    )
-                    combined_dict[node_id]['search_type'] = 'hybrid'
-                else:
-                    # Add new keyword-only result
-                    combined_dict[node_id] = result.copy()
-                    combined_dict[node_id]['vector_score'] = 0.0
-                    combined_dict[node_id]['keyword_score'] = normalized_score
-                    combined_dict[node_id]['exact_match_bonus'] = exact_match_bonus
-                    combined_dict[node_id]['combined_score'] = (normalized_score * 0.4) + exact_match_bonus
-
-            # Convert back to list and sort by combined score
-            final_results = list(combined_dict.values())
-            final_results.sort(key=lambda x: x['combined_score'], reverse=True)
-
-            # Take top results and clean up temporary scoring fields
-            doc_limit = self.quality_metrics_manager.get_document_limit(query)
-            final_results = final_results[:doc_limit]
-            for result in final_results:
-                result['score'] = result['combined_score']  # Set final score
-                # Keep detailed scores for debugging but rename
-                result.pop('combined_score', None)
-                # Optionally remove detailed scores to clean up
-                # result.pop('vector_score', None)
-                # result.pop('keyword_score', None)
-
-            logger.info(f"Hybrid search combined {len(vector_results)} vector + {len(keyword_results)} keyword results into {len(final_results)} final results")
-
-            return final_results
-
-        except Exception as e:
-            logger.error("Failed to combine search results", error=str(e))
-            # Fallback to vector results only with dynamic limit
-            doc_limit = self.quality_metrics_manager.get_document_limit(query)
-            return vector_results[:doc_limit]
 
     def get_diverse_context_documents(self, documents: List[Dict],
                                       max_per_source: int = 5) -> List[Dict]:

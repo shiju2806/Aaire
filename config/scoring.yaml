@@ -140,6 +140,20 @@ reranking:
   min_keep: 5           # Always keep at least this many results after reranking
   max_score_gap: 15.0   # Drop results whose score is more than this below the best
 
+query_decomposition:
+  enabled: true
+  max_sub_queries: 4
+  comparison_words: ["compare", "contrast", "difference", "vs", "versus", "similarities"]
+  aggregation_words: ["all", "every", "across", "throughout", "summarize all", "list all"]
+  min_word_count_for_complex: 20
+
+section_expansion:
+  enabled: true
+  score_threshold: 0.3
+  max_sections: 3
+  max_expansion_chunks: 10
+  expansion_score_discount: 0.7
+
 extraction:
   # Smart router thresholds
   pattern_threshold: 0.8

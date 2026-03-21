@@ -102,8 +102,10 @@ class ContextAssembler:
                 if rendered:
                     rendered_blocks.append((score, element_type, rendered, item))
 
-        # Build the context string, respecting token limit.
-        # Each non-header block gets a [N] prefix for inline citation support.
+        # Priority packing: maximize coverage within budget.
+        packed_blocks = self._priority_pack(rendered_blocks, self._max_chars)
+
+        # Build context string with [N] source indices.
         context_parts: List[str] = []
         total_chars = 0
         truncated = False
@@ -112,9 +114,8 @@ class ContextAssembler:
         source_map: Dict[int, Any] = {}
         source_index = 0
 
-        for _, element_type, text, source_item in rendered_blocks:
+        for _, element_type, text, source_item in packed_blocks:
             if element_type == "section_header":
-                # Section headers don't get a source number.
                 block_text = text
             else:
                 source_index += 1
@@ -122,20 +123,16 @@ class ContextAssembler:
                 if source_item is not None:
                     source_map[source_index] = source_item
 
-            if total_chars + len(block_text) > self._max_chars:
+            block_len = len(block_text)
+            if total_chars + block_len > self._max_chars:
                 truncated = True
-                remaining = self._max_chars - total_chars
-                if remaining > 200:
-                    context_parts.append(block_text[:remaining] + "\n[...truncated]")
-                    total_chars += remaining
                 break
 
             context_parts.append(block_text)
-            total_chars += len(block_text)
+            total_chars += block_len
             if element_type != "section_header":
                 type_counts[element_type] = type_counts.get(element_type, 0) + 1
 
-            # Track source documents.
             if source_item is not None:
                 title = self._get_doc_title(source_item)
                 if title:
@@ -162,6 +159,149 @@ class ContextAssembler:
             truncated=result.truncated,
         )
         return result
+
+    # -- priority packing ---------------------------------------------------
+
+    _STOP_WORDS = frozenset({
+        "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
+        "have", "has", "had", "do", "does", "did", "will", "would", "shall",
+        "should", "may", "might", "must", "can", "could", "of", "in", "to",
+        "for", "with", "on", "at", "by", "from", "as", "into", "through",
+        "and", "but", "or", "nor", "not", "so", "yet", "both", "either",
+        "neither", "each", "every", "all", "any", "few", "more", "most",
+        "other", "some", "such", "no", "only", "same", "than", "too", "very",
+        "this", "that", "these", "those", "it", "its",
+    })
+
+    def _priority_pack(
+        self,
+        rendered_blocks: List[tuple],
+        max_chars: int,
+    ) -> List[tuple]:
+        """Select blocks to maximize information coverage within budget.
+
+        Strategy:
+        1. Always include: first chunk from each unique section (coverage).
+        2. Always include: tables and formulas (high-value structured content).
+        3. Dedup: skip chunks with >80% word overlap with already-selected.
+        4. Fill remaining budget with highest-scoring text chunks.
+        5. Whole-element: drop entire element if it doesn't fit.
+        """
+        HIGH_VALUE_TYPES = {"table", "formula", "callout", "table_proposition"}
+        OVERLAP_THRESHOLD = 0.80
+
+        # Separate section headers from content blocks.
+        headers: List[tuple] = []
+        content: List[tuple] = []
+        for block in rendered_blocks:
+            if block[1] == "section_header":
+                headers.append(block)
+            else:
+                content.append(block)
+
+        # Track which sections we've covered.
+        covered_sections: set = set()
+        selected: List[tuple] = []
+        selected_texts: List[str] = []
+        budget_used = 0
+
+        def _try_add(block: tuple) -> bool:
+            nonlocal budget_used
+            text = block[2]
+            block_len = len(text) + 10  # account for [N] prefix + newlines
+            if budget_used + block_len > max_chars:
+                return False
+            # Dedup check
+            for existing_text in selected_texts:
+                if self._text_overlap(text, existing_text) > OVERLAP_THRESHOLD:
+                    return False
+            selected.append(block)
+            selected_texts.append(text)
+            budget_used += block_len
+            return True
+
+        # Pass 1: Coverage — one chunk per section (highest-scoring).
+        section_best: Dict[str, tuple] = {}
+        for block in content:
+            source_item = block[3]
+            section = ""
+            if source_item is not None:
+                meta = self._get_metadata(source_item)
+                section = meta.get("section", "")
+            if section and (section not in section_best or block[0] > section_best[section][0]):
+                section_best[section] = block
+
+        for section, block in sorted(section_best.items(), key=lambda x: x[1][0], reverse=True):
+            if _try_add(block):
+                covered_sections.add(section)
+
+        # Pass 2: High-value elements not yet selected.
+        already_selected = set(id(b) for b in selected)
+        for block in sorted(content, key=lambda b: b[0], reverse=True):
+            if id(block) in already_selected:
+                continue
+            if block[1] in HIGH_VALUE_TYPES:
+                _try_add(block)
+                already_selected.add(id(block))
+
+        # Pass 3: Fill with remaining by score.
+        for block in sorted(content, key=lambda b: b[0], reverse=True):
+            if id(block) in already_selected:
+                continue
+            _try_add(block)
+            already_selected.add(id(block))
+
+        # Reconstruct with section headers.
+        # Build a set of sections that have at least one selected block.
+        used_sections: set = set()
+        for block in selected:
+            if block[3] is not None:
+                meta = self._get_metadata(block[3])
+                sec = meta.get("section", "")
+                if sec:
+                    used_sections.add(sec)
+
+        # Interleave headers before their section's blocks.
+        # Group selected blocks by section, preserving score order.
+        section_blocks: Dict[str, List[tuple]] = {}
+        no_section: List[tuple] = []
+        for block in selected:
+            sec = ""
+            if block[3] is not None:
+                meta = self._get_metadata(block[3])
+                sec = meta.get("section", "")
+            if sec:
+                section_blocks.setdefault(sec, []).append(block)
+            else:
+                no_section.append(block)
+
+        final: List[tuple] = []
+        # Emit sections in the order they appeared in original headers.
+        emitted_sections: set = set()
+        for header in headers:
+            # Extract section name from header text "### SectionName"
+            header_section = header[2].strip().lstrip('#').strip()
+            if header_section in used_sections and header_section not in emitted_sections:
+                final.append(header)
+                final.extend(section_blocks.get(header_section, []))
+                emitted_sections.add(header_section)
+
+        # Append blocks from sections without headers or unsectioned.
+        for sec, blocks in section_blocks.items():
+            if sec not in emitted_sections:
+                final.extend(blocks)
+        final.extend(no_section)
+
+        return final
+
+    @staticmethod
+    def _text_overlap(text_a: str, text_b: str) -> float:
+        """Word-level Jaccard overlap, ignoring stop words."""
+        words_a = set(text_a.lower().split()) - ContextAssembler._STOP_WORDS
+        words_b = set(text_b.lower().split()) - ContextAssembler._STOP_WORDS
+        if not words_a or not words_b:
+            return 0.0
+        return len(words_a & words_b) / len(words_a | words_b)
 
     # -- element rendering --------------------------------------------------
 

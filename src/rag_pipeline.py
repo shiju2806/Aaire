@@ -5,6 +5,7 @@ Following SRS v2.0 specifications for weeks 3-4
 
 import os
 import yaml
+from dataclasses import dataclass
 from typing import List, Dict, Any, Optional, AsyncGenerator, Tuple
 from datetime import datetime
 import asyncio
@@ -55,7 +56,7 @@ from .rag_modules.core.response import RAGResponse
 from .rag_modules.analysis.citations import CitationAnalyzer
 from .rag_modules.cache.manager import CacheManager
 from .rag_modules.formatting import FormattingManager, create_formatting_manager
-from .rag_modules.query import QueryAnalyzer, create_query_analyzer
+from .rag_modules.query import QueryAnalyzer, create_query_analyzer, QueryDecomposer
 from .rag_modules.query.insurance_taxonomy_extractor import InsuranceTaxonomyExtractor
 from .rag_modules.quality import QualityMetricsManager, create_quality_metrics_manager
 from .rag_modules.services import DocumentRetriever, create_document_retriever
@@ -76,6 +77,19 @@ from .generation.compliance_check import ComplianceChecker
 from .generation.citation_builder import CitationBuilder
 
 logger = structlog.get_logger()
+
+
+@dataclass
+class _RetrievalResult:
+    """Internal result from the shared retrieval phase."""
+    retrieved_docs: List[Dict]
+    assembled: Any  # AssembledContext
+    enriched_results: List[Any]  # List[EnrichedResult]
+    expanded_query: str
+    query_entities: Any  # ExtractedEntities or None
+    resolved_nodes: List[Any]
+    graph_context: str
+
 
 class RAGPipeline:
     def __init__(self, config_path: str = "config/mvp_config.yaml"):
@@ -205,6 +219,7 @@ class RAGPipeline:
         # Initialize new extracted modules
         self.formatting_manager = create_formatting_manager(llm_client=self.llm)
         self.query_analyzer = create_query_analyzer(llm=self.llm, taxonomy_extractor=self.taxonomy_extractor)
+        self.query_decomposer = QueryDecomposer(llm=self.llm)
         self.quality_metrics_manager = create_quality_metrics_manager(self.config.get('retrieval_config', {}))
 
         # Initialize semantic similarity service for enhanced retrieval
@@ -303,7 +318,7 @@ class RAGPipeline:
             try:
                 from qdrant_client.models import PayloadSchemaType
                 for entity_field in ["entities", "entity_orgs", "entity_persons", "document_title",
-                                     "doc_content_hash", "content_hash"]:
+                                     "doc_content_hash", "content_hash", "section"]:
                     self.qdrant_client.create_payload_index(
                         collection_name=self.collection_name,
                         field_name=entity_field,
@@ -662,9 +677,152 @@ class RAGPipeline:
         """Add documents using the document manager"""
         return await self.document_manager.add_documents(documents, doc_type)
     
+    async def _run_retrieval_phase(
+        self,
+        query: str,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> Optional[_RetrievalResult]:
+        """Shared retrieval path: enhancement, retrieval, reranking, diversity, assembly.
+
+        Returns None if the topic is rejected. Returns a _RetrievalResult with
+        empty retrieved_docs if no relevant documents were found.
+        """
+        # 1. Topic gate
+        topic_result = await self.query_analyzer.classify_query_topic(query)
+        if not topic_result['is_relevant']:
+            return None  # Caller handles polite rejection via topic_result
+
+        # 2. Semantic query enhancement
+        doc_type_filter = self._get_doc_type_filter(filters)
+        try:
+            enhancement_result = await self.query_analyzer.enhance_query_semantically(query)
+            expanded_query = enhancement_result['enhanced_query']
+        except Exception as e:
+            logger.warning(f"Semantic enhancement failed, using basic expansion: {e}")
+            expanded_query = self.query_analyzer.expand_query(query)
+
+        similarity_threshold = self.quality_metrics_manager.get_similarity_threshold(query)
+
+        # 3. Intent cache fast-path
+        cached_intent = self.intent_cache.classify_fast(expanded_query)
+        if cached_intent:
+            logger.info("Intent fast-path matched", query_type=cached_intent.query_type)
+
+        # 4. Query decomposition gate
+        decomposition = await self.query_decomposer.maybe_decompose(query)
+
+        if not decomposition.is_decomposed:
+            # Single-pass retrieval (normal flow)
+            enriched_results = await self.element_aware_retriever.retrieve(
+                query=expanded_query,
+                doc_type_filter=doc_type_filter,
+                similarity_threshold=similarity_threshold,
+                filters=filters,
+                fetch_originals=True,
+            )
+        else:
+            # Multi-pass: retrieve per sub-query, merge results
+            all_results = []
+            sub_seen_ids: set = set()
+            for sub_query in decomposition.sub_queries:
+                sub_results = await self.element_aware_retriever.retrieve(
+                    query=sub_query,
+                    doc_type_filter=doc_type_filter,
+                    similarity_threshold=similarity_threshold,
+                    filters=filters,
+                    fetch_originals=True,
+                )
+                for r in sub_results:
+                    if r.node_id not in sub_seen_ids:
+                        all_results.append(r)
+                        sub_seen_ids.add(r.node_id)
+            enriched_results = sorted(all_results, key=lambda r: r.score, reverse=True)
+
+        # 5. Cross-encoder reranking with entity-aware composite scoring
+        _query_entities = None
+        if self.entity_extractor:
+            try:
+                _query_entities = self.entity_extractor.extract_from_query(query)
+            except Exception:
+                pass
+        if enriched_results and self.semantic_similarity_service:
+            enriched_results = self.semantic_similarity_service.rerank_enriched_results(
+                query, enriched_results, query_entities=_query_entities
+            )
+
+        # 6. Convert + diversity selection
+        retrieved_docs = [self._enriched_to_dict(er) for er in enriched_results]
+        retrieved_docs = self.document_retriever.get_diverse_context_documents(retrieved_docs)
+
+        if not retrieved_docs:
+            return _RetrievalResult(
+                retrieved_docs=[],
+                assembled=None,
+                enriched_results=enriched_results,
+                expanded_query=expanded_query,
+                query_entities=_query_entities,
+                resolved_nodes=[],
+                graph_context="",
+            )
+
+        logger.info(f"Found {len(retrieved_docs)} relevant documents for query: '{query[:50]}...'")
+
+        # 7. Assemble context
+        assembled = self.context_assembler.assemble(retrieved_docs, query)
+
+        # 8. Graph context injection
+        graph_context = ""
+        resolved_nodes = getattr(self.element_aware_retriever, '_last_resolved_nodes', [])
+        if self.graph_store and resolved_nodes:
+            try:
+                from .providers.config_loader import get_config as _get_config, get_nested as _get_nested
+                kg_cfg = _get_config("knowledge_graph")
+                if _get_nested(kg_cfg, "retrieval", "inject_entity_context", default=True):
+                    graph_context = self.graph_store.get_entity_context(
+                        [n.entity_id for n in resolved_nodes]
+                    )
+                    if graph_context:
+                        assembled.text = graph_context + "\n\n" + assembled.text
+                        logger.info("Graph entity context injected into prompt",
+                                    resolved_entities=len(resolved_nodes))
+            except Exception as e:
+                logger.debug("Graph context injection failed (non-fatal)", error=str(e))
+
+        # 9. Retrieval audit trail
+        try:
+            from .knowledge_graph.audit import RetrievalAudit
+            graph_chunk_ids = getattr(self.element_aware_retriever, '_last_graph_chunk_ids', [])
+            _audit_query_entities = []
+            if _query_entities and hasattr(_query_entities, 'all_entities'):
+                _audit_query_entities = _query_entities.all_entities
+            audit = RetrievalAudit(
+                query=query,
+                query_entities=_audit_query_entities,
+                resolved_entities=[n.entity_id for n in resolved_nodes],
+                graph_connected_chunks=graph_chunk_ids,
+                hybrid_search_chunks=[er.node_id for er in enriched_results[:20]],
+                final_ranked_chunks=[er.node_id for er in enriched_results[:10]],
+                rerank_scores={er.node_id: er.rerank_score for er in enriched_results[:10]
+                               if er.rerank_score is not None},
+                graph_context_injected=bool(graph_context),
+            )
+            audit.log()
+        except Exception:
+            pass  # Audit must never block the pipeline
+
+        return _RetrievalResult(
+            retrieved_docs=retrieved_docs,
+            assembled=assembled,
+            enriched_results=enriched_results,
+            expanded_query=expanded_query,
+            query_entities=_query_entities,
+            resolved_nodes=resolved_nodes,
+            graph_context=graph_context,
+        )
+
     async def process_query(
-        self, 
-        query: str, 
+        self,
+        query: str,
         filters: Optional[Dict[str, Any]] = None,
         user_context: Optional[Dict[str, Any]] = None,
         session_id: Optional[str] = None,
@@ -675,156 +833,50 @@ class RAGPipeline:
         """
         if not session_id:
             session_id = str(uuid.uuid4())
-        
+
         # Record user message in conversation memory
         if self.memory_manager:
             await self.memory_manager.add_message(session_id, 'user', query)
-        
+
         try:
-            # Check cache first (but skip cache for debugging if needed)
+            # Check cache first
             cache_key = self.cache_manager.get_cache_key(query, filters, self.vector_store, self.index_name)
-            use_cache = (self.cache and 
+            use_cache = (self.cache and
                         self.config['retrieval_config']['use_cache'] and
                         not os.getenv('DISABLE_CACHE', '').lower() in ('true', '1', 'yes'))
-            
+
             if use_cache:
                 cached_response = self.cache.get(cache_key)
                 if cached_response:
                     logger.info("Returning cached response", query_hash=cache_key[:8])
                     return self.cache_manager.deserialize_response(cached_response, session_id)
-            
-            # Check if query is within AAIRE's domain expertise
-            logger.info(f"🔍 Classifying query topic: '{query[:50]}...'")
-            topic_check = await self.query_analyzer.classify_query_topic(query)
-            logger.info(f"🎯 Topic classification result: {topic_check}")
-            
-            if not topic_check['is_relevant']:
-                logger.info(f"❌ Query rejected as off-topic: '{query[:50]}...'")
+
+            # --- Shared retrieval phase ---
+            retrieval = await self._run_retrieval_phase(query, filters)
+
+            if retrieval is None:
+                # Topic rejected
+                topic_result = await self.query_analyzer.classify_query_topic(query)
                 return RAGResponse(
-                    answer=topic_check['polite_response'],
-                    citations=[],
-                    confidence=1.0,  # High confidence in polite rejection
-                    session_id=session_id,
-                    follow_up_questions=[]
-                )
-            
-            # Determine document type filter
-            doc_type_filter = self._get_doc_type_filter(filters)
-            
-            # Intelligent semantic query enhancement for better concept retrieval
-            taxonomy_terms = []
-            try:
-                enhancement_result = await self.query_analyzer.enhance_query_semantically(query)
-                expanded_query = enhancement_result['enhanced_query']
-                # Extract taxonomy terms for LLM guidance
-                if 'enhancements' in enhancement_result and 'taxonomy_expansion' in enhancement_result['enhancements']:
-                    taxonomy_terms = enhancement_result['enhancements']['taxonomy_expansion']
-                    logger.info(f"🎯 Extracted {len(taxonomy_terms)} taxonomy terms for LLM guidance: {taxonomy_terms}")
-                else:
-                    logger.warning(f"⚠️ No taxonomy terms found in enhancement_result")
-                logger.info(f"🚀 Query semantically enhanced: {enhancement_result['enhancement_count']} concepts added")
-            except Exception as e:
-                logger.warning(f"Semantic enhancement failed, using basic expansion: {e}")
-                expanded_query = self.query_analyzer.expand_query(query)
-            
-            # Get adaptive similarity threshold
-            similarity_threshold = self.quality_metrics_manager.get_similarity_threshold(query)
-
-            # --- Phase 3: Intent cache fast-path ---
-            cached_intent = self.intent_cache.classify_fast(expanded_query)
-            if cached_intent:
-                logger.info("Intent fast-path matched", query_type=cached_intent.query_type, jurisdiction=cached_intent.jurisdiction)
-
-            # --- Phase 3: Element-aware retrieval with parallel search + early exit ---
-            enriched_results = await self.element_aware_retriever.retrieve(
-                query=expanded_query,
-                doc_type_filter=doc_type_filter,
-                similarity_threshold=similarity_threshold,
-                filters=filters,
-                fetch_originals=True,
-            )
-
-            # --- Phase 3: Cross-encoder reranking with entity-aware composite scoring ---
-            _query_entities = None
-            if self.entity_extractor:
-                try:
-                    _query_entities = self.entity_extractor.extract_from_query(query)
-                except Exception:
-                    pass
-            if enriched_results and self.semantic_similarity_service:
-                enriched_results = self.semantic_similarity_service.rerank_enriched_results(
-                    query, enriched_results, query_entities=_query_entities
+                    answer=topic_result.get('polite_response', "I can only help with financial and insurance topics."),
+                    citations=[], confidence=1.0, session_id=session_id, follow_up_questions=[]
                 )
 
-            # Convert reranked results to dict format for backward-compatible consumers
-            retrieved_docs = [self._enriched_to_dict(er) for er in enriched_results]
+            retrieved_docs = retrieval.retrieved_docs
+            enriched_results = retrieval.enriched_results
 
-            # Apply diversity selection to spread context across source documents
-            retrieved_docs = self.document_retriever.get_diverse_context_documents(retrieved_docs)
-
-            # Check if we found relevant documents after reranking
-            if retrieved_docs:
-                logger.info(f"Found {len(retrieved_docs)} relevant documents for query: '{query[:50]}...'")
-
-                doc_sources = [(doc['metadata'].get('document_title', 'Unknown'),
-                              doc.get('rerank_score', doc.get('score', 0)))
-                             for doc in retrieved_docs[:5]]
-                logger.info(f"Top document sources with scores: {doc_sources}")
-
-                # --- Phase 4: Assemble rich context ---
-                assembled = self.context_assembler.assemble(retrieved_docs, query)
-
-                # --- Phase 4.1: Inject knowledge graph entity context ---
-                graph_context = ""
-                resolved_nodes = getattr(self.element_aware_retriever, '_last_resolved_nodes', [])
-                if self.graph_store and resolved_nodes:
-                    try:
-                        from .providers.config_loader import get_config as _get_config, get_nested as _get_nested
-                        kg_cfg = _get_config("knowledge_graph")
-                        if _get_nested(kg_cfg, "retrieval", "inject_entity_context", default=True):
-                            graph_context = self.graph_store.get_entity_context(
-                                [n.entity_id for n in resolved_nodes]
-                            )
-                            if graph_context:
-                                assembled.text = graph_context + "\n\n" + assembled.text
-                                logger.info("Graph entity context injected into prompt",
-                                            resolved_entities=len(resolved_nodes))
-                    except Exception as e:
-                        logger.debug("Graph context injection failed (non-fatal)", error=str(e))
-
-                # --- Phase 4.2: Emit retrieval audit trail ---
-                try:
-                    from .knowledge_graph.audit import RetrievalAudit
-                    graph_chunk_ids = getattr(self.element_aware_retriever, '_last_graph_chunk_ids', [])
-                    _audit_query_entities = []
-                    if _query_entities and hasattr(_query_entities, 'all_entities'):
-                        _audit_query_entities = _query_entities.all_entities
-                    audit = RetrievalAudit(
-                        query=query,
-                        query_entities=_audit_query_entities,
-                        resolved_entities=[n.entity_id for n in resolved_nodes],
-                        graph_connected_chunks=graph_chunk_ids,
-                        hybrid_search_chunks=[er.node_id for er in enriched_results[:20]],
-                        final_ranked_chunks=[er.node_id for er in enriched_results[:10]],
-                        rerank_scores={er.node_id: er.rerank_score for er in enriched_results[:10]
-                                       if er.rerank_score is not None},
-                        graph_context_injected=bool(graph_context),
-                    )
-                    audit.log()
-                except Exception:
-                    pass  # Audit must never block the pipeline
-
-                # --- Phase 4: Generate with verification pipeline (2-3 LLM calls max) ---
+            if retrieved_docs and retrieval.assembled:
+                # --- Generate with verification pipeline ---
                 conversation_context = ""
                 if conversation_history:
-                    recent = conversation_history[-6:]  # Last 3 exchanges
+                    recent = conversation_history[-6:]
                     conversation_context = "\n".join(
                         f"{msg.get('role', 'user')}: {msg.get('content', '')}" for msg in recent
                     )
 
                 verification_result = await self.verification_pipeline.run(
                     query=query,
-                    context_text=assembled.text,
+                    context_text=retrieval.assembled.text,
                     conversation_history=conversation_context,
                 )
                 response = verification_result.response
@@ -835,80 +887,63 @@ class RAGPipeline:
                     correction_applied=verification_result.correction_applied,
                 )
 
-                # --- Phase 4: Post-generation compliance check ---
+                # Post-generation compliance check
                 compliance_result = await self.compliance_checker.check(response)
                 response = compliance_result.response
                 if compliance_result.disclaimer_added:
                     logger.info("Compliance disclaimer added", issues=compliance_result.issues)
 
-                # --- Phase 4: Inline citation extraction with refusal guard ---
+                # Inline citation extraction with refusal guard
                 if self._detect_refusal(response):
                     logger.info("Refusal detected — suppressing citations")
                     citations = []
                     confidence = 0.1
                 else:
                     built_citations = self.citation_builder.extract_inline_citations(
-                        response, assembled.source_map
+                        response, retrieval.assembled.source_map
                     )
                     citations = [c.to_dict() for c in built_citations]
                     confidence = self.quality_metrics_manager.calculate_confidence(retrieved_docs, response)
             else:
-                # No relevant documents found - check if this could be relevant general knowledge
+                # No relevant documents found
                 is_general_query = self.query_analyzer.is_general_knowledge_query(query)
-                
-                # Even if it's a general query, it must still be within AAIRE's domain
+
                 if is_general_query:
-                    # Re-check topic relevance for general knowledge questions
                     topic_check = await self.query_analyzer.classify_query_topic(query)
                     if not topic_check['is_relevant']:
                         return RAGResponse(
                             answer=topic_check['polite_response'],
-                            citations=[],
-                            confidence=1.0,
-                            session_id=session_id,
-                            follow_up_questions=[]
+                            citations=[], confidence=1.0, session_id=session_id, follow_up_questions=[]
                         )
-                
-                if is_general_query:
-                    # Use general knowledge response
                     logger.info(f"No relevant documents found, using general knowledge for: '{query[:50]}...'")
                     response = await self.response_generator.generate_response(query, [], user_context, conversation_history, session_id)
-
-
                     response = self.formatting_manager.format_response(response)
                     response = self.citation_analyzer.remove_citations_from_response(response)
                     citations = []
-                    confidence = 0.3  # Low confidence for general knowledge responses
+                    confidence = 0.3
                 else:
-                    # Specific query but no documents found - provide detailed feedback
                     logger.warning(f"No relevant documents found for specific query: '{query[:50]}...'")
-                    
-                    # Check what documents we do have available
                     available_docs = []
                     try:
                         if hasattr(self, 'vector_store') and self.vector_store:
-                            # Try to get some info about available documents
-                            sample_docs = await self.document_retriever.vector_search("document", None, 0.1)  # Very low threshold
+                            sample_docs = await self.document_retriever.vector_search("document", None, 0.1)
                             available_docs = list(set([doc['metadata'].get('filename', 'Unknown') for doc in sample_docs[:5]]))
-                    except:
+                    except Exception:
                         pass
-                    
+
                     if available_docs:
                         response = f"I couldn't find specific information about '{query}' in the uploaded documents. The available documents include: {', '.join(available_docs)}. Please verify that the document containing this information has been successfully uploaded and processed."
                     else:
                         response = f"I couldn't find specific information about '{query}' in the uploaded documents. Please ensure the relevant document has been uploaded and processed successfully."
-                    
                     citations = []
-                    confidence = 0.1  # Very low confidence when we can't find specific content
-            
-            # Response formatting handled by prompt engineering
-            
+                    confidence = 0.1
+
             # Generate contextual follow-up questions
             follow_up_questions = await self.response_generator.generate_follow_up_questions(query, response, retrieved_docs)
-            
+
             # Calculate quality metrics
             quality_metrics = self.quality_metrics_manager.calculate_quality_metrics(query, response, retrieved_docs, citations)
-            
+
             rag_response = RAGResponse(
                 answer=response,
                 citations=citations,
@@ -917,19 +952,19 @@ class RAGPipeline:
                 follow_up_questions=follow_up_questions,
                 quality_metrics=quality_metrics
             )
-            
+
             # Cache the response
             if self.cache:
                 self.cache.setex(
-                    cache_key, 
+                    cache_key,
                     self.config['retrieval_config']['cache_ttl'],
                     self.cache_manager.serialize_response(rag_response)
                 )
-            
+
             # Record assistant response in conversation memory
             if self.memory_manager:
                 await self.memory_manager.add_message(session_id, 'assistant', response)
-            
+
             return rag_response
 
         except Exception as e:
@@ -946,8 +981,7 @@ class RAGPipeline:
     ):
         """
         Process a user query with streaming response — uses the same
-        Phase 3-4 pipeline as process_query() (element-aware retrieval,
-        context assembly, verification, compliance, precise citations).
+        retrieval pipeline as process_query() via _run_retrieval_phase().
 
         Yields: response chunks, then final metadata.
         """
@@ -960,63 +994,20 @@ class RAGPipeline:
         try:
             logger.info("Streaming query processing started", query=query, session_id=session_id)
 
-            # --- Topic gate ---
-            topic_result = await self.query_analyzer.classify_query_topic(query)
-            if not topic_result['is_relevant']:
-                yield {"type": "content", "content": topic_result['polite_response']}
+            # --- Shared retrieval phase ---
+            retrieval = await self._run_retrieval_phase(query, filters)
+
+            if retrieval is None:
+                # Topic rejected — re-fetch polite response
+                topic_result = await self.query_analyzer.classify_query_topic(query)
+                yield {"type": "content", "content": topic_result.get('polite_response', "I can only help with financial and insurance topics.")}
                 yield {"type": "done", "session_id": session_id, "citations": [], "confidence": 1.0, "follow_up_questions": []}
                 return
 
-            # --- Semantic enhancement ---
-            doc_type_filter = self._get_doc_type_filter(filters)
-            try:
-                enhancement_result = await self.query_analyzer.enhance_query_semantically(query)
-                expanded_query = enhancement_result['enhanced_query']
-            except Exception as e:
-                logger.warning(f"Semantic enhancement failed: {e}")
-                expanded_query = self.query_analyzer.expand_query(query)
+            retrieved_docs = retrieval.retrieved_docs
 
-            similarity_threshold = self.quality_metrics_manager.get_similarity_threshold(query)
-
-            # --- Phase 3: Intent cache fast-path ---
-            cached_intent = self.intent_cache.classify_fast(expanded_query)
-            if cached_intent:
-                logger.info("Intent fast-path matched", query_type=cached_intent.query_type)
-
-            # --- Phase 3: Element-aware retrieval ---
-            enriched_results = await self.element_aware_retriever.retrieve(
-                query=expanded_query,
-                doc_type_filter=doc_type_filter,
-                similarity_threshold=similarity_threshold,
-                filters=filters,
-                fetch_originals=True,
-            )
-
-            # --- Phase 3: Cross-encoder reranking with entity-aware composite scoring ---
-            _query_entities_stream = None
-            if self.entity_extractor:
-                try:
-                    _query_entities_stream = self.entity_extractor.extract_from_query(query)
-                except Exception:
-                    pass
-            if enriched_results and self.semantic_similarity_service:
-                enriched_results = self.semantic_similarity_service.rerank_enriched_results(
-                    query, enriched_results, query_entities=_query_entities_stream
-                )
-
-            # Convert reranked results to dict format
-            retrieved_docs = [self._enriched_to_dict(er) for er in enriched_results]
-
-            # Apply diversity selection to spread context across source documents
-            retrieved_docs = self.document_retriever.get_diverse_context_documents(retrieved_docs)
-
-            if retrieved_docs:
-                logger.info(f"Found {len(retrieved_docs)} relevant documents")
-
-                # --- Phase 4: Assemble context ---
-                assembled = self.context_assembler.assemble(retrieved_docs, query)
-
-                # --- Phase 4: Verification pipeline (generate + verify + correct) ---
+            if retrieved_docs and retrieval.assembled:
+                # --- Verification pipeline (generate + verify + correct) ---
                 conversation_context = ""
                 if conversation_history:
                     recent = conversation_history[-6:]
@@ -1026,12 +1017,12 @@ class RAGPipeline:
 
                 verification_result = await self.verification_pipeline.run(
                     query=query,
-                    context_text=assembled.text,
+                    context_text=retrieval.assembled.text,
                     conversation_history=conversation_context,
                 )
                 response = verification_result.response
 
-                # --- Phase 4: Compliance check ---
+                # Compliance check
                 compliance_result = await self.compliance_checker.check(response)
                 response = compliance_result.response
 
@@ -1047,14 +1038,13 @@ class RAGPipeline:
                 if buffer:
                     yield {"type": "content", "content": ' '.join(buffer)}
 
-                # --- Phase 4: Inline citation extraction with refusal guard ---
+                # Citation extraction with refusal guard
                 if self._detect_refusal(response):
-                    logger.info("Refusal detected — suppressing citations")
                     citations = []
                     confidence = 0.1
                 else:
                     built_citations = self.citation_builder.extract_inline_citations(
-                        response, assembled.source_map
+                        response, retrieval.assembled.source_map
                     )
                     citations = [c.to_dict() for c in built_citations]
                     confidence = self.quality_metrics_manager.calculate_confidence(retrieved_docs, response)
@@ -1374,7 +1364,7 @@ class RAGPipeline:
                 )
                 # Entity + dedup payload indexes
                 for entity_field in ["entities", "entity_orgs", "entity_persons",
-                                     "doc_content_hash", "content_hash"]:
+                                     "doc_content_hash", "content_hash", "section"]:
                     self.qdrant_client.create_payload_index(
                         collection_name=self.collection_name,
                         field_name=entity_field,

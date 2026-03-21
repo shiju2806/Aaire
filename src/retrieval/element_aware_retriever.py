@@ -208,6 +208,25 @@ class ElementAwareRetriever:
             raw_results = self._rrf_merge(raw_results, graph_results)
             seen_ids.update(r['node_id'] for r in graph_results)
 
+        # 7.5. Section expansion — pull sibling chunks from high-scoring sections.
+        section_cfg = get_nested(get_config("scoring"), "section_expansion", default={})
+        if section_cfg.get("enabled", True):
+            section_extras = self._expand_sections(
+                raw_results,
+                seen_ids,
+                max_expansion=section_cfg.get("max_expansion_chunks", 10),
+                score_threshold=section_cfg.get("score_threshold", 0.3),
+                max_sections=section_cfg.get("max_sections", 3),
+                expansion_discount=section_cfg.get("expansion_score_discount", 0.7),
+            )
+            if section_extras:
+                raw_results.extend(section_extras)
+                seen_ids.update(r['node_id'] for r in section_extras)
+                logger.info(
+                    "Section expansion: added chunks",
+                    added=len(section_extras),
+                )
+
         # 8. Apply element-type score adjustments.
         enriched: List[EnrichedResult] = []
         for result in raw_results:
@@ -501,6 +520,74 @@ class ElementAwareRetriever:
             merged.append(result)
 
         return merged
+
+    def _expand_sections(
+        self,
+        results: List[Dict],
+        seen_ids: Set[str],
+        max_expansion: int = 10,
+        score_threshold: float = 0.3,
+        max_sections: int = 3,
+        expansion_discount: float = 0.7,
+    ) -> List[Dict]:
+        """Expand top-scoring sections by pulling sibling chunks from Qdrant.
+
+        For each high-scoring chunk, retrieve other chunks from the same
+        (document_title, section) pair so the LLM gets full section context.
+
+        Returns new chunks not already in ``seen_ids``.
+        """
+        if not self._retrieval_provider:
+            return []
+
+        # Collect unique (doc_title, section) pairs with max score.
+        section_scores: Dict[tuple, float] = {}
+        for r in results:
+            score = r.get('score', 0) or r.get('relevance_score', 0)
+            if score < score_threshold:
+                continue
+            meta = r.get('metadata', {})
+            doc_title = meta.get('document_title', '')
+            section = meta.get('section', '')
+            if not doc_title or not section:
+                continue
+            key = (doc_title, section)
+            if key not in section_scores or score > section_scores[key]:
+                section_scores[key] = score
+
+        if not section_scores:
+            return []
+
+        # Pick top N sections by score.
+        top_sections = sorted(section_scores.items(), key=lambda x: x[1], reverse=True)[:max_sections]
+
+        new_chunks: List[Dict] = []
+        for (doc_title, section), parent_score in top_sections:
+            if len(new_chunks) >= max_expansion:
+                break
+            try:
+                for batch in self._retrieval_provider.scroll(
+                    filters={"document_title": doc_title, "section": section},
+                    batch_size=20,
+                ):
+                    for sr in batch:
+                        if sr.point_id in seen_ids:
+                            continue
+                        if len(new_chunks) >= max_expansion:
+                            break
+                        new_chunks.append({
+                            'content': sr.payload.get('display_text', sr.payload.get('content', '')),
+                            'metadata': sr.payload,
+                            'score': parent_score * expansion_discount,
+                            'node_id': sr.point_id,
+                            'search_type': 'section_expansion',
+                        })
+                    if len(new_chunks) >= max_expansion:
+                        break
+            except Exception as e:
+                logger.debug("Section expansion scroll failed", section=section, error=str(e))
+
+        return new_chunks
 
     def _classify_query(self, query: str) -> ElementTypeWeights:
         """Determine element type weights based on query content."""

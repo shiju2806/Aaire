@@ -37,54 +37,6 @@ class QueryAnalyzer:
         self.llm = llm
         self.taxonomy_extractor = taxonomy_extractor
 
-    def is_organizational_query(self, query: str, documents: List[Dict]) -> bool:
-        """
-        Check if this is an organizational structure query.
-
-        Args:
-            query: The user query to analyze
-            documents: List of retrieved documents
-
-        Returns:
-            bool: True if this is an organizational structure query
-        """
-        org_terms = ['breakdown by job', 'organizational structure', 'job titles', 'hierarchy']
-        has_org_query = any(term in query.lower() for term in org_terms)
-
-        if has_org_query:
-            # Check if documents contain spatial extraction data
-            sample_content = " ".join([doc['content'][:300] for doc in documents[:3]])
-            return '[SHAPE-AWARE ORGANIZATIONAL EXTRACTION]' in sample_content
-
-        return False
-
-    def generate_organizational_response(self, query: str, documents: List[Dict], conversation_context: str) -> str:
-        """
-        Generate response for organizational structure queries.
-
-        Args:
-            query: The user query
-            documents: List of retrieved documents
-            conversation_context: Previous conversation context
-
-        Returns:
-            str: Generated response for organizational queries
-        """
-        context = "\n\n".join([doc['content'] for doc in documents])
-
-        prompt = f"""You are AAIRE, an expert in insurance accounting and actuarial matters.
-{conversation_context}
-Question: {query}
-
-Organizational data:
-{context}
-
-Provide a clear organizational breakdown based on the spatial extraction data found in the documents.
-Use appropriate headings and structure the information clearly."""
-
-        response = self.llm.complete(prompt)
-        return response.text.strip()
-
     def determine_question_categories(self, query: str, response: str, retrieved_docs: List[Dict]) -> List[str]:
         """
         Determine appropriate question categories based on context.
@@ -582,64 +534,6 @@ Be comprehensive but focus ONLY on terms explicitly relevant to this specific qu
                 return True
 
         return False
-
-    def _expand_with_taxonomy(self, query: str, existing_enhancements: Dict) -> List[str]:
-        """
-        Expand query using extracted taxonomy (NO hardcoded domain logic).
-
-        Args:
-            query: Original query
-            existing_enhancements: Enhancements from LLM
-
-        Returns:
-            List of additional terms from taxonomy
-        """
-        if not self.taxonomy_extractor:
-            return []
-
-        taxonomy_terms = []
-
-        # Extract potential terms from query (simple word tokenization)
-        query_words = query.lower().split()
-
-        # Also check LLM-identified terms
-        all_identified_terms = []
-        for category, terms in existing_enhancements.items():
-            all_identified_terms.extend([t.lower() for t in terms])
-
-        # Combine query words and LLM terms
-        terms_to_lookup = set(query_words + all_identified_terms)
-
-        # Also check multi-word phrases in query
-        query_lower = query.lower()
-
-        # Look up each term in taxonomy
-        for term in terms_to_lookup:
-            related = self.taxonomy_extractor.get_related_terms(term, max_depth=1)
-            if related:
-                taxonomy_terms.extend(related)
-                logger.debug(f"📚 Taxonomy: '{term}' → {related[:3]}...")
-
-        # Check for common multi-word terms (2-3 words)
-        words = query.lower().split()
-        for i in range(len(words) - 1):
-            bigram = f"{words[i]} {words[i+1]}"
-            related = self.taxonomy_extractor.get_related_terms(bigram, max_depth=1)
-            if related:
-                taxonomy_terms.extend(related)
-                logger.debug(f"📚 Taxonomy: '{bigram}' → {related[:3]}...")
-
-            if i < len(words) - 2:
-                trigram = f"{words[i]} {words[i+1]} {words[i+2]}"
-                related = self.taxonomy_extractor.get_related_terms(trigram, max_depth=1)
-                if related:
-                    taxonomy_terms.extend(related)
-                    logger.debug(f"📚 Taxonomy: '{trigram}' → {related[:3]}...")
-
-        # Remove duplicates and return
-        unique_terms = list(set(taxonomy_terms))
-        return unique_terms[:10]  # Limit to top 10 taxonomy terms
-
 
 def create_query_analyzer(llm: OpenAI, taxonomy_extractor=None) -> QueryAnalyzer:
     """

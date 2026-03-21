@@ -10,5 +10,6 @@ Exports:
 """
 
 from .analyzer import QueryAnalyzer, create_query_analyzer
+from .decomposer import QueryDecomposer, DecompositionResult
 
-__all__ = ['QueryAnalyzer', 'create_query_analyzer']
+__all__ = ['QueryAnalyzer', 'create_query_analyzer', 'QueryDecomposer', 'DecompositionResult']
