@@ -50,7 +50,7 @@ retrieval_config:
   max_results: 20  # Fallback limit (rarely used now with dynamic calculation)
   use_cache: true
   cache_ttl: 3600
-  reranking_enabled: false  # Disabled for MVP
+  reranking_enabled: true  # Cross-encoder reranking (tuning in config/scoring.yaml)
   
   # Dynamic document limit configuration
   base_document_limit: 25     # Starting point for simple queries

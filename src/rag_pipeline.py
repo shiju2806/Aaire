@@ -223,8 +223,12 @@ class RAGPipeline:
         self.quality_metrics_manager = create_quality_metrics_manager(self.config.get('retrieval_config', {}))
 
         # Initialize semantic similarity service for enhanced retrieval
-        self.semantic_similarity_service = create_semantic_similarity_service()
-        logger.info("✅ Semantic similarity service initialized for query-agnostic disambiguation")
+        reranking_enabled = self.config.get('retrieval_config', {}).get('reranking_enabled', True)
+        self.semantic_similarity_service = create_semantic_similarity_service(
+            use_cross_encoder=reranking_enabled,
+        )
+        logger.info("Semantic similarity service initialized",
+                     cross_encoder=reranking_enabled)
 
         # Initialize Phase 3 services modules (index will be set later)
         self.document_retriever = create_document_retriever(

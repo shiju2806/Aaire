@@ -4,6 +4,7 @@
 Usage:
     python scripts/evaluate.py                  # Run all queries
     python scripts/evaluate.py --query q001     # Run single query
+    python scripts/evaluate.py --category comparison  # Run one category
     python scripts/evaluate.py --save-baseline  # Save results as baseline
     python scripts/evaluate.py --compare        # Compare against baseline
 """
@@ -14,6 +15,7 @@ import json
 import os
 import sys
 import time
+from collections import defaultdict
 from pathlib import Path
 
 import yaml
@@ -81,6 +83,7 @@ async def run_query(pipeline, query_spec: dict) -> dict:
     """Run a single golden query and return evaluation result."""
     query = query_spec["query"]
     query_id = query_spec["id"]
+    category = query_spec.get("category", "unknown")
 
     start = time.perf_counter()
     try:
@@ -89,6 +92,7 @@ async def run_query(pipeline, query_spec: dict) -> dict:
     except Exception as e:
         return {
             "id": query_id,
+            "category": category,
             "passed": False,
             "error": str(e),
             "elapsed_ms": 0,
@@ -106,6 +110,7 @@ async def run_query(pipeline, query_spec: dict) -> dict:
 
     return {
         "id": query_id,
+        "category": category,
         "passed": passed,
         "recall": round(recall, 2),
         "concepts": round(concepts, 2),
@@ -123,23 +128,41 @@ async def run_query(pipeline, query_spec: dict) -> dict:
     }
 
 
-def print_results(results: list) -> None:
-    """Print a pass/fail table."""
+def print_results(results: list, query_specs: list) -> None:
+    """Print a pass/fail table with per-category summary."""
     passed = sum(1 for r in results if r["passed"])
     total = len(results)
     pct = (passed / total * 100) if total else 0
 
     print(f"\nAAIRE Eval -- {passed}/{total} passed ({pct:.0f}%)\n")
-    print(f"{'ID':<8} {'Status':<6} {'Recall':<10} {'Concepts':<12} {'Time':<10} {'Reason'}")
-    print("-" * 70)
+    print(f"{'ID':<8} {'Cat':<14} {'Status':<6} {'Recall':<8} {'Concepts':<10} {'Time':<8} {'Reason'}")
+    print("-" * 78)
 
     for r in results:
         status = "PASS" if r["passed"] else "FAIL"
         recall = f"{r.get('recall', 0):.2f}" if "recall" in r else "N/A"
         concepts = f"{r.get('concepts', 0):.0%}" if "concepts" in r else "N/A"
         time_str = f"{r.get('elapsed_ms', 0):.0f}ms"
+        cat = r.get("category", "")[:13]
         reason = r.get("failure_reason") or r.get("error", "")
-        print(f"{r['id']:<8} {status:<6} {recall:<10} {concepts:<12} {time_str:<10} {reason}")
+        print(f"{r['id']:<8} {cat:<14} {status:<6} {recall:<8} {concepts:<10} {time_str:<8} {reason}")
+
+    # Per-category breakdown.
+    cat_stats = defaultdict(lambda: {"passed": 0, "total": 0, "avg_ms": 0.0})
+    for r in results:
+        cat = r.get("category", "unknown")
+        cat_stats[cat]["total"] += 1
+        cat_stats[cat]["avg_ms"] += r.get("elapsed_ms", 0)
+        if r["passed"]:
+            cat_stats[cat]["passed"] += 1
+
+    print(f"\n{'Category':<16} {'Pass Rate':<12} {'Avg Time'}")
+    print("-" * 40)
+    for cat in sorted(cat_stats):
+        s = cat_stats[cat]
+        rate = f"{s['passed']}/{s['total']}"
+        avg = f"{s['avg_ms'] / s['total']:.0f}ms" if s['total'] else "N/A"
+        print(f"{cat:<16} {rate:<12} {avg}")
 
 
 def save_baseline(results: list, path: str = None) -> None:
@@ -164,21 +187,29 @@ def compare_baseline(results: list, path: str = None) -> None:
 
     baseline_map = {r["id"]: r for r in baseline}
     regressions = []
+    improvements = []
 
     for r in results:
         b = baseline_map.get(r["id"])
-        if b and b["passed"] and not r["passed"]:
+        if not b:
+            continue
+        if b["passed"] and not r["passed"]:
             regressions.append(r["id"])
+        elif not b["passed"] and r["passed"]:
+            improvements.append(r["id"])
 
+    if improvements:
+        print(f"\nIMPROVEMENTS: {', '.join(improvements)}")
     if regressions:
-        print(f"\nREGRESSIONS detected: {', '.join(regressions)}")
-    else:
-        print("\nNo regressions vs baseline.")
+        print(f"REGRESSIONS:  {', '.join(regressions)}")
+    if not improvements and not regressions:
+        print("\nNo changes vs baseline.")
 
 
 async def main():
     parser = argparse.ArgumentParser(description="AAIRE RAG evaluation harness")
     parser.add_argument("--query", type=str, help="Run a single query by ID (e.g., q001)")
+    parser.add_argument("--category", type=str, help="Run only queries in this category")
     parser.add_argument("--save-baseline", action="store_true", help="Save results as baseline")
     parser.add_argument("--compare", action="store_true", help="Compare against saved baseline")
     parser.add_argument("--golden-file", type=str, help="Path to golden queries YAML")
@@ -191,6 +222,12 @@ async def main():
         queries = [q for q in queries if q["id"] == args.query]
         if not queries:
             print(f"Query ID '{args.query}' not found in golden set.")
+            sys.exit(1)
+
+    if args.category:
+        queries = [q for q in queries if q.get("category") == args.category]
+        if not queries:
+            print(f"Category '{args.category}' not found in golden set.")
             sys.exit(1)
 
     # Initialize the RAG pipeline.
@@ -208,7 +245,7 @@ async def main():
         results.append(result)
 
     # Output.
-    print_results(results)
+    print_results(results, queries)
 
     if args.save_baseline:
         save_baseline(results)

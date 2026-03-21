@@ -1,0 +1,272 @@
+# Golden queries for RAG pipeline evaluation.
+# Each query specifies expected retrieval behavior and response content.
+#
+# Categories:
+#   simple       — single-concept, single-pass retrieval
+#   comparison   — triggers query decomposition (compare/contrast)
+#   aggregation  — triggers query decomposition (across/all/summarize)
+#   formula      — should retrieve table/formula elements
+#   section_span — answer requires multiple chunks from same section
+#   edge_case    — off-topic, ambiguous, or adversarial
+
+queries:
+  # -----------------------------------------------------------------------
+  # SIMPLE: single-concept queries (should NOT decompose)
+  # -----------------------------------------------------------------------
+  - id: "q001"
+    category: simple
+    query: "What are the VM-20 reserve requirements?"
+    expected_docs: ["VM-20"]
+    required_concepts: ["deterministic reserve", "stochastic reserve"]
+    forbidden_concepts: ["Solvency II"]
+    min_citations: 1
+
+  - id: "q002"
+    category: simple
+    query: "What is the LICAT ratio calculation methodology?"
+    expected_docs: ["LICAT"]
+    required_concepts: ["capital", "ratio"]
+    forbidden_concepts: []
+    min_citations: 1
+
+  - id: "q003"
+    category: simple
+    query: "How does ASC 944 apply to insurance contract accounting?"
+    expected_docs: ["ASC 944"]
+    required_concepts: ["insurance", "contract"]
+    forbidden_concepts: []
+    min_citations: 1
+
+  - id: "q004"
+    category: simple
+    query: "What is the net premium reserve formula?"
+    expected_docs: []
+    required_concepts: ["net premium", "reserve"]
+    forbidden_concepts: []
+    min_citations: 0
+
+  - id: "q005"
+    category: simple
+    query: "What is the premium allocation approach under IFRS 17?"
+    expected_docs: []
+    required_concepts: ["premium allocation"]
+    forbidden_concepts: []
+    min_citations: 0
+
+  - id: "q006"
+    category: simple
+    query: "How do reinsurance treaties affect reserve requirements?"
+    expected_docs: []
+    required_concepts: ["reinsurance"]
+    forbidden_concepts: []
+    min_citations: 0
+
+  - id: "q007"
+    category: simple
+    query: "What is the contractual service margin under IFRS 17?"
+    expected_docs: []
+    required_concepts: ["contractual service margin"]
+    forbidden_concepts: []
+    min_citations: 0
+
+  - id: "q008"
+    category: simple
+    query: "What are the capital adequacy requirements for Canadian insurers?"
+    expected_docs: []
+    required_concepts: ["capital"]
+    forbidden_concepts: []
+    min_citations: 0
+
+  # -----------------------------------------------------------------------
+  # COMPARISON: should trigger query decomposition
+  # -----------------------------------------------------------------------
+  - id: "q009"
+    category: comparison
+    query: "Compare whole life and universal life reserves"
+    expected_docs: []
+    required_concepts: ["whole life", "universal life"]
+    forbidden_concepts: []
+    min_citations: 0
+
+  - id: "q010"
+    category: comparison
+    query: "Explain the difference between GAAP and IFRS for insurance liabilities"
+    expected_docs: []
+    required_concepts: ["GAAP", "IFRS", "liability"]
+    forbidden_concepts: []
+    min_citations: 0
+
+  - id: "q011"
+    category: comparison
+    query: "What are the key differences between VM-20 and VM-21?"
+    expected_docs: []
+    required_concepts: ["VM-20", "VM-21"]
+    forbidden_concepts: []
+    min_citations: 0
+
+  - id: "q012"
+    category: comparison
+    query: "Compare the deterministic and stochastic reserve methods in VM-20"
+    expected_docs: ["VM-20"]
+    required_concepts: ["deterministic", "stochastic"]
+    forbidden_concepts: []
+    min_citations: 1
+
+  - id: "q013"
+    category: comparison
+    query: "What is the difference between IFRS 17 and IFRS 4 for insurance contracts?"
+    expected_docs: []
+    required_concepts: ["IFRS 17", "IFRS 4"]
+    forbidden_concepts: []
+    min_citations: 0
+
+  - id: "q014"
+    category: comparison
+    query: "Compare CALM and PAA approaches for reserve valuation"
+    expected_docs: []
+    required_concepts: ["CALM", "PAA"]
+    forbidden_concepts: []
+    min_citations: 0
+
+  # -----------------------------------------------------------------------
+  # AGGREGATION: should trigger query decomposition
+  # -----------------------------------------------------------------------
+  - id: "q015"
+    category: aggregation
+    query: "Summarize all reserve calculation methods across term and whole life products"
+    expected_docs: []
+    required_concepts: ["reserve", "calculation"]
+    forbidden_concepts: []
+    min_citations: 0
+
+  - id: "q016"
+    category: aggregation
+    query: "List all the mortality assumptions used across different product types"
+    expected_docs: []
+    required_concepts: ["mortality"]
+    forbidden_concepts: []
+    min_citations: 0
+
+  - id: "q017"
+    category: aggregation
+    query: "What are all the regulatory capital requirements across US and Canadian jurisdictions?"
+    expected_docs: []
+    required_concepts: ["capital", "regulatory"]
+    forbidden_concepts: []
+    min_citations: 0
+
+  # -----------------------------------------------------------------------
+  # FORMULA / TABLE: should retrieve structured elements
+  # -----------------------------------------------------------------------
+  - id: "q018"
+    category: formula
+    query: "What mortality tables are used in VM-20 deterministic reserves?"
+    expected_docs: ["VM-20"]
+    required_concepts: ["mortality"]
+    forbidden_concepts: []
+    min_citations: 1
+
+  - id: "q019"
+    category: formula
+    query: "Show the formula for calculating the actuarial present value of future benefits"
+    expected_docs: []
+    required_concepts: ["present value"]
+    forbidden_concepts: []
+    min_citations: 0
+
+  - id: "q020"
+    category: formula
+    query: "What are the CSO mortality rate factors by age?"
+    expected_docs: []
+    required_concepts: ["CSO", "mortality"]
+    forbidden_concepts: []
+    min_citations: 0
+
+  - id: "q021"
+    category: formula
+    query: "How is the net premium ratio calculated for reserve valuation?"
+    expected_docs: []
+    required_concepts: ["net premium", "ratio"]
+    forbidden_concepts: []
+    min_citations: 0
+
+  # -----------------------------------------------------------------------
+  # SECTION-SPANNING: requires section expansion to get full context
+  # -----------------------------------------------------------------------
+  - id: "q022"
+    category: section_span
+    query: "Describe the stochastic exclusion test in VM-20"
+    expected_docs: ["VM-20"]
+    required_concepts: ["stochastic", "exclusion"]
+    forbidden_concepts: []
+    min_citations: 1
+
+  - id: "q023"
+    category: section_span
+    query: "Explain the full process for determining whether a company qualifies for the VM-20 exclusion test"
+    expected_docs: ["VM-20"]
+    required_concepts: ["exclusion"]
+    forbidden_concepts: []
+    min_citations: 1
+
+  - id: "q024"
+    category: section_span
+    query: "Walk through the steps of computing a deterministic reserve under VM-20 Section 4"
+    expected_docs: ["VM-20"]
+    required_concepts: ["deterministic"]
+    forbidden_concepts: []
+    min_citations: 1
+
+  # -----------------------------------------------------------------------
+  # DOMAIN KNOWLEDGE: general insurance/accounting concepts
+  # -----------------------------------------------------------------------
+  - id: "q025"
+    category: simple
+    query: "What is the loss component in IFRS 17?"
+    expected_docs: []
+    required_concepts: ["loss component"]
+    forbidden_concepts: []
+    min_citations: 0
+
+  - id: "q026"
+    category: simple
+    query: "How does risk adjustment work under IFRS 17?"
+    expected_docs: []
+    required_concepts: ["risk adjustment"]
+    forbidden_concepts: []
+    min_citations: 0
+
+  - id: "q027"
+    category: simple
+    query: "What is the CRVM method for reserve calculation?"
+    expected_docs: []
+    required_concepts: ["CRVM"]
+    forbidden_concepts: []
+    min_citations: 0
+
+  # -----------------------------------------------------------------------
+  # EDGE CASES: off-topic, ambiguous, or boundary queries
+  # -----------------------------------------------------------------------
+  - id: "q028"
+    category: edge_case
+    query: "What is the best recipe for chocolate cake?"
+    expected_docs: []
+    required_concepts: []
+    forbidden_concepts: ["reserve", "insurance", "accounting"]
+    min_citations: 0
+
+  - id: "q029"
+    category: edge_case
+    query: "Tell me about life insurance"
+    expected_docs: []
+    required_concepts: ["life insurance"]
+    forbidden_concepts: []
+    min_citations: 0
+
+  - id: "q030"
+    category: edge_case
+    query: "reserves"
+    expected_docs: []
+    required_concepts: ["reserve"]
+    forbidden_concepts: []
+    min_citations: 0
