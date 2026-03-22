@@ -62,7 +62,6 @@ class RetrievalMetrics:
     early_exit_triggered: bool = False
     bm25_contributed: bool = False
     bm25_skipped: bool = False
-    entropy_disambiguation_triggered: bool = False
 
     def log(self) -> None:
         """Emit structured log of metrics."""

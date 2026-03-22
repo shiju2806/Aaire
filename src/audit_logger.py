@@ -300,8 +300,15 @@ class AuditLogger:
         if format == "json":
             return json.dumps(events, indent=2, default=str)
         elif format == "csv":
-            # TODO: Implement CSV export
-            raise NotImplementedError("CSV export not yet implemented")
+            import csv
+            import io
+            output = io.StringIO()
+            if events:
+                writer = csv.DictWriter(output, fieldnames=events[0].keys())
+                writer.writeheader()
+                for event in events:
+                    writer.writerow({k: str(v) for k, v in event.items()})
+            return output.getvalue()
         else:
             raise ValueError(f"Unsupported export format: {format}")
     

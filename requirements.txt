@@ -27,10 +27,6 @@ python-docx>=1.1.0
 python-pptx>=0.6.23
 docling>=2.5.0  # IBM layout-aware document parser (PDF, DOCX, PPTX, HTML)
 
-# Local Vision-Language Model (Apple Silicon MLX) for image description during parsing
-mlx>=0.22.0
-mlx-vlm>=0.1.27
-
 # NLP / Entity Extraction
 spacy>=3.7.0,<4.0.0  # NER for entity-aware retrieval (en_core_web_sm model)
 
@@ -47,6 +43,7 @@ structlog>=23.2.0
 
 # Authentication
 PyJWT>=2.8.0
+passlib>=1.7.4
 
 # HTTP requests
 httpx>=0.25.0

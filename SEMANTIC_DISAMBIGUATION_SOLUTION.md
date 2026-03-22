@@ -1,5 +1,7 @@
 # Semantic Similarity Solution - No Hardcoding
 
+> **SUPERSEDED**: This entropy-based N-gram approach was replaced by cross-encoder reranking (ms-marco-MiniLM-L-6-v2) in Phase 4. See `CROSS_ENCODER_SOLUTION.md` for the current approach.
+
 ## Problem Statement
 We needed to distinguish between semantically similar insurance/financial terms like:
 - **"universal life"** vs **"whole life"**

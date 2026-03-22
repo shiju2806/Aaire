@@ -289,28 +289,3 @@ class AuthManager:
             "expired_sessions_cleaned": len(expired_sessions),
             "total_users": len(self.users_db)
         }
-    
-    # SAML 2.0 Integration Placeholder
-    # In production, these methods would handle SAML authentication
-    async def handle_saml_response(self, saml_response: str) -> User:
-        """
-        Handle SAML 2.0 authentication response
-        This is a placeholder for production implementation
-        """
-        # TODO: Implement SAML 2.0 response parsing
-        # TODO: Extract user attributes from SAML assertion
-        # TODO: Map SAML attributes to internal user model
-        # TODO: Create or update user record
-        # TODO: Generate session token
-        
-        raise NotImplementedError("SAML 2.0 integration pending")
-    
-    async def initiate_saml_login(self, relay_state: Optional[str] = None) -> str:
-        """
-        Initiate SAML 2.0 login
-        Returns URL to redirect user to IdP
-        """
-        # TODO: Generate SAML AuthnRequest
-        # TODO: Redirect to IdP login URL
-        
-        raise NotImplementedError("SAML 2.0 integration pending")

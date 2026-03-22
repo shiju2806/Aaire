@@ -343,17 +343,7 @@ Be comprehensive but focus ONLY on terms explicitly relevant to this specific qu
                     terms = line.replace('ALTERNATE_PHRASES:', '').strip()
                     enhancements['alternate_phrases'] = [t.strip() for t in terms.split(',') if t.strip()]
 
-            # Taxonomy extraction moved to post-retrieval in generation.py
-            # This prevents taxonomy from biasing retrieval toward wrong documents
-            # if self.taxonomy_extractor:
-            #     logger.info("🔍 Enhancing with extracted domain taxonomy...")
-            #     taxonomy_terms = self._expand_with_taxonomy(query, enhancements)
-            #     if taxonomy_terms:
-            #         enhancements['taxonomy_expansion'] = taxonomy_terms
-            #         logger.info(f"✅ Added {len(taxonomy_terms)} terms from taxonomy")
-            #         logger.info(f"📚 Taxonomy terms: {taxonomy_terms[:10]}")
-
-            # Build comprehensive search terms (excluding taxonomy to avoid retrieval bias)
+            # Build comprehensive search terms
             all_enhancements = []
             for category, terms in enhancements.items():
                 if category != 'taxonomy_expansion':  # Skip taxonomy for retrieval
