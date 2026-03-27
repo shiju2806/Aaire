@@ -462,6 +462,98 @@ class GraphStore:
 
         return None
 
+    def resolve_entities_batch(
+        self, names: List[str], entity_type: Optional[str] = None
+    ) -> Dict[str, Optional["EntityNode"]]:
+        """Batch-resolve multiple entity names using ES msearch.
+
+        Runs one msearch for exact matches, then a second msearch for fuzzy
+        matches on any names that weren't resolved in the first pass.
+        Skips embedding resolution (expensive, rarely needed at query time).
+
+        Returns:
+            Dict mapping each input name to its resolved EntityNode or None.
+        """
+        results: Dict[str, Optional[EntityNode]] = {n: None for n in names}
+        clean_names = [(n, n.strip()) for n in names if n and n.strip()]
+
+        if not clean_names:
+            return results
+
+        # --- Pass 1: Exact keyword match via msearch ---
+        body_lines = []
+        for _, name_clean in clean_names:
+            body_lines.append({"index": self._index})
+            query: Dict[str, Any] = {
+                "bool": {
+                    "should": [
+                        {"term": {"canonical_name.keyword": name_clean}},
+                        {"term": {"aliases.keyword": name_clean}},
+                    ],
+                    "minimum_should_match": 1,
+                }
+            }
+            if entity_type:
+                query["bool"]["filter"] = [{"term": {"entity_type": entity_type}}]
+            body_lines.append({"query": query, "size": 1})
+
+        try:
+            resp = self._es.msearch(body=body_lines)
+            for i, response in enumerate(resp.get("responses", [])):
+                hits = response.get("hits", {}).get("hits", [])
+                if hits:
+                    original_name = clean_names[i][0]
+                    results[original_name] = EntityNode.from_es_doc(hits[0])
+        except Exception as e:
+            logger.warning("Batch exact match failed", error=str(e))
+
+        # --- Pass 2: Fuzzy match for unresolved names ---
+        unresolved = [(orig, clean) for orig, clean in clean_names if results.get(orig) is None]
+        if not unresolved:
+            return results
+
+        fuzzy_threshold = get_nested(
+            self._config, "entity_resolution", "fuzzy_match_threshold", default=0.85
+        )
+
+        body_lines = []
+        for _, name_clean in unresolved:
+            body_lines.append({"index": self._index})
+            query = {
+                "bool": {
+                    "should": [
+                        {"match": {"canonical_name": {"query": name_clean, "fuzziness": "AUTO", "boost": 2.0}}},
+                        {"match": {"aliases": {"query": name_clean, "fuzziness": "AUTO", "boost": 1.5}}},
+                    ],
+                    "minimum_should_match": 1,
+                }
+            }
+            if entity_type:
+                query["bool"]["filter"] = [{"term": {"entity_type": entity_type}}]
+            body_lines.append({"query": query, "size": 3})
+
+        try:
+            resp = self._es.msearch(body=body_lines)
+            for i, response in enumerate(resp.get("responses", [])):
+                hits = response.get("hits", {}).get("hits", [])
+                if not hits:
+                    continue
+                candidate = EntityNode.from_es_doc(hits[0])
+                original_name, name_clean = unresolved[i]
+
+                similarity = self._jaro_winkler(name_clean.lower(), candidate.canonical_name.lower())
+                for alias in candidate.aliases:
+                    similarity = max(similarity, self._jaro_winkler(name_clean.lower(), alias.lower()))
+
+                if similarity >= fuzzy_threshold:
+                    results[original_name] = candidate
+        except Exception as e:
+            logger.warning("Batch fuzzy match failed", error=str(e))
+
+        resolved_count = sum(1 for v in results.values() if v is not None)
+        logger.info("Batch entity resolution complete", total=len(names), resolved=resolved_count)
+        return results
+
     def _exact_match(
         self, name: str, entity_type: Optional[str] = None
     ) -> Optional[EntityNode]:

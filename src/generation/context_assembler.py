@@ -10,8 +10,9 @@ summaries. Summaries are for search; originals are for answering.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import structlog
 
@@ -42,6 +43,8 @@ class AssembledContext:
     total_chars: int = 0
     source_documents: List[str] = field(default_factory=list)
     source_map: Dict[int, Any] = field(default_factory=dict)
+    coverage_score: float = 1.0
+    uncovered_topics: List[str] = field(default_factory=list)
 
 
 class ContextAssembler:
@@ -140,6 +143,17 @@ class ContextAssembler:
 
         context_text = "\n\n".join(context_parts)
 
+        # Assess coverage: check if all query topics are present in context
+        coverage_score, uncovered = self._assess_coverage(query, context_text)
+        if uncovered:
+            gap_note = (
+                f"\n\n[NOTE: The user also asked about {', '.join(uncovered)} "
+                f"but no retrieved documents address these specifically. "
+                f"State this gap clearly in your response.]"
+            )
+            context_text += gap_note
+            total_chars += len(gap_note)
+
         result = AssembledContext(
             text=context_text,
             element_count=sum(type_counts.values()),
@@ -148,6 +162,8 @@ class ContextAssembler:
             total_chars=total_chars,
             source_documents=sorted(doc_titles),
             source_map=source_map,
+            coverage_score=coverage_score,
+            uncovered_topics=uncovered,
         )
 
         logger.info(
@@ -157,6 +173,8 @@ class ContextAssembler:
             types=result.element_types,
             chars=result.total_chars,
             truncated=result.truncated,
+            coverage=round(coverage_score, 2),
+            uncovered=uncovered,
         )
         return result
 
@@ -302,6 +320,59 @@ class ContextAssembler:
         if not words_a or not words_b:
             return 0.0
         return len(words_a & words_b) / len(words_a | words_b)
+
+    # -- coverage gap detection ----------------------------------------------
+
+    _NOUN_PHRASE_PATTERN = re.compile(
+        r'\b(?:(?:capital|solvency|loss|combined|expense|claims?|risk|best estimate|contractual service|insurance|underwriting|premium)'
+        r'\s+(?:ratio|margin|capital|reserve|adjustment|liabilit(?:y|ies)|revenue|contract|profit|income|result|deficiency|sufficiency|adequacy)s?)\b',
+        re.IGNORECASE,
+    )
+    _CONCEPT_SPLIT = re.compile(r"[,;]|\band\b|\bor\b|\bto\b|\bin\b|\bfor\b|\bof\b|\babout\b|\bwith\b")
+
+    def _assess_coverage(
+        self, query: str, context_text: str
+    ) -> Tuple[float, List[str]]:
+        """Check if assembled context covers all key topics from the query.
+
+        Uses lightweight regex noun-phrase extraction (no LLM call).
+        Returns (coverage_score 0-1, list_of_uncovered_topic_strings).
+        """
+        if not query:
+            return 1.0, []
+
+        # Extract domain noun phrases from query
+        topics: List[str] = []
+        for m in self._NOUN_PHRASE_PATTERN.finditer(query):
+            topics.append(m.group().lower().strip())
+
+        # Also extract simple noun segments (2+ word chunks after splitting on conjunctions)
+        segments = self._CONCEPT_SPLIT.split(query.lower())
+        for seg in segments:
+            seg = seg.strip()
+            words = [w for w in seg.split() if w not in self._STOP_WORDS and len(w) > 2]
+            if 2 <= len(words) <= 4:
+                phrase = " ".join(words)
+                if phrase not in topics:
+                    topics.append(phrase)
+
+        if not topics:
+            return 1.0, []
+
+        context_lower = context_text.lower()
+        uncovered = []
+        for topic in topics:
+            # Check if any significant word from the topic appears in context
+            topic_words = set(topic.split()) - self._STOP_WORDS
+            if not topic_words:
+                continue
+            matches = sum(1 for w in topic_words if w in context_lower)
+            if matches < len(topic_words) * 0.5:
+                uncovered.append(topic)
+
+        covered = len(topics) - len(uncovered)
+        score = covered / len(topics) if topics else 1.0
+        return score, uncovered
 
     # -- element rendering --------------------------------------------------
 

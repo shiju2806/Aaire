@@ -398,15 +398,26 @@ class ElementAwareRetriever:
         kg_config = get_config("knowledge_graph")
         max_graph_chunks = get_nested(kg_config, "retrieval", "max_graph_chunks", default=20)
 
-        for entity_name in query_entities.all_entities:
-            try:
-                node = self._graph_store.resolve_entity(entity_name)
+        # Batch entity resolution: 2 ES round-trips instead of N×3
+        try:
+            batch_results = self._graph_store.resolve_entities_batch(query_entities.all_entities)
+            for entity_name, node in batch_results.items():
                 if node:
                     resolved_nodes.append(node)
                     connected = self._graph_store.get_connected_chunks(node.entity_id)
                     graph_chunk_ids.update(connected)
-            except Exception as e:
-                logger.debug("Graph entity resolution failed", entity=entity_name, error=str(e))
+        except Exception as e:
+            # Fallback to sequential resolution
+            logger.warning("Batch resolution failed, falling back to sequential", error=str(e))
+            for entity_name in query_entities.all_entities:
+                try:
+                    node = self._graph_store.resolve_entity(entity_name)
+                    if node:
+                        resolved_nodes.append(node)
+                        connected = self._graph_store.get_connected_chunks(node.entity_id)
+                        graph_chunk_ids.update(connected)
+                except Exception as e2:
+                    logger.debug("Graph entity resolution failed", entity=entity_name, error=str(e2))
 
         # Cap to prevent overwhelming results
         if len(graph_chunk_ids) > max_graph_chunks:

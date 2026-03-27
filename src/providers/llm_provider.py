@@ -22,10 +22,11 @@ Usage:
 
 import os
 import json
+import re
 import yaml
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional
 import structlog
 
 logger = structlog.get_logger()
@@ -81,6 +82,19 @@ class LLMProvider(ABC):
         task: str = "classification",
     ) -> str:
         """Classify text into one of the given categories."""
+
+    @abstractmethod
+    async def generate_stream(
+        self,
+        prompt: str,
+        *,
+        task: str = "generation",
+        system_prompt: Optional[str] = None,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+    ) -> AsyncGenerator[str, None]:
+        """Stream text tokens from a prompt. Yields content strings as they arrive."""
+        yield ""  # pragma: no cover — abstract
 
     @abstractmethod
     def generate_sync(
@@ -176,6 +190,34 @@ class OpenAILLMProvider(LLMProvider):
         )
         return response.choices[0].message.content.strip()
 
+    async def generate_stream(
+        self,
+        prompt: str,
+        *,
+        task: str = "generation",
+        system_prompt: Optional[str] = None,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+    ) -> AsyncGenerator[str, None]:
+        model, temp, tokens = self._resolve_params(task, temperature, max_tokens)
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
+        client = self._get_async_client()
+        stream = await client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=temp,
+            max_tokens=tokens,
+            stream=True,
+        )
+        async for chunk in stream:
+            delta = chunk.choices[0].delta if chunk.choices else None
+            if delta and delta.content:
+                yield delta.content
+
     async def generate_json(
         self,
         prompt: str,
@@ -201,7 +243,14 @@ class OpenAILLMProvider(LLMProvider):
             response_format={"type": "json_object"},
         )
         text = response.choices[0].message.content.strip()
-        return json.loads(text)
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError as e:
+            # Fallback: try to extract JSON object from response text
+            match = re.search(r'\{[\s\S]*\}', text)
+            if match:
+                return json.loads(match.group())
+            raise e
 
     async def classify(
         self,

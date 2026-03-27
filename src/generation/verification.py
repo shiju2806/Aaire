@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, AsyncGenerator, Dict, Optional, Union
 
 import structlog
 
@@ -154,6 +154,92 @@ class VerificationPipeline:
         )
         return result
 
+    async def run_streaming(
+        self,
+        query: str,
+        context_text: str,
+        conversation_history: str = "",
+    ) -> AsyncGenerator[Union[str, VerificationResult], None]:
+        """Stream Stage 1 tokens, then verify/correct.
+
+        Yields:
+            str tokens during generation (Stage 1).
+            If correction needed, yields more str tokens (Stage 3).
+            Final yield is always a VerificationResult with metadata.
+        """
+        result = VerificationResult()
+
+        # --- Stage 1: Stream the generation ---
+        prompt = self._generation_prompt.format(query=query, context=context_text)
+        if conversation_history:
+            prompt = f"CONVERSATION HISTORY:\n{conversation_history}\n\n{prompt}"
+
+        accumulated = []
+        async for token in self._llm.generate_stream(prompt, task="generation"):
+            accumulated.append(token)
+            yield token
+
+        response = "".join(accumulated)
+        result.response = response
+        result.llm_calls = 1
+
+        if self._skip_verification or not response.strip():
+            result.verified = True
+            yield result
+            return
+
+        # --- Stage 2: Verify (blocking, fast) ---
+        verification = await self._verify(query, context_text, response)
+        result.llm_calls = 2
+        result.verification_details = verification
+        result.hallucination_detected = verification.get("hallucination_detected", False)
+        result.completeness_score = verification.get("completeness_score", 0.0)
+        result.relevance_score = verification.get("relevance_score", 0.0)
+        result.verified = verification.get("overall_pass", False)
+
+        if result.verified:
+            logger.info(
+                "Verification passed (streaming)",
+                completeness=result.completeness_score,
+                relevance=result.relevance_score,
+            )
+            yield result
+            return
+
+        # --- Stage 3: Stream correction ---
+        correction_instructions = verification.get("correction_needed", "")
+        if not correction_instructions:
+            logger.warning("Verification failed but no correction instructions (streaming)")
+            yield result
+            return
+
+        correction_prompt = self._correction_prompt.format(
+            query=query,
+            context=context_text,
+            response=response,
+            correction_instructions=correction_instructions,
+        )
+
+        # Signal that we're replacing the response
+        yield "\n\n---\n\n"
+
+        corrected_parts = []
+        async for token in self._llm.generate_stream(correction_prompt, task="generation"):
+            corrected_parts.append(token)
+            yield token
+
+        result.response = "".join(corrected_parts)
+        result.correction_applied = True
+        result.llm_calls = 3
+        result.verified = True
+
+        logger.info(
+            "Correction applied (streaming)",
+            hallucination=result.hallucination_detected,
+            completeness=result.completeness_score,
+        )
+        yield result
+
     # -- stages -------------------------------------------------------------
 
     async def _generate(
@@ -187,15 +273,27 @@ class VerificationPipeline:
             response=response,
         )
 
-        try:
-            verification = await self._llm.generate_json(
-                prompt, task="scoring"
-            )
-            return verification
-        except Exception as e:
-            logger.warning("Verification parsing failed", error=str(e))
-            # If verification fails to parse, assume pass.
-            return {"overall_pass": True, "completeness_score": 0.5, "relevance_score": 0.5}
+        last_error = None
+        for attempt in range(2):
+            try:
+                verification = await self._llm.generate_json(
+                    prompt, task="scoring"
+                )
+                return verification
+            except Exception as e:
+                last_error = e
+                if attempt == 0:
+                    logger.warning("Verification parsing failed, retrying", error=str(e))
+
+        # Both attempts failed — mark as unverified to trigger correction
+        logger.warning("Verification parsing failed after retry", error=str(last_error))
+        return {
+            "overall_pass": False,
+            "completeness_score": 0.0,
+            "relevance_score": 0.0,
+            "parse_failure": True,
+            "correction_needed": "Verification could not parse the response. Please regenerate a clear, well-structured answer grounded in the provided context.",
+        }
 
     async def _correct(
         self,

@@ -301,10 +301,24 @@ class SemanticSimilarityService:
             max_len = get_nested(scoring, "reranking", "max_content_length", default=512)
             min_keep = get_nested(scoring, "reranking", "min_keep", default=5)
             max_gap = get_nested(scoring, "reranking", "max_score_gap", default=15.0)
+            # Conceptual query overrides
+            cq_cfg = get_nested(scoring, "reranking", "conceptual_query", default={})
+            cq_triggers = cq_cfg.get("trigger_words", [])
+            cq_min_keep = cq_cfg.get("min_keep", 8)
+            cq_compression = cq_cfg.get("score_compression", True)
+            cq_range = cq_cfg.get("compression_range", 3.0)
         except Exception:
             max_len = 512
             min_keep = 5
             max_gap = 15.0
+            cq_triggers = ["assess", "evaluate", "compare", "understand", "overview", "explain", "describe", "analyze"]
+            cq_min_keep = 8
+            cq_compression = True
+            cq_range = 3.0
+
+        # Detect conceptual/broad queries
+        query_lower = query.lower()
+        is_conceptual = any(w in query_lower for w in cq_triggers) and len(query.split()) > 5
 
         try:
             # Build query-document pairs from EnrichedResult objects.
@@ -344,6 +358,24 @@ class SemanticSimilarityService:
                 er.rerank_score = ce_score + entity_bonus
 
             enriched_results.sort(key=lambda er: er.rerank_score, reverse=True)
+
+            # For conceptual queries, compress score spread so diverse chunks
+            # are treated more equally by the context assembler.
+            if is_conceptual and cq_compression and len(enriched_results) > 1:
+                best = enriched_results[0].rerank_score
+                worst = enriched_results[-1].rerank_score
+                spread = best - worst
+                if spread > cq_range:
+                    # Linear compression into [best - cq_range, best]
+                    for er in enriched_results:
+                        proportion = (er.rerank_score - worst) / spread if spread else 0
+                        er.rerank_score = best - cq_range + (proportion * cq_range)
+                    logger.info(
+                        "Score compression applied for conceptual query",
+                        original_spread=round(spread, 2),
+                        compressed_range=cq_range,
+                    )
+                min_keep = max(min_keep, cq_min_keep)
 
             # Relative-gap filtering: keep min_keep results unconditionally,
             # then keep additional results only if within max_gap of the best.

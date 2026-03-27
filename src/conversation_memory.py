@@ -47,7 +47,7 @@ class ActuarialEntityExtractor:
         'years': r'\b(?:year|years?)\s+\d+(?:-\d+)?\b|\b\d+(?:-\d+)?\s+(?:year|years?)\b',
         'sections': r'\bSection\s+\d+(?:\.[A-Z0-9.]+)?\b',
         'calculations': r'\b(reserve|premium|calculation|NPR|adjusted gross premium)\b',
-        'regulations': r'\b(LDTI|GAAP|SAP|VM-\d+|Valuation Manual)\b',
+        'regulations': r'\b(LDTI|GAAP|SAP|VM-\d+|Valuation Manual|IFRS[-‐]?\s*\d+|ASC\s*\d+|FAS\s*\d+)\b',
         'monetary': r'\$[\d,]+(?:\.\d{2})?(?:\s+(?:million|billion|thousand))?',
         'formulas': r'\b[A-Z](?:_\d+)?(?:\s*[=+\-*/]\s*[A-Z](?:_\d+)?)*\b'
     }

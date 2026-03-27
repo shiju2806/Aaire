@@ -102,18 +102,45 @@ class EntityExtractor:
     # These are NOT reliably detected by spaCy en_core_web_sm.
     _INSURANCE_PATTERNS: List[re.Pattern] = [
         # Accounting standards: IFRS 17, IFRS 9, ASU 2018-12, FAS 133
-        re.compile(r"\bIFRS\s*\d+\b"),
-        re.compile(r"\bASU\s*\d{4}[-‐]\d+\b"),
-        re.compile(r"\bFAS\s*\d+\b"),
-        re.compile(r"\bASC\s*\d+(?:[-‐]\d+)*\b"),
+        re.compile(r"\bIFRS[-‐]?\s*\d+\b", re.IGNORECASE),
+        re.compile(r"\bASU\s*\d{4}[-‐]\d+\b", re.IGNORECASE),
+        re.compile(r"\bFAS\s*\d+\b", re.IGNORECASE),
+        re.compile(r"\bASC\s*\d+(?:[-‐]\d+)*\b", re.IGNORECASE),
         # US Statutory: VM-20, VM-21, VM-30, AG 43, RBC C-3
-        re.compile(r"\bVM[-‐]\d+\b"),
-        re.compile(r"\bAG[-‐]?\s*\d+\b"),
-        re.compile(r"\bRBC\s*C[-‐]\d+\b"),
+        re.compile(r"\bVM[-‐]\d+\b", re.IGNORECASE),
+        re.compile(r"\bAG[-‐]?\s*\d+\b", re.IGNORECASE),
+        re.compile(r"\bRBC\s*C[-‐]\d+\b", re.IGNORECASE),
         # Well-known insurance acronyms that spaCy won't detect as entities
         re.compile(r"\b(?:LDTI|ORSA|CFT|NAIC|SOA|CAS|AAA|GAAP|PBR)\b"),
         re.compile(r"\b(?:DAC|VOBA|SOP|AOCI|OCI|OTTI|FIA|UL|VUL|IUL)\b"),
         re.compile(r"\b(?:CSM|BEL|RA|PAA|GMM|VFA)\b"),  # IFRS 17 specific
+    ]
+
+    # Multi-word domain concepts that spaCy NER won't detect.
+    _DOMAIN_CONCEPT_PATTERNS: List[re.Pattern] = [
+        # Capital & solvency
+        re.compile(r"\bcapital\s+ratio(?:s)?\b", re.IGNORECASE),
+        re.compile(r"\bsolvency\s+(?:ratio|margin|capital)\b", re.IGNORECASE),
+        re.compile(r"\brisk[- ]based\s+capital\b", re.IGNORECASE),
+        re.compile(r"\bminimum\s+capital\s+(?:test|requirement)\b", re.IGNORECASE),
+        re.compile(r"\bLICAT\s*(?:ratio)?\b", re.IGNORECASE),
+        # Loss & combined ratios
+        re.compile(r"\bloss\s+ratio(?:s)?\b", re.IGNORECASE),
+        re.compile(r"\bcombined\s+ratio(?:s)?\b", re.IGNORECASE),
+        re.compile(r"\bexpense\s+ratio(?:s)?\b", re.IGNORECASE),
+        # Reserves
+        re.compile(r"\breserve\s+(?:adequacy|deficiency|margin)\b", re.IGNORECASE),
+        re.compile(r"\bclaims?\s+reserve(?:s)?\b", re.IGNORECASE),
+        # IFRS 17 concepts
+        re.compile(r"\bcontractual\s+service\s+margin\b", re.IGNORECASE),
+        re.compile(r"\bbest\s+estimate\s+liabilit(?:y|ies)\b", re.IGNORECASE),
+        re.compile(r"\brisk\s+adjustment\b", re.IGNORECASE),
+        re.compile(r"\binsurance\s+(?:contract|revenue)\b", re.IGNORECASE),
+        re.compile(r"\bbuilding\s+block\s+approach\b", re.IGNORECASE),
+        # General insurance/actuarial
+        re.compile(r"\bpolicy(?:holder)?\s+(?:dividend|surplus|equity)\b", re.IGNORECASE),
+        re.compile(r"\bunderwriting\s+(?:profit|income|result)\b", re.IGNORECASE),
+        re.compile(r"\bpremium\s+(?:deficiency|sufficiency)\b", re.IGNORECASE),
     ]
 
     def __init__(
@@ -332,6 +359,14 @@ class EntityExtractor:
             matches = pattern.findall(text)
             for match in matches:
                 normalized = match.strip()
+                if normalized and normalized not in result.domain_entities:
+                    result.domain_entities.append(normalized)
+
+        # Extract multi-word domain concepts (capital ratios, risk adjustment, etc.)
+        for pattern in self._DOMAIN_CONCEPT_PATTERNS:
+            matches = pattern.findall(text)
+            for match in matches:
+                normalized = match.strip().lower()
                 if normalized and normalized not in result.domain_entities:
                     result.domain_entities.append(normalized)
 

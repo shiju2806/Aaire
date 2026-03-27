@@ -139,6 +139,14 @@ reranking:
   # deeply negative even when relevant — absolute thresholds would wrongly filter them.
   min_keep: 5           # Always keep at least this many results after reranking
   max_score_gap: 15.0   # Drop results whose score is more than this below the best
+  # Conceptual/broad queries (e.g. "assess", "evaluate") need diverse sources,
+  # not just the 2 highest-scoring chunks. Compress score spread so context
+  # assembler treats chunks more equally.
+  conceptual_query:
+    min_keep: 8
+    score_compression: true
+    compression_range: 3.0   # Compress all scores into [best - 3.0, best]
+    trigger_words: ["assess", "evaluate", "compare", "understand", "overview", "explain", "describe", "analyze"]
 
 query_decomposition:
   enabled: true

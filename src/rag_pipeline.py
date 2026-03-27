@@ -72,7 +72,7 @@ from .retrieval.intent_cache import IntentCache
 from .retrieval.element_aware_retriever import ElementAwareRetriever
 from .ingestion.chunk_schema import StructuredStore
 from .generation.context_assembler import ContextAssembler
-from .generation.verification import VerificationPipeline
+from .generation.verification import VerificationPipeline, VerificationResult
 from .generation.compliance_check import ComplianceChecker
 from .generation.citation_builder import CitationBuilder
 
@@ -696,19 +696,18 @@ class RAGPipeline:
         if not topic_result['is_relevant']:
             return None  # Caller handles polite rejection via topic_result
 
-        # 2. Semantic query enhancement
+        # 2. Parallel: semantic enhancement (LLM, slow) + basic expansion (fast)
         doc_type_filter = self._get_doc_type_filter(filters)
-        try:
-            enhancement_result = await self.query_analyzer.enhance_query_semantically(query)
-            expanded_query = enhancement_result['enhanced_query']
-        except Exception as e:
-            logger.warning(f"Semantic enhancement failed, using basic expansion: {e}")
-            expanded_query = self.query_analyzer.expand_query(query)
-
+        basic_query = self.query_analyzer.expand_query(query)
         similarity_threshold = self.quality_metrics_manager.get_similarity_threshold(query)
 
-        # 3. Intent cache fast-path
-        cached_intent = self.intent_cache.classify_fast(expanded_query)
+        # Fire LLM enhancement as background task
+        enhancement_task = asyncio.create_task(
+            self.query_analyzer.enhance_query_semantically(query)
+        )
+
+        # 3. Intent cache fast-path (uses basic expansion, no wait)
+        cached_intent = self.intent_cache.classify_fast(basic_query)
         if cached_intent:
             logger.info("Intent fast-path matched", query_type=cached_intent.query_type)
 
@@ -716,9 +715,9 @@ class RAGPipeline:
         decomposition = await self.query_decomposer.maybe_decompose(query)
 
         if not decomposition.is_decomposed:
-            # Single-pass retrieval (normal flow)
+            # Single-pass retrieval with basic expansion (runs in parallel with enhancement)
             enriched_results = await self.element_aware_retriever.retrieve(
-                query=expanded_query,
+                query=basic_query,
                 doc_type_filter=doc_type_filter,
                 similarity_threshold=similarity_threshold,
                 filters=filters,
@@ -741,6 +740,30 @@ class RAGPipeline:
                         all_results.append(r)
                         sub_seen_ids.add(r.node_id)
             enriched_results = sorted(all_results, key=lambda r: r.score, reverse=True)
+
+        # 5. Merge enhanced retrieval results (if enhancement produced new terms)
+        try:
+            enhancement_result = await asyncio.wait_for(enhancement_task, timeout=10.0)
+            enhanced_query = enhancement_result.get('enhanced_query', basic_query)
+            if enhanced_query and enhanced_query != basic_query:
+                logger.info("Merging enhanced retrieval pass", enhanced_query=enhanced_query[:80])
+                enhanced_results = await self.element_aware_retriever.retrieve(
+                    query=enhanced_query,
+                    doc_type_filter=doc_type_filter,
+                    similarity_threshold=similarity_threshold,
+                    filters=filters,
+                    fetch_originals=True,
+                )
+                seen_ids = {r.node_id for r in enriched_results}
+                for r in enhanced_results:
+                    if r.node_id not in seen_ids:
+                        enriched_results.append(r)
+                        seen_ids.add(r.node_id)
+        except (asyncio.TimeoutError, Exception) as e:
+            logger.warning(f"Semantic enhancement failed/timed out, using basic results: {e}")
+
+        # Set expanded_query for downstream use (audit trail, result metadata)
+        expanded_query = basic_query
 
         # 5. Cross-encoder reranking with entity-aware composite scoring
         _query_entities = None
@@ -1019,28 +1042,32 @@ class RAGPipeline:
                         f"{msg.get('role', 'user')}: {msg.get('content', '')}" for msg in recent
                     )
 
-                verification_result = await self.verification_pipeline.run(
+                # Stream generation tokens directly to client
+                accumulated_response = []
+                verification_result = None
+
+                async for chunk in self.verification_pipeline.run_streaming(
                     query=query,
                     context_text=retrieval.assembled.text,
                     conversation_history=conversation_context,
-                )
-                response = verification_result.response
+                ):
+                    if isinstance(chunk, str):
+                        accumulated_response.append(chunk)
+                        yield {"type": "content", "content": chunk}
+                    else:
+                        # Final yield is VerificationResult metadata
+                        verification_result = chunk
 
-                # Compliance check
+                response = "".join(accumulated_response)
+
+                # Compliance check on the full accumulated text
                 compliance_result = await self.compliance_checker.check(response)
-                response = compliance_result.response
-
-                # Stream the response progressively (word-level chunks)
-                words = response.split(' ')
-                buffer = []
-                for word in words:
-                    buffer.append(word)
-                    if len(buffer) >= 5:
-                        yield {"type": "content", "content": ' '.join(buffer) + ' '}
-                        buffer = []
-                        await asyncio.sleep(0.03)
-                if buffer:
-                    yield {"type": "content", "content": ' '.join(buffer)}
+                if compliance_result.response != response:
+                    # Disclaimer was added — yield it as a final content chunk
+                    disclaimer = compliance_result.response[len(response):]
+                    if disclaimer.strip():
+                        yield {"type": "content", "content": disclaimer}
+                    response = compliance_result.response
 
                 # Citation extraction with refusal guard
                 if self._detect_refusal(response):
