@@ -41,11 +41,6 @@ class ExtractedEntities:
     # Domain-specific entities (regex)
     domain_entities: List[str] = field(default_factory=list)
 
-    # Scope entities: framework/standard references (IFRS 17, LICAT, VM-20)
-    scope_entities: List[str] = field(default_factory=list)
-    # Topic entities: domain concepts (capital ratios, risk adjustment)
-    topic_entities: List[str] = field(default_factory=list)
-
     # Flattened, normalized list for Qdrant payload filtering
     all_entities: List[str] = field(default_factory=list)
 
@@ -360,36 +355,20 @@ class EntityExtractor:
                     result.organizations.append(acr)
 
         # Extract insurance/actuarial regulatory references (IFRS 17, VM-20, etc.)
-        # These are scope entities — framework/standard references
         for pattern in self._INSURANCE_PATTERNS:
             matches = pattern.findall(text)
             for match in matches:
                 normalized = match.strip()
-                if normalized:
-                    if normalized not in result.domain_entities:
-                        result.domain_entities.append(normalized)
-                    norm_lower = normalized.lower()
-                    if norm_lower not in [s.lower() for s in result.scope_entities]:
-                        result.scope_entities.append(normalized)
+                if normalized and normalized not in result.domain_entities:
+                    result.domain_entities.append(normalized)
 
         # Extract multi-word domain concepts (capital ratios, risk adjustment, etc.)
-        # These are topic entities — domain concepts the user is asking about
-        # Some domain concepts are also scope entities (regulatory frameworks)
-        _SCOPE_CONCEPT_KEYWORDS = {"licat", "solvency", "rbc", "orsa"}
         for pattern in self._DOMAIN_CONCEPT_PATTERNS:
             matches = pattern.findall(text)
             for match in matches:
                 normalized = match.strip().lower()
-                if normalized:
-                    if normalized not in result.domain_entities:
-                        result.domain_entities.append(normalized)
-                    if normalized not in result.topic_entities:
-                        result.topic_entities.append(normalized)
-                    # Some domain concepts are also regulatory frameworks
-                    first_word = normalized.split()[0] if normalized.split() else ""
-                    if first_word in _SCOPE_CONCEPT_KEYWORDS:
-                        if normalized not in [s.lower() for s in result.scope_entities]:
-                            result.scope_entities.append(normalized)
+                if normalized and normalized not in result.domain_entities:
+                    result.domain_entities.append(normalized)
 
     # ------------------------------------------------------------------
     # Layer 2: spaCy NER
@@ -501,13 +480,11 @@ class EntityExtractor:
         seen: Set[str] = set()
 
         # Priority order: orgs first (most useful for filtering), then persons,
-        # then discriminative terms, then scope/topic entities, then domain entities
+        # then discriminative terms, then domain entities
         for entity_list in [
             result.organizations,
             result.persons,
             result.discriminative_terms,
-            result.scope_entities,
-            result.topic_entities,
         ]:
             for entity in entity_list:
                 normalized = entity.lower().strip()
