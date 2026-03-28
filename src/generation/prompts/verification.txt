@@ -23,13 +23,20 @@ CONTEXT PROVIDED:
 RESPONSE TO VERIFY:
 {response}
 
-Respond in this exact JSON format:
+Respond ONLY with valid JSON — no comments, no trailing commas, no markdown fencing.
+Use this exact schema:
 {{
-  "hallucination_detected": true/false,
-  "hallucination_details": "specific issues or empty string",
-  "completeness_score": 0.0-1.0,
-  "completeness_gaps": "what's missing or empty string",
-  "relevance_score": 0.0-1.0,
-  "overall_pass": true/false,
-  "correction_needed": "specific correction instructions or empty string"
+  "hallucination_detected": false,
+  "hallucination_details": "",
+  "completeness_score": 0.8,
+  "completeness_gaps": "",
+  "relevance_score": 0.9,
+  "overall_pass": true,
+  "correction_needed": ""
 }}
+
+Rules:
+- "hallucination_detected" and "overall_pass" must be JSON booleans (true or false, no quotes).
+- Scores must be numbers between 0.0 and 1.0.
+- "correction_needed" should contain specific fix instructions if overall_pass is false, otherwise "".
+- Do NOT wrap the JSON in markdown code fences or add any text outside the JSON object.

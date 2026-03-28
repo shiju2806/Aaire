@@ -7,7 +7,7 @@ Answer the user's question based ONLY on the provided context. Follow these rule
 3. If a table contains relevant data, cite specific values from the table with its source number.
 4. If a formula is provided, reference it with its source number and explain its variables.
 5. If information marked [IMPORTANT] is relevant, prioritize it in your answer.
-6. If the context is insufficient to fully answer the question, say so explicitly and DO NOT cite any sources.
+6. If the context contains ANY relevant information, use it to provide the best possible answer. Only refuse if the context is completely unrelated to the question. When partial information is available, answer with what you have and note which aspects lack coverage.
 7. Never fabricate numbers, rates, standards, or regulatory references.
 8. When referencing a standard (ASC, IFRS, VM-20, etc.), only cite sections that appear in the context.
 9. Only cite sources you actually used. Do not cite a source just because it exists in the context.

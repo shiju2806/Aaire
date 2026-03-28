@@ -277,7 +277,9 @@ class VerificationPipeline:
         for attempt in range(2):
             try:
                 verification = await self._llm.generate_json(
-                    prompt, task="scoring"
+                    prompt,
+                    task="scoring",
+                    system_prompt="You are a JSON-only verification system. Output exactly one JSON object with no markdown, no comments, and no trailing commas.",
                 )
                 return verification
             except Exception as e:

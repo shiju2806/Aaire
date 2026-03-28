@@ -1060,7 +1060,14 @@ class RAGPipeline:
 
                 response = "".join(accumulated_response)
 
-                # Compliance check on the full accumulated text
+                # If correction was applied, use the clean corrected text for
+                # downstream processing (citation extraction, refusal detection,
+                # memory). The accumulated stream contains the original bad
+                # response + separator + correction — only the correction matters.
+                if verification_result and verification_result.correction_applied:
+                    response = verification_result.response
+
+                # Compliance check on the final response text
                 compliance_result = await self.compliance_checker.check(response)
                 if compliance_result.response != response:
                     # Disclaimer was added — yield it as a final content chunk

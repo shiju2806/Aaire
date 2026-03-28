@@ -42,7 +42,7 @@ providers:
 
       scoring:
         temperature: 0.1
-        max_tokens: 10
+        max_tokens: 500
 
       taxonomy:
         temperature: 0.3
