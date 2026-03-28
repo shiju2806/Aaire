@@ -171,6 +171,7 @@ class CitationBuilder:
         self,
         response_text: str,
         source_map: Dict[int, Any],
+        scope_entities: Optional[List[str]] = None,
     ) -> List[Citation]:
         """Extract citations from inline [N] markers in the LLM response.
 
@@ -181,6 +182,7 @@ class CitationBuilder:
         Args:
             response_text: The LLM-generated response containing [N] markers.
             source_map: Maps source index to EnrichedResult (from AssembledContext).
+            scope_entities: Optional scope entities for grounding verification.
 
         Returns:
             List of Citation objects for sources actually cited. Empty if
@@ -205,6 +207,7 @@ class CitationBuilder:
             return []
 
         citations: List[Citation] = []
+        dropped = 0
         for idx in unique_indices:
             item = source_map[idx]
             metadata = self._get_metadata(item)
@@ -214,6 +217,19 @@ class CitationBuilder:
             page = metadata.get("page", 0)
             content = self._get_content(item)
             score = self._get_score(item)
+
+            # Grounding verification: drop citations from out-of-scope documents
+            if scope_entities and not self._verify_citation_grounding(
+                doc_title, section, metadata, scope_entities
+            ):
+                dropped += 1
+                logger.info(
+                    "Citation dropped — out-of-scope document",
+                    citation_idx=idx,
+                    doc_title=doc_title[:60],
+                    scope_entities=scope_entities,
+                )
+                continue
 
             source = self._format_source(element_type, doc_title, section, page, metadata)
 
@@ -231,8 +247,40 @@ class CitationBuilder:
                 )
             )
 
-        logger.debug("Inline citations extracted", count=len(citations))
+        logger.debug("Inline citations extracted", count=len(citations), dropped=dropped)
         return citations
+
+    @staticmethod
+    def _verify_citation_grounding(
+        doc_title: str,
+        section: str,
+        metadata: Dict[str, Any],
+        scope_entities: List[str],
+    ) -> bool:
+        """Verify a citation comes from a scope-relevant document.
+
+        Returns True to keep the citation, False to drop it.
+        """
+        if not scope_entities:
+            return True
+
+        # Build scope keywords
+        scope_keywords: Set[str] = set()
+        for entity in scope_entities:
+            for word in entity.lower().split():
+                word = word.strip("-–")
+                if len(word) >= 2:
+                    scope_keywords.add(word)
+            scope_keywords.add(entity.lower().strip())
+
+        # Check document title, section, and primary_framework
+        searchable = " ".join([
+            (doc_title or "").lower(),
+            (section or "").lower(),
+            (metadata.get("primary_framework", "") or "").lower(),
+        ])
+
+        return any(kw in searchable for kw in scope_keywords)
 
     # -- source formatting --------------------------------------------------
 

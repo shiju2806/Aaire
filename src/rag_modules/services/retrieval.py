@@ -334,6 +334,13 @@ class DocumentRetriever:
                     'search_type': 'vector'
                 })
 
+        # Apply scope boosts (soft — don't filter, just adjust scores)
+        if filters:
+            scope_cfg = get_nested(get_config("scoring"), "scope_gate", default={})
+            if scope_cfg.get("enabled", True):
+                vector_boost = scope_cfg.get("vector_boost", 0.15)
+                all_results = self._apply_scope_boosts(all_results, filters, boost_amount=vector_boost)
+
         # Sort by relevance score
         all_results.sort(key=lambda x: x['score'], reverse=True)
         return all_results[:vector_limit]
@@ -380,6 +387,13 @@ class DocumentRetriever:
                     'search_type': 'keyword'
                 })
 
+            # Apply scope boosts (soft — don't filter, just adjust scores)
+            if filters:
+                scope_cfg = get_nested(get_config("scoring"), "scope_gate", default={})
+                if scope_cfg.get("enabled", True):
+                    bm25_boost = scope_cfg.get("bm25_boost", 5.0)
+                    results = self._apply_scope_boosts(results, filters, boost_amount=bm25_boost)
+
             logger.info(f"BM25 keyword search found {len(results)} results")
 
             # Debug: Show first 5 results to understand what's being matched
@@ -417,12 +431,73 @@ class DocumentRetriever:
             if 'job_id' in filters:
                 bm25_filters['job_id'] = filters['job_id']
 
+        # Pass through scope boost hints (prefixed with _) for post-search boosting
+        if filters:
+            for key in ('_scope_framework', '_scope_doc_titles'):
+                if key in filters:
+                    bm25_filters[key] = filters[key]
+
         # Convert doc_type_filter to BM25 format
         if doc_type_filter:
             # BM25 engine expects doc_type in the doc_type field
             bm25_filters['doc_type'] = doc_type_filter
 
         return bm25_filters if bm25_filters else None
+
+    @staticmethod
+    def _apply_scope_boosts(
+        results: List[Dict],
+        filters: Dict[str, Any],
+        boost_amount: float = 0.15,
+    ) -> List[Dict]:
+        """Apply soft score boosts to results matching scope filters.
+
+        Scope filters use special keys:
+        - _scope_framework: boost chunks whose primary_framework matches
+        - _scope_doc_titles: boost chunks whose document_title contains any hint
+        """
+        scope_framework = filters.get("_scope_framework")
+        scope_doc_titles = filters.get("_scope_doc_titles", [])
+
+        if not scope_framework and not scope_doc_titles:
+            return results
+
+        boosted = 0
+        for result in results:
+            meta = result.get("metadata", {})
+            matched = False
+
+            # Framework match
+            if scope_framework:
+                chunk_framework = meta.get("primary_framework", "")
+                if chunk_framework and chunk_framework.upper() == scope_framework.upper():
+                    matched = True
+
+            # Document title match
+            if scope_doc_titles and not matched:
+                doc_title = meta.get("document_title", "")
+                if doc_title:
+                    doc_title_lower = doc_title.lower()
+                    for hint in scope_doc_titles:
+                        if hint.lower() in doc_title_lower:
+                            matched = True
+                            break
+
+            if matched:
+                result["score"] = result.get("score", 0) + boost_amount
+                boosted += 1
+
+        if boosted:
+            logger.info(
+                "Scope boost applied",
+                boosted=boosted,
+                total=len(results),
+                framework=scope_framework,
+                doc_titles=scope_doc_titles,
+                boost_amount=boost_amount,
+            )
+
+        return results
 
     def get_diverse_context_documents(self, documents: List[Dict],
                                       max_per_source: int = 5) -> List[Dict]:

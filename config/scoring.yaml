@@ -155,6 +155,52 @@ query_decomposition:
   aggregation_words: ["all", "every", "across", "throughout", "summarize all", "list all"]
   min_word_count_for_complex: 20
 
+scope_gate:
+  # Scope-aware retrieval gate: demotes/drops results from documents
+  # that don't match the query's framework scope (IFRS 17, VM-20, etc.)
+  enabled: true
+
+  # Score boost for scope-matching results during retrieval
+  vector_boost: 0.15              # Additive boost for vector search results
+  bm25_boost: 5.0                 # Additive boost for BM25 keyword results
+
+  # Post-retrieval penalty for out-of-scope results (after reranking)
+  # 0.3 = 70% score penalty for results whose doc_title/section doesn't
+  # contain any scope keyword. Lower = more aggressive demotion.
+  out_of_scope_penalty: 0.3
+
+  # Citation grounding: drop citations from out-of-scope documents
+  citation_grounding: true
+
+  # Framework mapping: scope entity patterns → primary_framework values
+  # Used for soft-boost matching against chunk metadata.
+  framework_map:
+    ifrs: "IFRS"
+    vm-: "US_STAT"
+    ag: "US_STAT"
+    rbc: "US_STAT"
+    pbr: "US_STAT"
+    naic: "US_STAT"
+    asc: "US_GAAP"
+    fas: "US_GAAP"
+    ldti: "US_GAAP"
+    gaap: "US_GAAP"
+    asu: "US_GAAP"
+    licat: "CANADIAN"
+    osfi: "CANADIAN"
+    solvency ii: "EU_SOLVENCY"
+
+  # Document title hints: scope entity patterns → title substrings to match
+  doc_title_map:
+    ifrs: ["IFRS", "ifrs"]
+    licat: ["LICAT", "licat"]
+    vm-: ["VM-", "vm-", "Valuation Manual"]
+    rbc: ["RBC", "Risk Based Capital"]
+    solvency: ["Solvency"]
+    asc: ["ASC"]
+    ldti: ["LDTI"]
+    naic: ["NAIC"]
+
 section_expansion:
   enabled: true
   score_threshold: 0.3

@@ -335,6 +335,25 @@ class ElementAwareRetriever:
 
         if strategy == "boost_only":
             # Don't filter, only boost scores later in _apply_entity_scores.
+            # However, pass scope information as soft-boost hints for retrieval.
+            scope_cfg = self._get_scope_config()
+            if (scope_cfg.get("enabled", True)
+                    and hasattr(query_entities, 'scope_entities')
+                    and query_entities.scope_entities):
+                merged = dict(existing_filters) if existing_filters else {}
+                scope_framework = self._scope_to_framework(query_entities.scope_entities)
+                if scope_framework:
+                    merged["_scope_framework"] = scope_framework
+                scope_titles = self._scope_to_doc_titles(query_entities.scope_entities)
+                if scope_titles:
+                    merged["_scope_doc_titles"] = scope_titles
+                logger.info(
+                    "Scope boost hints added",
+                    scope_entities=query_entities.scope_entities,
+                    framework=scope_framework,
+                    doc_titles=scope_titles,
+                )
+                return merged if merged else existing_filters
             return existing_filters
 
         # "should_match" or "must_match" — add entity payload filter.
@@ -381,6 +400,52 @@ class ElementAwareRetriever:
                     overlap=list(overlap),
                     boost=round(effective_boost, 2),
                 )
+
+    # ------------------------------------------------------------------
+    # Scope-to-framework mapping
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def _get_scope_config(cls) -> Dict[str, Any]:
+        """Load scope gate config from scoring.yaml."""
+        return get_nested(get_config("scoring"), "scope_gate", default={})
+
+    @classmethod
+    def _scope_to_framework(cls, scope_entities: list) -> Optional[str]:
+        """Map scope entities to a primary_framework value."""
+        framework_map = cls._get_scope_config().get("framework_map", {})
+        for entity in scope_entities:
+            entity_lower = entity.lower()
+            for pattern, framework in framework_map.items():
+                if pattern in entity_lower:
+                    return framework
+        return None
+
+    @classmethod
+    def _scope_to_doc_titles(cls, scope_entities: list) -> List[str]:
+        """Map scope entities to document title hints for soft matching."""
+        doc_title_map = cls._get_scope_config().get("doc_title_map", {})
+        titles: List[str] = []
+        seen: Set[str] = set()
+        for entity in scope_entities:
+            entity_lower = entity.lower()
+            for pattern, hints in doc_title_map.items():
+                if pattern in entity_lower:
+                    if isinstance(hints, list):
+                        for hint in hints:
+                            if hint.lower() not in seen:
+                                seen.add(hint.lower())
+                                titles.append(hint)
+                    elif isinstance(hints, str) and hints.lower() not in seen:
+                        seen.add(hints.lower())
+                        titles.append(hints)
+        # Also add the raw scope entity as a title hint
+        for entity in scope_entities:
+            norm = entity.strip()
+            if norm.lower() not in seen:
+                seen.add(norm.lower())
+                titles.append(norm)
+        return titles
 
     # ------------------------------------------------------------------
     # Knowledge graph helpers

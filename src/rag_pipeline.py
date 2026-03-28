@@ -777,6 +777,16 @@ class RAGPipeline:
                 query, enriched_results, query_entities=_query_entities
             )
 
+        # 5.5. Post-retrieval scope verification — demote out-of-scope results
+        from .providers.config_loader import get_config as _gc, get_nested as _gn
+        _scope_cfg = _gn(_gc("scoring"), "scope_gate", default={})
+        scope_entities = []
+        if _query_entities and hasattr(_query_entities, 'scope_entities'):
+            scope_entities = _query_entities.scope_entities
+        if scope_entities and _scope_cfg.get("enabled", True):
+            penalty = _scope_cfg.get("out_of_scope_penalty", 0.3)
+            enriched_results = self._verify_scope_relevance(enriched_results, scope_entities, penalty=penalty)
+
         # 6. Convert + diversity selection
         retrieved_docs = [self._enriched_to_dict(er) for er in enriched_results]
         retrieved_docs = self.document_retriever.get_diverse_context_documents(retrieved_docs)
@@ -921,13 +931,21 @@ class RAGPipeline:
                     logger.info("Compliance disclaimer added", issues=compliance_result.issues)
 
                 # Inline citation extraction with refusal guard
+                _scope = retrieval.query_entities.scope_entities if (
+                    retrieval.query_entities and hasattr(retrieval.query_entities, 'scope_entities')
+                ) else []
+                # Only pass scope for citation grounding if config enables it
+                from .providers.config_loader import get_config as _gc3, get_nested as _gn3
+                _pq_scope_cfg = _gn3(_gc3("scoring"), "scope_gate", default={})
+                _cite_scope = _scope if _pq_scope_cfg.get("citation_grounding", True) else []
                 if self._detect_refusal(response):
                     logger.info("Refusal detected — suppressing citations")
                     citations = []
                     confidence = 0.1
                 else:
                     built_citations = self.citation_builder.extract_inline_citations(
-                        response, retrieval.assembled.source_map
+                        response, retrieval.assembled.source_map,
+                        scope_entities=_cite_scope,
                     )
                     citations = [c.to_dict() for c in built_citations]
                     confidence = self.quality_metrics_manager.calculate_confidence(retrieved_docs, response)
@@ -1077,12 +1095,20 @@ class RAGPipeline:
                     response = compliance_result.response
 
                 # Citation extraction with refusal guard
+                _scope = retrieval.query_entities.scope_entities if (
+                    retrieval.query_entities and hasattr(retrieval.query_entities, 'scope_entities')
+                ) else []
+                # Only pass scope for citation grounding if config enables it
+                from .providers.config_loader import get_config as _gc2, get_nested as _gn2
+                _stream_scope_cfg = _gn2(_gc2("scoring"), "scope_gate", default={})
+                _cite_scope = _scope if _stream_scope_cfg.get("citation_grounding", True) else []
                 if self._detect_refusal(response):
                     citations = []
                     confidence = 0.1
                 else:
                     built_citations = self.citation_builder.extract_inline_citations(
-                        response, retrieval.assembled.source_map
+                        response, retrieval.assembled.source_map,
+                        scope_entities=_cite_scope,
                     )
                     citations = [c.to_dict() for c in built_citations]
                     confidence = self.quality_metrics_manager.calculate_confidence(retrieved_docs, response)
@@ -1122,6 +1148,81 @@ class RAGPipeline:
             logger.error("Failed to process streaming query", error=str(e), query=query[:100])
             yield {"type": "error", "message": "I apologize, but I encountered an error processing your request."}
             raise
+
+    @staticmethod
+    def _verify_scope_relevance(enriched_results, scope_entities, penalty: float = 0.3):
+        """Demote results that don't match the query's scope (framework/standard).
+
+        If the query mentions a specific framework (e.g., IFRS 17), results
+        whose document_title or section don't contain any scope keyword get
+        their rerank_score (or score) penalized so they sink in ranking.
+
+        This is a soft gate — nothing is removed, just demoted.
+
+        Args:
+            enriched_results: List of EnrichedResult objects (mutated in-place).
+            scope_entities: List of scope entity strings (e.g., ["IFRS 17"]).
+            penalty: Multiplier for out-of-scope results (0.3 = 70% penalty).
+
+        Returns:
+            Re-sorted list of EnrichedResult objects.
+        """
+        if not scope_entities or not enriched_results:
+            return enriched_results
+
+        # Build scope keywords from entities (split multi-word entities too)
+        scope_keywords = set()
+        for entity in scope_entities:
+            for word in entity.lower().split():
+                word = word.strip("-–")
+                if len(word) >= 2:
+                    scope_keywords.add(word)
+            # Also add the full entity as a keyword
+            scope_keywords.add(entity.lower().strip())
+
+        demoted = 0
+        for result in enriched_results:
+            meta = result.metadata if hasattr(result, 'metadata') else {}
+            doc_title = (meta.get("document_title", "") or "").lower()
+            section = (meta.get("section", "") or "").lower()
+            framework = (meta.get("primary_framework", "") or "").lower()
+            searchable = f"{doc_title} {section} {framework}"
+
+            matches_scope = any(kw in searchable for kw in scope_keywords)
+
+            if not matches_scope:
+                # Penalize the effective score used for ranking
+                score_attr = "rerank_score" if (hasattr(result, "rerank_score") and result.rerank_score is not None) else "score"
+                original = getattr(result, score_attr, 0) or 0
+                penalized = original * penalty
+                setattr(result, score_attr, penalized)
+                # Also penalize the primary score so downstream sort works
+                if score_attr == "rerank_score":
+                    result.score = (result.score or 0) * penalty
+                demoted += 1
+                structlog.get_logger().debug(
+                    "Scope verification: demoted out-of-scope result",
+                    node_id=getattr(result, 'node_id', '')[:12],
+                    doc_title=doc_title[:60],
+                    scope_keywords=list(scope_keywords)[:5],
+                    original_score=round(original, 3),
+                    penalized_score=round(penalized, 3),
+                )
+
+        if demoted:
+            structlog.get_logger().info(
+                "Scope verification complete",
+                total=len(enriched_results),
+                demoted=demoted,
+                scope_keywords=list(scope_keywords)[:5],
+            )
+
+        # Re-sort by effective score
+        enriched_results.sort(
+            key=lambda r: (r.rerank_score if (hasattr(r, 'rerank_score') and r.rerank_score is not None) else r.score),
+            reverse=True,
+        )
+        return enriched_results
 
     @staticmethod
     def _enriched_to_dict(er) -> Dict[str, Any]:
