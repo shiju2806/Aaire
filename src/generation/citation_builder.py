@@ -267,11 +267,32 @@ class CitationBuilder:
         # Build scope keywords
         scope_keywords: Set[str] = set()
         for entity in scope_entities:
-            for word in entity.lower().split():
+            entity_lower = entity.lower().strip()
+            for word in entity_lower.split():
                 word = word.strip("-–")
                 if len(word) >= 2:
                     scope_keywords.add(word)
-            scope_keywords.add(entity.lower().strip())
+            # Split concatenated tokens like "ifrs17" → "ifrs", "17"
+            parts = re.findall(r'[a-z]+|\d+', entity_lower)
+            for part in parts:
+                if len(part) >= 2:
+                    scope_keywords.add(part)
+            scope_keywords.add(entity_lower)
+
+        # Also include doc title hints from config as related scope keywords
+        try:
+            from ..providers.config_loader import get_config, get_nested
+            sg_cfg = get_nested(get_config("scoring"), "scope_gate", default={})
+            doc_title_map = sg_cfg.get("doc_title_map", {})
+            for pattern, hints in doc_title_map.items():
+                if pattern in " ".join(scope_keywords):
+                    if isinstance(hints, list):
+                        for hint in hints:
+                            scope_keywords.add(hint.lower())
+                    elif isinstance(hints, str):
+                        scope_keywords.add(hints.lower())
+        except Exception:
+            pass
 
         # Check document title, section, and primary_framework
         searchable = " ".join([

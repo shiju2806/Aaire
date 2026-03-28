@@ -1173,12 +1173,36 @@ class RAGPipeline:
         # Build scope keywords from entities (split multi-word entities too)
         scope_keywords = set()
         for entity in scope_entities:
-            for word in entity.lower().split():
+            entity_lower = entity.lower().strip()
+            # Split on spaces
+            for word in entity_lower.split():
                 word = word.strip("-–")
                 if len(word) >= 2:
                     scope_keywords.add(word)
-            # Also add the full entity as a keyword
-            scope_keywords.add(entity.lower().strip())
+            # Split concatenated tokens like "ifrs17" → "ifrs", "17"
+            import re as _re
+            parts = _re.findall(r'[a-z]+|\d+', entity_lower)
+            for part in parts:
+                if len(part) >= 2:
+                    scope_keywords.add(part)
+            # Add the full entity
+            scope_keywords.add(entity_lower)
+
+        # Also include doc title hints from config as related scope keywords
+        # (e.g., LICAT is related to IFRS scope)
+        try:
+            from .providers.config_loader import get_config as _gc_scope, get_nested as _gn_scope
+            _sg_cfg = _gn_scope(_gc_scope("scoring"), "scope_gate", default={})
+            doc_title_map = _sg_cfg.get("doc_title_map", {})
+            for pattern, hints in doc_title_map.items():
+                if pattern in " ".join(scope_keywords):
+                    if isinstance(hints, list):
+                        for hint in hints:
+                            scope_keywords.add(hint.lower())
+                    elif isinstance(hints, str):
+                        scope_keywords.add(hints.lower())
+        except Exception:
+            pass
 
         demoted = 0
         for result in enriched_results:

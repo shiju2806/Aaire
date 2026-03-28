@@ -192,7 +192,7 @@ scope_gate:
 
   # Document title hints: scope entity patterns → title substrings to match
   doc_title_map:
-    ifrs: ["IFRS", "ifrs"]
+    ifrs: ["IFRS", "ifrs", "LICAT", "licat"]
     licat: ["LICAT", "licat"]
     vm-: ["VM-", "vm-", "Valuation Manual"]
     rbc: ["RBC", "Risk Based Capital"]
