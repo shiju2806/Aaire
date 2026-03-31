@@ -223,12 +223,28 @@ class RAGPipeline:
         self.quality_metrics_manager = create_quality_metrics_manager(self.config.get('retrieval_config', {}))
 
         # Initialize semantic similarity service for enhanced retrieval
+        # Skip cross-encoder model load when LLM reranker is active (saves ~100MB memory)
         reranking_enabled = self.config.get('retrieval_config', {}).get('reranking_enabled', True)
+        rerank_cfg = get_nested(get_config("scoring"), "reranking", default={})
+        use_llm_reranker = rerank_cfg.get("engine") == "llm"
         self.semantic_similarity_service = create_semantic_similarity_service(
-            use_cross_encoder=reranking_enabled,
+            use_cross_encoder=reranking_enabled and not use_llm_reranker,
         )
         logger.info("Semantic similarity service initialized",
-                     cross_encoder=reranking_enabled)
+                     cross_encoder=reranking_enabled and not use_llm_reranker)
+
+        # Initialize LLM reranker (domain-aware, configurable via scoring.yaml)
+        self.llm_reranker = None
+        rerank_cfg = get_nested(get_config("scoring"), "reranking", default={})
+        if rerank_cfg.get("engine") == "llm":
+            try:
+                from .rag_modules.services.llm_reranker import LLMReranker
+                llm_prov = get_llm_provider()
+                if llm_prov:
+                    self.llm_reranker = LLMReranker(llm_prov)
+                    logger.info("LLM reranker initialized (domain-aware)")
+            except Exception as e:
+                logger.warning("LLM reranker init failed, will use cross-encoder", error=str(e))
 
         # Initialize Phase 3 services modules (index will be set later)
         self.document_retriever = create_document_retriever(
@@ -453,6 +469,16 @@ class RAGPipeline:
                     self._build_taxonomy_from_documents()
                     return
 
+                # ES has more docs than Qdrant — likely duplicates from prior syncs.
+                # Clear ES and rebuild from scratch to eliminate stale/duplicate entries.
+                if es_count > qdrant_count:
+                    logger.warning(
+                        "ES has more docs than Qdrant, clearing to rebuild cleanly",
+                        es_docs=es_count,
+                        qdrant_points=qdrant_count,
+                    )
+                    self.bm25_engine.clear()
+
             logger.info("Starting search index sync from Qdrant documents...")
 
             batch_size = 50
@@ -489,11 +515,15 @@ class RAGPipeline:
                         )
 
                         if text_content and len(text_content.strip()) > 10:
+                            # Use chunk_id from payload (original UUID from ingestion)
+                            # NOT point.id (Qdrant's internal ID) to keep ES/Qdrant IDs consistent.
+                            canonical_id = payload.get('chunk_id') or str(point.id)
                             batch_docs.append({
-                                'doc_id': str(point.id),
+                                'doc_id': canonical_id,
                                 'content': text_content,
                                 'title': doc_name,
                                 'metadata': {
+                                    'node_id': canonical_id,
                                     'point_id': str(point.id),
                                     'title': doc_name,
                                     'filename': doc_name,
@@ -765,14 +795,17 @@ class RAGPipeline:
         # Set expanded_query for downstream use (audit trail, result metadata)
         expanded_query = basic_query
 
-        # 5. Cross-encoder reranking with entity-aware composite scoring
+        # 5. Reranking: LLM reranker (domain-aware) with cross-encoder fallback
         _query_entities = None
-        if self.entity_extractor:
-            try:
-                _query_entities = self.entity_extractor.extract_from_query(query)
-            except Exception:
-                pass
-        if enriched_results and self.semantic_similarity_service:
+        if enriched_results and self.llm_reranker:
+            enriched_results = await self.llm_reranker.rerank(query, enriched_results)
+        elif enriched_results and self.semantic_similarity_service:
+            # Entity extraction only needed for cross-encoder reranking
+            if self.entity_extractor:
+                try:
+                    _query_entities = self.entity_extractor.extract_from_query(query)
+                except Exception:
+                    pass
             enriched_results = self.semantic_similarity_service.rerank_enriched_results(
                 query, enriched_results, query_entities=_query_entities
             )

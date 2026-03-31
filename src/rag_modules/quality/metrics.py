@@ -92,10 +92,21 @@ class QualityMetricsManager:
             else:
                 metrics['keyword_relevance'] = 0.5  # Neutral if no keywords
 
-            # 4. Source Quality - Average similarity scores of retrieved docs
+            # 4. Source Quality - Normalized similarity scores of retrieved docs
+            #    Raw cosine scores from text-embedding-3-large are low (0.02-0.10 for relevant docs).
+            #    Normalize against model-specific thresholds so source_quality reflects actual relevance.
             if retrieved_docs:
+                scoring_cfg = get_config("scoring")
+                llm_cfg = get_config("llm")
+                model = get_nested(llm_cfg, "embedding", "model", default="unknown")
+                all_thresholds = get_nested(scoring_cfg, "retrieval", "similarity_thresholds", default={})
+                model_thresholds = all_thresholds.get(model) or all_thresholds.get("_default", {})
+                floor = model_thresholds.get("general", 0.25)
+                ceiling = max(floor + 0.30, 0.55)
+
                 scores = [doc.get('score', 0.0) for doc in retrieved_docs]
-                metrics['source_quality'] = sum(scores) / len(scores) if scores else 0.0
+                normalized = [min(max((s - floor) / (ceiling - floor), 0.0), 1.0) for s in scores]
+                metrics['source_quality'] = sum(normalized) / len(normalized) if normalized else 0.0
             else:
                 metrics['source_quality'] = 0.0
 
@@ -281,16 +292,17 @@ class QualityMetricsManager:
 
     def calculate_confidence(self, retrieved_docs: List[Dict], response: str) -> float:
         """
-        Calculate confidence score for the response.
+        Calculate confidence score for the response using multiple signals.
 
-        Computes confidence based on:
-        - Average similarity scores of top retrieved documents
-        - Number of relevant documents available
-        - Document count factor for reliability assessment
+        Combines four signals:
+        - Retrieval signal (35%): cosine scores normalized against model-specific thresholds
+        - Coverage signal (15%): sufficient number of supporting documents
+        - Citation signal (30%): response references sources via inline [N] markers
+        - Substance signal (20%): non-trivial response with actual content
 
         Args:
             retrieved_docs: List of retrieved documents with similarity scores
-            response: The generated response text (currently not used in calculation)
+            response: The generated response text
 
         Returns:
             Float confidence score between 0.0 and 1.0
@@ -298,17 +310,40 @@ class QualityMetricsManager:
         if not retrieved_docs:
             return 0.0
 
-        # Average similarity score of top documents
-        top_scores = [doc['score'] for doc in retrieved_docs[:3]]
-        avg_score = sum(top_scores) / len(top_scores) if top_scores else 0.0
+        scoring_cfg = get_config("scoring")
 
-        # Adjust based on number of relevant documents
-        doc_count_factor = min(len(retrieved_docs) / 3.0, 1.0)
+        # 1. Retrieval signal: normalize cosine scores against model-specific thresholds
+        #    text-embedding-3-large: relevant docs score 0.25-0.65 cosine
+        #    Normalize to 0-1 using the configured threshold as floor
+        llm_cfg = get_config("llm")
+        model = get_nested(llm_cfg, "embedding", "model", default="unknown")
+        all_thresholds = get_nested(scoring_cfg, "retrieval", "similarity_thresholds", default={})
+        model_thresholds = all_thresholds.get(model) or all_thresholds.get("_default", {})
+        floor = model_thresholds.get("general", 0.25)
+        ceiling = max(floor + 0.30, 0.55)
 
-        # Basic confidence calculation
-        confidence = avg_score * doc_count_factor
+        top_scores = [doc.get('score', 0) for doc in retrieved_docs[:5]]
+        normalized = [min(max((s - floor) / (ceiling - floor), 0.0), 1.0) for s in top_scores]
+        retrieval_signal = sum(normalized) / len(normalized) if normalized else 0.0
 
-        return round(confidence, 3)
+        # 2. Coverage signal: sufficient supporting documents (caps at 5)
+        coverage_signal = min(len(retrieved_docs) / 5.0, 1.0)
+
+        # 3. Citation signal: response references sources via inline [N] markers
+        citation_count = len(set(re.findall(r'\[(\d+)\]', response)))
+        citation_signal = min(citation_count / 3.0, 1.0)
+
+        # 4. Response substance: non-trivial response with actual content
+        response_len = len(response.strip())
+        substance_signal = min(response_len / 500.0, 1.0)
+
+        confidence = (
+            0.35 * retrieval_signal +
+            0.15 * coverage_signal +
+            0.30 * citation_signal +
+            0.20 * substance_signal
+        )
+        return round(min(confidence, 1.0), 3)
 
 
 def create_quality_metrics_manager(config: Optional[Dict[str, Any]] = None) -> QualityMetricsManager:

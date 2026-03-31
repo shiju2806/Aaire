@@ -128,8 +128,11 @@ retrieval:
       neutral: 0.30
 
 reranking:
-  # Cross-encoder reranking after retrieval
-  enabled: true
+  # Reranking engine: "llm" (domain-aware, configurable model via llm.yaml)
+  # or "cross_encoder" (fast, MiniLM-L-6).
+  engine: "llm"
+  llm_top_k: 15                  # Chunks to send to LLM reranker
+  # Cross-encoder settings (used when engine=cross_encoder)
   cross_encoder_model: "cross-encoder/ms-marco-MiniLM-L-6-v2"
   max_content_length: 512        # Truncate content for cross-encoder input
   # Relative-gap reranking: always keep min_keep results, drop additional results

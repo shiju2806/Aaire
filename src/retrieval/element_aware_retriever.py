@@ -61,6 +61,7 @@ class ElementTypeWeights:
     callout: float = 1.2  # Callouts always get a slight boost.
     image: float = 0.8
     table_proposition: float = 1.0
+    summary: float = 1.3  # Concept summaries get a slight boost.
 
 
 @dataclass
